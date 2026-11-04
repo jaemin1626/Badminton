@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smash Score — 화면 시안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f3f6f1; --bg2:#e8eee4; --panel:#ffffff; --ink:#14201a; --muted:#5d6b62; --line:#d9e2d6;
+  --court:#1f7a4a; --court-deep:#145c37; --accent:#c8f03c; --accent-ink:#1d2a00;
+  --teamA:#2f6ff2; --teamB:#f2553f; --warn:#e8a317; --ok:#1f9d5c;
+  --shadow:0 10px 30px rgba(20,40,25,.10); --radius:16px;
+}
+:root[data-theme="dark"]{
+  --bg:#0b120e; --bg2:#101a14; --panel:#141f19; --ink:#e9f2ec; --muted:#93a59a; --line:#24342b;
+  --court:#1c6b42; --court-deep:#0f3f26; --accent:#d4ff3f; --accent-ink:#152000;
+  --teamA:#4f8bff; --teamB:#ff6a55; --shadow:0 10px 30px rgba(0,0,0,.45);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b120e; --bg2:#101a14; --panel:#141f19; --ink:#e9f2ec; --muted:#93a59a; --line:#24342b;
+    --court:#1c6b42; --court-deep:#0f3f26; --accent:#d4ff3f; --accent-ink:#152000;
+    --teamA:#4f8bff; --teamB:#ff6a55; --shadow:0 10px 30px rgba(0,0,0,.45);
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",system-ui,sans-serif;font-size:14px;
+  background-image:radial-gradient(1200px 500px at 85% -10%, color-mix(in srgb,var(--accent) 18%, transparent), transparent 60%);
+  min-height:100vh}
+.num,.brand,h1,h2,.step b{font-family:"Barlow Condensed",sans-serif}
+
+/* header */
+header{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--panel) 80%, transparent);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+.brand{display:flex;align-items:center;gap:10px;font-size:26px;font-weight:800;letter-spacing:.5px;text-transform:uppercase}
+.brand .logo{width:36px;height:36px;border-radius:10px;background:var(--court);display:grid;place-items:center;box-shadow:inset 0 0 0 2px color-mix(in srgb,#fff 35%,transparent)}
+.brand em{font-style:normal;color:var(--court)}
+:root[data-theme="dark"] .brand em{color:var(--accent)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .brand em{color:var(--accent)}}
+.spacer{flex:1}
+.icon-btn{white-space:nowrap;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:12px;height:38px;padding:0 12px;
+  display:flex;align-items:center;gap:8px;cursor:pointer;font:inherit}
+.icon-btn:hover{border-color:var(--court)}
+
+/* stepper */
+.stepper{display:flex;gap:6px;padding:16px 24px 0;overflow-x:auto}
+.step{flex:1;min-width:120px;display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);color:var(--muted);transition:.2s;position:relative;overflow:hidden}
+.step b{font-size:22px;line-height:1;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--bg2);color:var(--muted)}
+.step.done b{background:var(--court);color:#fff}
+.step.active{color:var(--ink);border-color:var(--court);box-shadow:var(--shadow)}
+.step.active b{background:var(--accent);color:var(--accent-ink)}
+.step.active::after{content:"";position:absolute;left:0;bottom:0;height:3px;width:100%;background:linear-gradient(90deg,var(--court),var(--accent))}
+
+/* layout */
+main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;padding:18px 24px 28px}
+@media (max-width:980px){main{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){header{padding:12px 16px}header>.chip{display:none}.stepper,main{padding-left:16px;padding-right:16px}.footnote{padding:0 16px 24px}.brand{font-size:22px}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.stage-wrap{padding:12px}
+.stage-top{display:flex;align-items:center;gap:10px;padding:2px 4px 10px}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:500;background:var(--bg2);color:var(--muted)}
+.chip .dot{width:8px;height:8px;border-radius:50%}
+.stage{position:relative;border-radius:12px;overflow:hidden;background:#0a0f0c;aspect-ratio:16/9;touch-action:none}
+svg.scene{width:100%;height:100%;display:block;user-select:none}
+
+/* scrubber */
+.scrub{display:flex;align-items:center;gap:10px;padding:12px 4px 2px}
+.scrub input[type=range]{flex:1;accent-color:var(--court)}
+.fbtn{border:1px solid var(--line);background:var(--bg2);color:var(--ink);border-radius:10px;width:34px;height:32px;cursor:pointer;font-weight:700}
+.num{font-size:18px;font-weight:700;min-width:120px;text-align:right}
+.suggest{display:flex;gap:8px;padding:10px 4px 0;overflow-x:auto}
+.thumb{flex:0 0 112px;height:63px;border-radius:8px;border:2px solid transparent;cursor:pointer;position:relative;overflow:hidden;
+  background:linear-gradient(160deg,var(--court),var(--court-deep))}
+.thumb span{position:absolute;left:6px;bottom:4px;font-size:11px;color:#fff;font-weight:700;text-shadow:0 1px 2px #000}
+.thumb svg{position:absolute;inset:0;width:100%;height:100%}
+.thumb .badge{position:absolute;left:auto;bottom:auto;right:5px;top:5px;font-size:10px;background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:1px 5px;font-weight:700}
+.thumb.sel{border-color:var(--accent)}
+
+/* side panel */
+aside{display:flex;flex-direction:column;gap:14px}
+.panel{padding:18px}
+.panel h2{margin:0 0 4px;font-size:24px;letter-spacing:.3px;text-transform:uppercase}
+.panel p.desc{margin:0 0 14px;color:var(--muted);line-height:1.55}
+.corners{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.corners li{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--bg2)}
+.corners li .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:12px;background:var(--accent);color:var(--accent-ink)}
+.corners li .xy{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 2px 0;color:var(--muted)}
+.switch{position:relative;width:42px;height:24px;border-radius:99px;background:var(--line);cursor:pointer;border:0}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
+.switch.on{background:var(--court)} .switch.on::after{left:21px}
+
+.team-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.team-tab{border:2px solid var(--line);background:var(--bg2);border-radius:12px;padding:10px;cursor:pointer;text-align:left;color:var(--ink);font:inherit}
+.team-tab .t{font-family:"Barlow Condensed",sans-serif;font-size:20px;font-weight:700;text-transform:uppercase}
+.team-tab .c{color:var(--muted);font-size:12px}
+.team-tab.A.on{border-color:var(--teamA);background:color-mix(in srgb,var(--teamA) 12%,var(--panel))}
+.team-tab.B.on{border-color:var(--teamB);background:color-mix(in srgb,var(--teamB) 12%,var(--panel))}
+.team-card{border-radius:12px;padding:12px;margin-bottom:10px;border:1px solid var(--line)}
+.team-card input{width:100%;border:0;background:transparent;color:var(--ink);font:700 18px "Noto Sans KR",sans-serif;outline:none;padding:0 0 6px}
+.team-card.A{border-left:5px solid var(--teamA)} .team-card.B{border-left:5px solid var(--teamB)}
+.members{display:flex;gap:6px;flex-wrap:wrap;min-height:28px}
+.member{font-size:12px;border-radius:999px;padding:4px 10px;color:#fff;font-weight:700}
+.member.A{background:var(--teamA)} .member.B{background:var(--teamB)}
+.member.empty{background:transparent;border:1px dashed var(--line);color:var(--muted);font-weight:400}
+
+.checks{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}
+.checks li{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px}
+.checks li i{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-size:11px;color:#fff;background:var(--line)}
+.checks li.ok i{background:var(--ok)} .checks li.ok{color:var(--ink)}
+.checks li.bad i{background:var(--warn)}
+
+.seg{display:flex;background:var(--bg2);border-radius:12px;padding:4px;gap:4px}
+.seg button{flex:1;border:0;background:transparent;border-radius:9px;padding:8px;cursor:pointer;color:var(--muted);font:500 13px "Noto Sans KR",sans-serif}
+.seg button.on{background:var(--panel);color:var(--ink);box-shadow:0 2px 6px rgba(0,0,0,.12)}
+.field{margin-top:14px} .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+.score-in{display:flex;align-items:center;gap:10px}
+.score-in .box{flex:1;border-radius:12px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;background:var(--bg2)}
+.score-in .box b{font-family:"Barlow Condensed",sans-serif;font-size:30px}
+.score-in .box .pm{display:flex;flex-direction:column;gap:2px}
+.score-in .box .pm button{border:0;background:var(--panel);color:var(--ink);border-radius:6px;width:24px;height:18px;cursor:pointer;line-height:1}
+.score-in .vs{font-family:"Barlow Condensed",sans-serif;font-weight:700;color:var(--muted)}
+
+.cta{width:100%;margin-top:16px;border:0;border-radius:12px;padding:14px;font:800 18px "Barlow Condensed",sans-serif;letter-spacing:1px;text-transform:uppercase;
+  cursor:pointer;background:linear-gradient(90deg,var(--court),color-mix(in srgb,var(--court) 60%,var(--accent)));color:#fff;box-shadow:var(--shadow)}
+.cta:hover{filter:brightness(1.08)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;transition:.25s;
+  background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:500;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%)}
+
+/* SVG overlay styles */
+.court-fill{fill:color-mix(in srgb,var(--accent) 16%,transparent);stroke:var(--accent);stroke-width:3;stroke-dasharray:14 8;animation:march 1.2s linear infinite}
+@keyframes march{to{stroke-dashoffset:-22}}
+.preview-line{stroke:var(--accent);stroke-width:2.2;fill:none;opacity:.95;filter:drop-shadow(0 0 4px var(--accent))}
+.net-line{stroke:#fff;stroke-width:3;stroke-dasharray:4 5;opacity:.9}
+.handle{cursor:grab}
+.handle circle.ring{fill:color-mix(in srgb,var(--accent) 25%,transparent);stroke:var(--accent);stroke-width:3}
+.handle circle.core{fill:var(--accent)}
+.handle text{font:800 18px "Barlow Condensed",sans-serif;fill:var(--accent-ink);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.handle:hover circle.ring{stroke-width:5}
+.handle.drag{cursor:grabbing}
+.pbox{cursor:pointer}
+.pbox rect.frame{fill:transparent;stroke:#ffffffaa;stroke-width:2;rx:10}
+.pbox:hover rect.frame{stroke:#fff;stroke-width:3;fill:#ffffff14}
+.pbox.A rect.frame{stroke:var(--teamA);stroke-width:4;fill:color-mix(in srgb,var(--teamA) 18%,transparent)}
+.pbox.B rect.frame{stroke:var(--teamB);stroke-width:4;fill:color-mix(in srgb,var(--teamB) 18%,transparent)}
+.pbox .tag{pointer-events:none}
+.pbox .tag rect{rx:8}
+.pbox .tag text{font:700 15px "Barlow Condensed",sans-serif;fill:#fff;dominant-baseline:central}
+.loupe-ring{fill:none;stroke:var(--accent);stroke-width:4}
+.hidden{display:none}
+.sb-bg{fill:rgba(8,14,11,.86);stroke:rgba(255,255,255,.12)}
+.sb-head{font:700 15px "Barlow Condensed",sans-serif;letter-spacing:2px;fill:var(--accent)}
+.sb-name{font:700 24px "Noto Sans KR",sans-serif;fill:#fff;dominant-baseline:central}
+.sb-tag{font:700 12px "Noto Sans KR",sans-serif;dominant-baseline:central}
+.sb-score{font:800 40px "Barlow Condensed",sans-serif;fill:#fff;text-anchor:middle;dominant-baseline:central}
+.sb-pop{animation:pop .35s ease}
+@keyframes pop{0%{transform:scale(1.35)}100%{transform:scale(1)}}
+.footnote{color:var(--muted);font-size:12px;padding:0 24px 24px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">
+      <!-- shuttlecock icon -->
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="19" r="3" fill="#fff"/><path d="M9.5 17 5 4h14l-4.5 13"/><path d="M8 4l2.2 13M16 4l-2.2 13M12 4v13"/>
+      </svg>
+    </div>
+    Smash<em>Score</em>
+  </div>
+  <span class="chip"><span class="dot" style="background:var(--ok)"></span>match.mp4 · 1920×1080 · 30fps</span>
+  <div class="spacer"></div>
+  <button class="icon-btn" id="themeBtn" aria-label="테마 전환">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">테마</span>
+  </button>
+</header>
+
+<nav class="stepper" id="stepper"></nav>
+
+<main>
+  <section class="card stage-wrap">
+    <div class="stage-top">
+      <span class="chip" id="modeChip"><span class="dot" style="background:var(--accent)"></span>코트 지정 모드</span>
+      <span class="chip" id="hintChip">드래그로 꼭짓점 이동 · 드래그 중 돋보기 표시</span>
+    </div>
+    <div class="stage" id="stage">
+      <svg class="scene" id="svg" viewBox="0 0 1600 900">
+        <defs>
+          <linearGradient id="arena" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1a2230"/><stop offset=".35" stop-color="#2a3442"/><stop offset="1" stop-color="#3b3530"/>
+          </linearGradient>
+          <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#6b4d34"/><stop offset="1" stop-color="#8a6544"/>
+          </linearGradient>
+          <linearGradient id="courtG" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1d6b45"/><stop offset="1" stop-color="#23824f"/>
+          </linearGradient>
+          <clipPath id="loupeClip"><circle id="loupeClipC" cx="0" cy="0" r="78"/></clipPath>
+        </defs>
+        <g id="scene"></g>
+        <g id="overlay"></g>
+        <g id="loupe" class="hidden">
+          <circle id="loupeBg" r="78" fill="#000"/>
+          <g clip-path="url(#loupeClip)"><use id="loupeUse" href="#scene"/><use id="loupeUse2" href="#overlayStatic"/></g>
+          <circle id="loupeRing" class="loupe-ring" r="78"/>
+          <path id="loupeCross" stroke="var(--accent)" stroke-width="1.5"/>
+        </g>
+      </svg>
+    </div>
+    <div class="scrub">
+      <button class="fbtn" id="prevF" title="이전 프레임 (←)">‹</button>
+      <input type="range" id="frameRange" min="0" max="35999" value="8119">
+      <button class="fbtn" id="nextF" title="다음 프레임 (→)">›</button>
+      <span class="num" id="frameNum"></span>
+    </div>
+    <div class="suggest" id="suggest"></div>
+  </section>
+
+  <aside>
+    <div class="card panel" id="panel"></div>
+  </aside>
+</main>
+<p class="footnote">디자인 시안 — 배경 경기장은 실제 영상 프레임 대신 그린 예시 그림이에요. 꼭짓점 드래그, 라인 미리보기, 선수 선택, 테마 전환이 실제로 동작해요.</p>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- 상태 ---------- */
+const STEPS=["영상 업로드","프레임 선택","코트 지정","선수 선택","경기 설정"];
+let step=2; // 0-based → 코트 지정
+const W=6.10,L=13.40,NET=L/2;
+const trueCorners=[[560,330],[1040,330],[1300,800],[300,800]];
+let corners=[[530,348],[1068,318],[1330,818],[268,786]];
+let showLines=true;
+let activeTeam="A";
+const teams={A:{name:"팀 A",members:[]},B:{name:"팀 B",members:[]}};
+const fmt={mode:"doubles",first:"A",scoreA:0,scoreB:0,target:21,ours:"A",board:true};
+// 선수 (코트 좌표 m)
+const players=[
+  {id:1,x:2.0,y:2.4},{id:2,x:4.3,y:4.9},{id:3,x:4.5,y:10.4},{id:4,x:1.7,y:11.6},{id:5,x:-1.4,y:6.6,umpire:true}
+];
+const assign={}; // id -> 'A'|'B'
+
+/* ---------- 호모그래피 ---------- */
+function solve(A,b){const n=b.length;for(let i=0;i<n;i++){let m=i;for(let r=i+1;r<n;r++)if(Math.abs(A[r][i])>Math.abs(A[m][i]))m=r;
+  [A[i],A[m]]=[A[m],A[i]];[b[i],b[m]]=[b[m],b[i]];for(let r=i+1;r<n;r++){const f=A[r][i]/A[i][i];for(let c=i;c<n;c++)A[r][c]-=f*A[i][c];b[r]-=f*b[i];}}
+  const x=Array(n).fill(0);for(let i=n-1;i>=0;i--){let s=b[i];for(let c=i+1;c<n;c++)s-=A[i][c]*x[c];x[i]=s/A[i][i];}return x;}
+function homography(src,dst){const A=[],b=[];for(let i=0;i<4;i++){const[X,Y]=src[i],[x,y]=dst[i];
+  A.push([X,Y,1,0,0,0,-x*X,-x*Y]);b.push(x);A.push([0,0,0,X,Y,1,-y*X,-y*Y]);b.push(y);}const h=solve(A,b);return[...h,1];}
+const COURT=[[0,0],[W,0],[W,L],[0,L]];
+const map=(H,[X,Y])=>{const d=H[6]*X+H[7]*Y+H[8];return[(H[0]*X+H[1]*Y+H[2])/d,(H[3]*X+H[4]*Y+H[5])/d];};
+function courtLines(){const s=0.46,ss=1.98,ls=0.76;return[
+  [[0,0],[W,0]],[[0,L],[W,L]],[[0,0],[0,L]],[[W,0],[W,L]],
+  [[s,0],[s,L]],[[W-s,0],[W-s,L]],
+  [[0,NET-ss],[W,NET-ss]],[[0,NET+ss],[W,NET+ss]],
+  [[0,ls],[W,ls]],[[0,L-ls],[W,L-ls]],
+  [[W/2,0],[W/2,NET-ss]],[[W/2,NET+ss],[W/2,L]]];}
+
+/* ---------- SVG 헬퍼 ---------- */
+const NS="http://www.w3.org/2000/svg";
+function el(tag,attrs={},parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e;}
+const pts=a=>a.map(p=>p.join(",")).join(" ");
+const svg=document.getElementById("svg");
+function svgPoint(evt){const p=svg.createSVGPoint();p.x=evt.clientX;p.y=evt.clientY;return p.matrixTransform(svg.getScreenCTM().inverse());}
+
+/* ---------- 배경 장면 (예시 그림) ---------- */
+function drawScene(){
+  const g=document.getElementById("scene");g.innerHTML="";
+  const T=homography(COURT,trueCorners);
+  el("rect",{x:0,y:0,width:1600,height:900,fill:"url(#arena)"},g);
+  // 관중석 줄무늬
+  for(let i=0;i<7;i++)el("rect",{x:0,y:40+i*30,width:1600,height:14,fill:"#ffffff",opacity:.035},g);
+  // 바닥
+  el("polygon",{points:pts([[-2.5,-3],[W+2.5,-3],[W+2.5,L+3],[-2.5,L+3]].map(p=>map(T,p))),fill:"url(#floor)"},g);
+  el("polygon",{points:pts([[-1,-1.2],[W+1,-1.2],[W+1,L+1.2],[-1,L+1.2]].map(p=>map(T,p))),fill:"url(#courtG)"},g);
+  for(const[a,b]of courtLines()){const[p,q]=[map(T,a),map(T,b)];el("line",{x1:p[0],y1:p[1],x2:q[0],y2:q[1],stroke:"#f4f4f0","stroke-width":3.2,opacity:.92},g);}
+  // 네트
+  const n1=map(T,[-0.2,NET]),n2=map(T,[W+0.2,NET]);
+  el("line",{x1:n1[0],y1:n1[1]-95,x2:n1[0],y2:n1[1],stroke:"#ddd","stroke-width":5},g);
+  el("line",{x1:n2[0],y1:n2[1]-95,x2:n2[0],y2:n2[1],stroke:"#ddd","stroke-width":5},g);
+  el("polygon",{points:pts([[n1[0],n1[1]-92],[n2[0],n2[1]-92],[n2[0],n2[1]-38],[n1[0],n1[1]-38]]),fill:"#111",opacity:.45},g);
+  el("line",{x1:n1[0],y1:n1[1]-92,x2:n2[0],y2:n2[1]-92,stroke:"#fff","stroke-width":4},g);
+  // 선수 실루엣
+  players.slice().sort((a,b)=>a.y-b.y).forEach(p=>{
+    const [fx,fy]=map(T,[p.x,p.y]);const h=100+(fy-330)*0.42;const w=h*0.36;
+    const shirt=p.umpire?"#222":(p.y<NET?"#e8e8e8":"#2b2b2b");
+    el("ellipse",{cx:fx,cy:fy,rx:w*.55,ry:w*.14,fill:"#000",opacity:.28},g);
+    el("rect",{x:fx-w*.32,y:fy-h*.45,width:w*.24,height:h*.45,rx:w*.1,fill:"#1d1d22"},g);
+    el("rect",{x:fx+w*.08,y:fy-h*.45,width:w*.24,height:h*.45,rx:w*.1,fill:"#1d1d22"},g);
+    el("rect",{x:fx-w*.42,y:fy-h*.82,width:w*.84,height:h*.42,rx:w*.22,fill:shirt},g);
+    el("circle",{cx:fx,cy:fy-h*.9,r:w*.24,fill:"#c99a7a"},g);
+    if(!p.umpire){el("line",{x1:fx+w*.38,y1:fy-h*.7,x2:fx+w*.85,y2:fy-h*1.05,stroke:"#999","stroke-width":2.5},g);
+      el("ellipse",{cx:fx+w*.95,cy:fy-h*1.15,rx:w*.2,ry:w*.27,fill:"none",stroke:"#bbb","stroke-width":2.5},g);}
+    p.box=[fx-w*.75,fy-h*1.1-w*.3,fx+w*1.25,fy+4];
+  });
+}
+
+/* ---------- 오버레이 ---------- */
+let dragIdx=-1;
+function drawOverlay(){
+  const g=document.getElementById("overlay");g.innerHTML="";
+  const stat=el("g",{id:"overlayStatic"},g);
+  if(step===2){
+    el("polygon",{points:pts(corners),class:"court-fill"},stat);
+    if(showLines){const H=homography(COURT,corners);
+      for(const[a,b]of courtLines()){const[p,q]=[map(H,a),map(H,b)];el("line",{x1:p[0],y1:p[1],x2:q[0],y2:q[1],class:"preview-line"},stat);}
+      const n1=map(H,[0,NET]),n2=map(H,[W,NET]);el("line",{x1:n1[0],y1:n1[1],x2:n2[0],y2:n2[1],class:"net-line"},stat);}
+    corners.forEach((c,i)=>{const h=el("g",{class:"handle"+(dragIdx===i?" drag":""),transform:`translate(${c[0]},${c[1]})`},g);
+      el("circle",{r:20,class:"ring"},h);el("circle",{r:13,class:"core"},h);const t=el("text",{},h);t.textContent=i+1;
+      h.addEventListener("pointerdown",e=>{dragIdx=i;svg.setPointerCapture(e.pointerId);showLoupe(c);drawOverlay();});});
+  }
+  if(step===4&&fmt.board)drawScoreboard(g);
+  if(step===3){
+    players.forEach(p=>{const [x1,y1,x2,y2]=p.box;const t=assign[p.id];
+      const b=el("g",{class:"pbox"+(t?" "+t:"")},g);
+      el("rect",{x:x1,y:y1,width:x2-x1,height:y2-y1,class:"frame"},b);
+      const label=t?`${teams[t].name} · #${p.id}`:`#${p.id}${p.umpire?" 심판?":""}`;
+      const tg=el("g",{class:"tag",transform:`translate(${x1},${y1-30})`},b);
+      el("rect",{width:label.length*9+20,height:24,fill:t?`var(--team${t})`:"#000000aa"},tg);
+      const tx=el("text",{x:10,y:12},tg);tx.textContent=label;
+      b.addEventListener("click",()=>togglePlayer(p));});
+  }
+}
+svg.addEventListener("pointermove",e=>{if(dragIdx<0)return;const p=svgPoint(e);
+  corners[dragIdx]=[Math.max(0,Math.min(1600,Math.round(p.x))),Math.max(0,Math.min(900,Math.round(p.y)))];
+  drawOverlay();showLoupe(corners[dragIdx]);renderPanel();});
+svg.addEventListener("pointerup",()=>{if(dragIdx<0)return;dragIdx=-1;document.getElementById("loupe").classList.add("hidden");drawOverlay();});
+
+function showLoupe([px,py]){const Z=3,R=78;let lx=px,ly=py-130;if(ly<R+6)ly=py+130;
+  const lp=document.getElementById("loupe");lp.classList.remove("hidden");
+  document.getElementById("loupeBg").setAttribute("cx",lx);document.getElementById("loupeBg").setAttribute("cy",ly);
+  const c=document.getElementById("loupeClipC");c.setAttribute("cx",lx);c.setAttribute("cy",ly);
+  const tr=`translate(${lx} ${ly}) scale(${Z}) translate(${-px} ${-py})`;
+  document.getElementById("loupeUse").setAttribute("transform",tr);document.getElementById("loupeUse2").setAttribute("transform",tr);
+  const r=document.getElementById("loupeRing");r.setAttribute("cx",lx);r.setAttribute("cy",ly);
+  document.getElementById("loupeCross").setAttribute("d",`M${lx-14},${ly}H${lx+14}M${lx},${ly-14}V${ly+14}`);}
+
+/* ---------- 스코어보드 (상대팀 위 / 우리팀 아래) ---------- */
+let popTeam=null;
+function drawScoreboard(g){
+  const ours=fmt.ours, opp=ours==="A"?"B":"A";
+  const rows=[{t:opp,label:"상대"},{t:ours,label:"우리"}];
+  const X=24,Y=24,Wd=380,RH=58;
+  const sb=el("g",{transform:`translate(${X},${Y})`},g);
+  el("rect",{x:0,y:0,width:Wd,height:30+RH*2+8,rx:14,class:"sb-bg"},sb);
+  const hd=el("text",{x:16,y:21,class:"sb-head"},sb);
+  hd.textContent=`GAME 1 · ${fmt.target}점 · ${fmt.mode==="doubles"?"복식":"단식"}`;
+  rows.forEach((r,i)=>{
+    const y=30+i*RH;const row=el("g",{transform:`translate(0,${y})`},sb);
+    if(i===1)el("line",{x1:12,y1:0,x2:Wd-12,y2:0,stroke:"rgba(255,255,255,.10)"},row);
+    el("rect",{x:12,y:10,width:7,height:RH-20,rx:3,fill:`var(--team${r.t})`},row);
+    const nm=el("text",{x:32,y:RH/2,class:"sb-name"},row);nm.textContent=teams[r.t].name;
+    const tw=Math.min(teams[r.t].name.length*24+40,190);
+    el("rect",{x:tw,y:RH/2-11,width:40,height:22,rx:6,fill:r.label==="우리"?"var(--accent)":"rgba(255,255,255,.14)"},row);
+    const tg=el("text",{x:tw+20,y:RH/2,class:"sb-tag","text-anchor":"middle",fill:r.label==="우리"?"var(--accent-ink)":"#cfd8d2"},row);tg.textContent=r.label;
+    // 서브 표시 (셔틀콕)
+    if(fmt.first===r.t){const sv=el("g",{transform:`translate(${Wd-118},${RH/2})`},row);
+      el("circle",{r:13,fill:"var(--accent)"},sv);
+      el("path",{d:"M-4,4 L-6,-6 L6,-6 L4,4 Z",fill:"none",stroke:"var(--accent-ink)","stroke-width":1.8,"stroke-linejoin":"round"},sv);
+      el("circle",{cy:5,r:3,fill:"var(--accent-ink)"},sv);}
+    el("rect",{x:Wd-86,y:6,width:74,height:RH-12,rx:10,fill:`color-mix(in srgb,var(--team${r.t}) 85%,#000)`},row);
+    const scg=el("g",{transform:`translate(${Wd-49},${RH/2})`},row);
+    const sc=el("text",{x:0,y:1,class:"sb-score"+(popTeam===r.t?" sb-pop":"")},scg);sc.textContent=fmt["score"+r.t];
+  });
+}
+
+/* ---------- 선수 선택 ---------- */
+function togglePlayer(p){
+  const cur=assign[p.id];
+  if(cur===activeTeam){delete assign[p.id];}
+  else{const max=fmt.mode==="doubles"?2:1;
+    if(Object.values(assign).filter(t=>t===activeTeam).length>=max){toast(`${teams[activeTeam].name}은 최대 ${max}명이에요`);return;}
+    assign[p.id]=activeTeam;}
+  drawOverlay();renderPanel();}
+function sideOf(p){return p.y<NET?"far":"near";}
+
+/* ---------- 패널 ---------- */
+const NAMES=["위-왼쪽","위-오른쪽","아래-오른쪽","아래-왼쪽"];
+function renderPanel(){
+  const P=document.getElementById("panel");
+  const chip=document.getElementById("modeChip");
+  if(step===2){chip.innerHTML='<span class="dot" style="background:var(--accent)"></span>코트 지정 모드';
+    P.innerHTML=`<h2>코트 지정</h2><p class="desc">복식 외곽선의 꼭짓점 4개를 드래그해서 맞춰요. 형광 라인이 실제 코트 라인과 겹치면 정확하게 지정된 거예요.</p>
+    <ul class="corners">${corners.map((c,i)=>`<li><span class="n">${i+1}</span>${NAMES[i]}<span class="xy">${Math.round(c[0])}, ${Math.round(c[1])}</span></li>`).join("")}</ul>
+    <div class="toggle-row">코트 라인 미리보기<button class="switch ${showLines?"on":""}" id="lineSw" aria-label="라인 미리보기"></button></div>
+    <button class="icon-btn" style="width:100%;margin-top:12px;justify-content:center" id="snapBtn">예시: 정답 위치로 맞추기</button>
+    <button class="cta" id="next">다음 · 선수 선택</button>`;
+    document.getElementById("lineSw").onclick=()=>{showLines=!showLines;drawOverlay();renderPanel();};
+    document.getElementById("snapBtn").onclick=()=>{corners=trueCorners.map(c=>[...c]);drawOverlay();renderPanel();toast("라인이 코트와 딱 맞았어요");};
+  }
+  else if(step===3){chip.innerHTML=`<span class="dot" style="background:var(--team${activeTeam})"></span>${teams[activeTeam].name} 선택 중`;
+    const max=fmt.mode==="doubles"?2:1;
+    const mem=t=>{const ids=Object.keys(assign).filter(k=>assign[k]===t);let h=ids.map(i=>`<span class="member ${t}">선수 #${i}</span>`).join("");
+      for(let i=ids.length;i<max;i++)h+=`<span class="member empty">빈 자리</span>`;return h;};
+    const sides=t=>[...new Set(players.filter(p=>assign[p.id]===t).map(sideOf))];
+    const cA=Object.values(assign).filter(t=>t==="A").length,cB=Object.values(assign).filter(t=>t==="B").length;
+    const sA=sides("A"),sB=sides("B");
+    const okCount=cA===max&&cB===max, okSide=sA.length===1&&sB.length===1&&sA[0]!==sB[0], okSame=sA.length<=1&&sB.length<=1;
+    P.innerHTML=`<h2>선수 선택</h2><p class="desc">팀을 고른 뒤 영상에서 선수 박스를 클릭해요. 다시 클릭하면 해제돼요.</p>
+    <div class="team-tabs">
+      <button class="team-tab A ${activeTeam==="A"?"on":""}" data-t="A"><div class="t" style="color:var(--teamA)">Team A</div><div class="c">${cA}/${max}명</div></button>
+      <button class="team-tab B ${activeTeam==="B"?"on":""}" data-t="B"><div class="t" style="color:var(--teamB)">Team B</div><div class="c">${cB}/${max}명</div></button>
+    </div>
+    <div class="team-card A"><input value="${teams.A.name}" data-n="A" aria-label="팀 A 이름"><div class="members">${mem("A")}</div></div>
+    <div class="team-card B"><input value="${teams.B.name}" data-n="B" aria-label="팀 B 이름"><div class="members">${mem("B")}</div></div>
+    <ul class="checks">
+      <li class="${okCount?"ok":"bad"}"><i>${okCount?"✓":"!"}</i>팀당 ${max}명 선택</li>
+      <li class="${okSame?"ok":"bad"}"><i>${okSame?"✓":"!"}</i>같은 팀은 같은 코트 쪽</li>
+      <li class="${okSide?"ok":"bad"}"><i>${okSide?"✓":"!"}</i>두 팀이 네트 반대편</li>
+    </ul>
+    <button class="cta" id="next">다음 · 경기 설정</button>`;
+    P.querySelectorAll(".team-tab").forEach(b=>b.onclick=()=>{activeTeam=b.dataset.t;renderPanel();});
+    P.querySelectorAll("input[data-n]").forEach(i=>i.oninput=()=>{teams[i.dataset.n].name=i.value||("팀 "+i.dataset.n);drawOverlay();
+      document.getElementById("modeChip").innerHTML=`<span class="dot" style="background:var(--team${activeTeam})"></span>${teams[activeTeam].name} 선택 중`;});
+  }
+  else if(step===4){chip.innerHTML='<span class="dot" style="background:var(--court)"></span>경기 설정';
+    const sb=(t,k)=>`<div class="box"><span style="color:var(--team${t});font-weight:700">${teams[t].name}</span><b>${fmt[k]}</b>
+      <span class="pm"><button data-k="${k}" data-d="1">+</button><button data-k="${k}" data-d="-1">−</button></span></div>`;
+    P.innerHTML=`<h2>경기 설정</h2><p class="desc">경기 중간부터 찍은 영상이면 시작 점수를 맞춰 주세요.</p>
+    <div class="field"><label>경기 방식</label><div class="seg" data-g="mode"><button data-v="singles" class="${fmt.mode==="singles"?"on":""}">단식</button><button data-v="doubles" class="${fmt.mode==="doubles"?"on":""}">복식</button></div></div>
+    <div class="field"><label>첫 서브 팀</label><div class="seg" data-g="first"><button data-v="A" class="${fmt.first==="A"?"on":""}">${teams.A.name}</button><button data-v="B" class="${fmt.first==="B"?"on":""}">${teams.B.name}</button></div></div>
+    <div class="field"><label>시작 점수</label><div class="score-in">${sb("A","scoreA")}<span class="vs">VS</span>${sb("B","scoreB")}</div></div>
+    <div class="field"><label>우리 팀</label><div class="seg" data-g="ours"><button data-v="A" class="${fmt.ours==="A"?"on":""}">${teams.A.name}</button><button data-v="B" class="${fmt.ours==="B"?"on":""}">${teams.B.name}</button></div></div>
+    <div class="toggle-row">영상 왼쪽 위 스코어보드 표시<button class="switch ${fmt.board?"on":""}" id="boardSw" aria-label="스코어보드 표시"></button></div>
+    <div class="field"><label>게임 규칙</label><div class="seg" data-g="target"><button data-v="21" class="${fmt.target==21?"on":""}">21점 (듀스, 최대 30)</button><button data-v="15" class="${fmt.target==15?"on":""}">15점</button></div></div>
+    <button class="cta" id="next">분석 시작</button>`;
+    P.querySelectorAll(".seg").forEach(s=>s.querySelectorAll("button").forEach(b=>b.onclick=()=>{fmt[s.dataset.g]=b.dataset.v;renderPanel();}));
+    P.querySelectorAll(".pm button").forEach(b=>b.onclick=()=>{fmt[b.dataset.k]=Math.max(0,Math.min(30,fmt[b.dataset.k]+ +b.dataset.d));popTeam=b.dataset.k.slice(-1);renderPanel();drawOverlay();popTeam=null;});
+    P.querySelectorAll(".seg").forEach(s=>s.querySelectorAll("button").forEach(b=>b.addEventListener("click",drawOverlay)));
+    document.getElementById("boardSw").onclick=()=>{fmt.board=!fmt.board;renderPanel();drawOverlay();};
+  }
+  else{chip.innerHTML='<span class="dot" style="background:var(--muted)"></span>'+STEPS[step];
+    P.innerHTML=`<h2>${STEPS[step]}</h2><p class="desc">${step===0?"영상을 드래그 앤 드롭으로 올려요. 큰 파일은 나눠서 업로드돼요.":"슬라이더나 아래 추천 프레임으로 4명이 잘 보이는 장면을 골라요."}</p>
+    <button class="cta" id="next">다음 단계</button>`;}
+  const nx=document.getElementById("next");
+  if(nx)nx.onclick=()=>{if(step<4){step++;render();}else toast("분석을 시작해요 (시안에서는 여기까지)");};
+}
+
+/* ---------- 스텝퍼 / 프레임 ---------- */
+function renderStepper(){const s=document.getElementById("stepper");
+  s.innerHTML=STEPS.map((n,i)=>`<div class="step ${i<step?"done":""} ${i===step?"active":""}" data-i="${i}"><b>${i<step?"✓":i+1}</b>${n}</div>`).join("");
+  s.querySelectorAll(".step").forEach(d=>d.onclick=()=>{step=+d.dataset.i;render();});}
+const fr=document.getElementById("frameRange");
+function renderFrame(){const f=+fr.value,s=f/30;document.getElementById("frameNum").textContent=`#${f} · ${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;}
+fr.oninput=renderFrame;
+document.getElementById("prevF").onclick=()=>{fr.value=+fr.value-1;renderFrame();};
+document.getElementById("nextF").onclick=()=>{fr.value=+fr.value+1;renderFrame();};
+document.addEventListener("keydown",e=>{if(e.target.tagName==="INPUT"&&e.target.type!=="range")return;
+  if(e.key==="ArrowLeft"){fr.value=+fr.value-1;renderFrame();}if(e.key==="ArrowRight"){fr.value=+fr.value+1;renderFrame();}});
+const sugg=[1520,4210,8119,12950,20480,27300];
+const mini=i=>{const o=[[30,18,82,18,104,58,8,58]][0];const dx=(i%3-1)*4;
+  return `<svg viewBox="0 0 112 63"><rect width="112" height="63" fill="#2a3442"/><polygon points="${o[0]+dx},${o[1]} ${o[2]+dx},${o[3]} ${o[4]},${o[5]} ${o[6]},${o[7]}" fill="#23824f" stroke="#fff" stroke-width="1"/>
+  <line x1="${19+dx/2}" y1="34" x2="${93+dx/2}" y2="34" stroke="#fff" stroke-width="1.5"/>
+  ${[[42,26],[66,24],[40,48],[72,46]].map(([x,y],k)=>`<circle cx="${x+(i*7+k*3)%9-4}" cy="${y}" r="${y>34?3:2.2}" fill="${y>34?'#ff6a55':'#4f8bff'}"/>`).join("")}</svg>`;};
+document.getElementById("suggest").innerHTML=sugg.map((f,i)=>`<div class="thumb ${f===8119?"sel":""}" data-f="${f}">${mini(i)}<span>#${f}</span><span class="badge">4명</span></div>`).join("");
+document.querySelectorAll(".thumb").forEach(t=>t.onclick=()=>{document.querySelectorAll(".thumb").forEach(x=>x.classList.remove("sel"));t.classList.add("sel");fr.value=t.dataset.f;renderFrame();toast("추천 프레임으로 이동했어요");});
+
+/* ---------- 테마 ---------- */
+const root=document.documentElement;
+function curTheme(){return root.dataset.theme||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");}
+function setThemeLabel(){document.getElementById("themeLabel").textContent=curTheme()==="dark"?"다크":"라이트";}
+document.getElementById("themeBtn").onclick=()=>{root.dataset.theme=curTheme()==="dark"?"light":"dark";setThemeLabel();};
+setThemeLabel();
+
+let tt;function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>t.classList.remove("show"),1800);}
+
+const HINTS=["mp4 · mov 지원","←/→ 키로 1프레임 이동","드래그로 꼭짓점 이동 · 드래그 중 돋보기 표시","박스 클릭으로 팀 지정 · 다시 클릭하면 해제","왼쪽 위 스코어보드 미리보기 · 결과 영상에도 그대로 들어가요"];
+function render(){renderStepper();drawOverlay();renderPanel();document.getElementById("hintChip").textContent=HINTS[step];}
+drawScene();renderFrame();render();
+</script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smash Score · 배드민턴 자동 점수</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%231f7a4a'/%3E%3Cg fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M9.5 17 5 4h14l-4.5 13'/%3E%3Cpath d='M8 4l2.2 13M16 4l-2.2 13M12 4v13'/%3E%3C/g%3E%3Ccircle cx='12' cy='19' r='3' fill='%23c8f03c'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="/" aria-label="Smash Score 처음으로">
+    <span class="logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="19" r="3" fill="#fff"/><path d="M9.5 17 5 4h14l-4.5 13"/><path d="M8 4l2.2 13M16 4l-2.2 13M12 4v13"/>
+      </svg>
+    </span>
+    Smash<em>Score</em>
+  </a>
+  <span class="chip hide-sm hidden" id="videoChip"></span>
+  <div class="spacer"></div>
+  <span class="chip hide-sm gpu" id="gpuChip" title="모델 상태"><span class="dot" style="background:var(--muted)"></span>모델 확인 중</span>
+  <button class="icon-btn" id="themeBtn" aria-label="라이트/다크 모드 전환">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <span id="themeLabel">테마</span>
+  </button>
+</header>
+
+<nav class="stepper" id="stepper" aria-label="진행 단계"></nav>
+
+<div id="view"></div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- 재사용 아이콘 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-shuttle" viewBox="0 0 48 48">
+      <path d="M17 31 10 6h28l-7 25" fill="#fff" stroke="#d9e2d6" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M15 7l5 24M33 7l-5 24M24 6v25M12.5 15h23M14.5 23h19" stroke="#c9d3c6" stroke-width="1.2" fill="none"/>
+      <path d="M17 31h14v3a7 7 0 0 1-14 0z" fill="#c8f03c" stroke="#1d2a00" stroke-width="1.4"/>
+    </symbol>
+  </defs>
+</svg>
+
+<script src="/static/app.js" type="module"></script>
+</body>
+</html>

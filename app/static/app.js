@@ -1,0 +1,927 @@
+/* =========================================================
+   Smash Score — 프런트엔드
+   단계: 0 업로드 → 1 프레임 → 2 코트 → 3 선수 → 4 경기 설정 → 5 분석 → 6 결과
+   ========================================================= */
+const STEPS = ["영상 업로드", "프레임 선택", "코트 지정", "선수 선택", "경기 설정", "분석", "결과"];
+const HINTS = [
+  "mp4 · mov 지원",
+  "←/→ 1프레임 · Shift+←/→ 1초 이동",
+  "꼭짓점을 드래그하세요 · 드래그 중 돋보기 표시",
+  "팀을 고르고 선수 박스를 클릭 · 다시 클릭하면 해제",
+  "왼쪽 위 스코어보드 미리보기 · 결과 영상에도 그대로 들어가요",
+  "분석은 서버 GPU에서 진행돼요",
+  "Space 재생 · ←/→ 2초 · [ ] 이전/다음 서브",
+];
+const W_M = 6.10, L_M = 13.40, NET = L_M / 2;
+const NS = "http://www.w3.org/2000/svg";
+const CORNER_NAMES = ["위-왼쪽", "위-오른쪽", "아래-오른쪽", "아래-왼쪽"];
+const SKELETON = [[5, 7], [7, 9], [6, 8], [8, 10], [5, 6], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16]];
+
+const S = {
+  step: 0, vid: null, meta: null, frame: 0,
+  corners: null, showLines: true, dragIdx: -1,
+  people: [], detFrame: -1, detecting: false, assign: {}, activeTeam: "A", showPose: true,
+  teams: { A: { name: "팀 A" }, B: { name: "팀 B" } },
+  fmt: { mode: "doubles", first: "A", scoreA: 0, scoreB: 0, target: 21, ours: "A", scoreboard: true, game: 1 },
+  suggest: null, config: null, job: null, renderJob: null, result: null, selEvent: null,
+};
+
+/* ---------------- 유틸 ---------------- */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const fmtTime = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, "0")}`; };
+const fmtBytes = b => b > 1e9 ? (b / 1e9).toFixed(1) + "GB" : (b / 1e6).toFixed(0) + "MB";
+function el(tag, attrs = {}, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+const pts = a => a.map(p => p.join(",")).join(" ");
+let tt; function toast(m, err = false) { const t = $("#toast"); t.textContent = m; t.classList.toggle("err", err); t.classList.add("show"); clearTimeout(tt); tt = setTimeout(() => t.classList.remove("show"), err ? 4200 : 2000); }
+
+async function api(path, opts = {}) {
+  const o = { ...opts };
+  if (o.json !== undefined) { o.body = JSON.stringify(o.json); o.headers = { "Content-Type": "application/json", ...(o.headers || {}) }; delete o.json; }
+  const r = await fetch(path, o);
+  if (!r.ok) {
+    let msg = `${r.status} ${r.statusText}`;
+    try { const j = await r.json(); msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch { }
+    throw new Error(msg);
+  }
+  return r.headers.get("content-type")?.includes("json") ? r.json() : r;
+}
+
+/* ---------------- 호모그래피 (코트 m ↔ 픽셀) ---------------- */
+function solve(A, b) {
+  const n = b.length;
+  for (let i = 0; i < n; i++) {
+    let m = i; for (let r = i + 1; r < n; r++) if (Math.abs(A[r][i]) > Math.abs(A[m][i])) m = r;
+    [A[i], A[m]] = [A[m], A[i]];[b[i], b[m]] = [b[m], b[i]];
+    for (let r = i + 1; r < n; r++) { const f = A[r][i] / A[i][i]; for (let c = i; c < n; c++) A[r][c] -= f * A[i][c]; b[r] -= f * b[i]; }
+  }
+  const x = Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) { let s = b[i]; for (let c = i + 1; c < n; c++) s -= A[i][c] * x[c]; x[i] = s / A[i][i]; }
+  return x;
+}
+function homography(src, dst) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) { const [X, Y] = src[i], [x, y] = dst[i]; A.push([X, Y, 1, 0, 0, 0, -x * X, -x * Y]); b.push(x); A.push([0, 0, 0, X, Y, 1, -y * X, -y * Y]); b.push(y); }
+  return [...solve(A, b), 1];
+}
+const COURT = [[0, 0], [W_M, 0], [W_M, L_M], [0, L_M]];
+const map = (H, [X, Y]) => { const d = H[6] * X + H[7] * Y + H[8]; return [(H[0] * X + H[1] * Y + H[2]) / d, (H[3] * X + H[4] * Y + H[5]) / d]; };
+function courtLines() {
+  const s = 0.46, ss = 1.98, ls = 0.76;
+  return [[[0, 0], [W_M, 0]], [[0, L_M], [W_M, L_M]], [[0, 0], [0, L_M]], [[W_M, 0], [W_M, L_M]], [[s, 0], [s, L_M]], [[W_M - s, 0], [W_M - s, L_M]],
+  [[0, NET - ss], [W_M, NET - ss]], [[0, NET + ss], [W_M, NET + ss]], [[0, ls], [W_M, ls]], [[0, L_M - ls], [W_M, L_M - ls]],
+  [[W_M / 2, 0], [W_M / 2, NET - ss]], [[W_M / 2, NET + ss], [W_M / 2, L_M]]];
+}
+function convex(q) { // 꼭짓점 4개가 볼록 사각형인지
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const [a, b, c] = [q[i], q[(i + 1) % 4], q[(i + 2) % 4]];
+    const z = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (Math.abs(z) < 1e-6) return false;
+    if (!sign) sign = Math.sign(z); else if (Math.sign(z) !== sign) return false;
+  }
+  return true;
+}
+
+/* ---------------- 상태 저장 (새로고침해도 이어서) ---------------- */
+function saveLocal() {
+  if (!S.vid) return;
+  const keep = { frame: S.frame, corners: S.corners, assign: S.assign, people: S.people, detFrame: S.detFrame, teams: S.teams, fmt: S.fmt, showLines: S.showLines, showPose: S.showPose };
+  localStorage.setItem("ss:" + S.vid, JSON.stringify(keep));
+}
+function loadLocal(vid) { try { return JSON.parse(localStorage.getItem("ss:" + vid) || "null"); } catch { return null; } }
+function setHash() { history.replaceState(null, "", S.vid ? `#/v/${S.vid}/${S.step}` : "#/"); }
+
+/* ---------------- 테마 ---------------- */
+const root = document.documentElement;
+const savedTheme = localStorage.getItem("ss:theme"); if (savedTheme) root.dataset.theme = savedTheme;
+function curTheme() { return root.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"); }
+function setThemeLabel() { $("#themeLabel").textContent = curTheme() === "dark" ? "다크" : "라이트"; }
+$("#themeBtn").onclick = () => { root.dataset.theme = curTheme() === "dark" ? "light" : "dark"; localStorage.setItem("ss:theme", root.dataset.theme); setThemeLabel(); };
+setThemeLabel();
+
+/* ---------------- 헤더 칩 ---------------- */
+async function checkHealth() {
+  const c = $("#gpuChip");
+  try {
+    const h = await api("/api/health");
+    const gpu = h.providers.includes("CUDAExecutionProvider");
+    c.innerHTML = h.ok ? `<span class="dot" style="background:var(--ok)"></span>${gpu ? "GPU 준비됨" : "CPU 모드"}`
+      : `<span class="dot" style="background:var(--warn)"></span>모델 파일 없음`;
+    c.title = h.ok ? `Detector · Pose 모델 준비됨 (${h.providers[0]})` : "Models 폴더를 확인하세요";
+  } catch { c.innerHTML = `<span class="dot" style="background:var(--bad)"></span>서버 연결 안 됨`; }
+}
+function setVideoChip() {
+  const c = $("#videoChip");
+  if (!S.meta) { c.classList.add("hidden"); return; }
+  const m = S.meta;
+  c.classList.remove("hidden");
+  c.innerHTML = `<span class="dot" style="background:var(--ok)"></span>${esc(m.name)} · ${m.width}×${m.height} · ${Math.round(m.fps)}fps · ${fmtTime(m.duration)}`;
+}
+
+/* ---------------- 단계 ---------------- */
+function maxStep() {
+  if (!S.vid) return 0;
+  if (S.result) return 6;
+  if (S.config) return 5;
+  return 4;
+}
+function renderStepper() {
+  const s = $("#stepper"); const mx = maxStep();
+  s.innerHTML = STEPS.map((n, i) => `<button class="step ${i < S.step ? "done" : ""} ${i === S.step ? "active" : ""} ${i > mx ? "locked" : ""}" data-i="${i}" ${i > mx ? 'aria-disabled="true"' : ""}><b>${i < S.step ? "✓" : i + 1}</b>${n}</button>`).join("");
+  $$(".step", s).forEach(d => d.onclick = () => { const i = +d.dataset.i; if (i > mx) { toast(i === 6 ? "분석이 끝나면 결과를 볼 수 있어요" : "앞 단계를 먼저 마쳐 주세요"); return; } go(i); });
+}
+function go(step) {
+  S.step = step; setHash(); saveLocal();
+  if (S.vid) api(`/api/videos/${S.vid}/meta`, { method: "PATCH", json: { step } }).catch(() => { });
+  render();
+}
+function render() {
+  renderStepper();
+  const v = $("#view");
+  stopVideoLoop();
+  if (S.step === 0) return renderUpload(v);
+  if (S.step <= 4) return renderStage(v);
+  if (S.step === 5) return renderAnalyze(v);
+  return renderResult(v);
+}
+
+/* =========================================================
+   0. 업로드 — 코트 모양 드롭존
+   ========================================================= */
+function courtSVG() {
+  const k = 100, L = [];
+  for (const [[x1, y1], [x2, y2]] of courtLines()) L.push(`<line class="cl" x1="${x1 * k}" y1="${y1 * k}" x2="${x2 * k}" y2="${y2 * k}"/>`);
+  return `<svg viewBox="-8 -8 626 1356" preserveAspectRatio="none" aria-hidden="true">${L.join("")}<line class="net" x1="-8" y1="${NET * k}" x2="618" y2="${NET * k}"/></svg>`;
+}
+async function renderUpload(v) {
+  v.innerHTML = `<main class="wide"><section class="card upload-hero">
+    <div>
+      <h1 class="display">영상만 올리면<span class="line2">점수는 저절로.</span></h1>
+      <p class="lead">복식 경기 영상을 올리고 코트와 선수만 알려 주세요. 서브할 때마다 4명이 멈춰 서는 순간을 찾아 누가 서브했는지로 점수를 셉니다.</p>
+      <ol class="how">
+        <li><b>1</b><span><strong>코트 꼭짓점 4개</strong>를 영상 위에 맞춰요.</span></li>
+        <li><b>2</b><span><strong>두 팀 선수</strong>를 클릭해서 나눠요.</span></li>
+        <li><b>3</b><span>서버 GPU가 <strong>선수 위치와 자세</strong>를 추적해요.</span></li>
+        <li><b>4</b><span><strong>점수 흐름</strong>을 확인하고, 틀린 서브는 바로 고쳐요.</span></li>
+      </ol>
+      <div class="recent" id="recent"></div>
+    </div>
+    <div>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="영상 파일 올리기">
+        ${courtSVG()}
+        <div class="fill" style="height:0"></div>
+        <svg class="shuttle" style="top:80%"><use href="#i-shuttle"/></svg>
+        <div class="label"><span class="big">영상 놓기</span><span class="small">또는 클릭해서 고르기 · mp4 · mov</span></div>
+      </div>
+      <input type="file" id="file" accept="video/*,.mp4,.mov,.mkv,.avi,.webm" hidden>
+    </div>
+  </section></main>
+  <p class="footnote">카메라가 고정된 영상을 가정해요. 파일명은 상관없어요 (서버에는 영문 ID로 저장돼요).</p>`;
+  const drop = $("#drop"), file = $("#file");
+  drop.onclick = () => !drop.classList.contains("uploading") && file.click();
+  drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); drop.click(); } };
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) upload(f); });
+  file.onchange = () => file.files[0] && upload(file.files[0]);
+  renderRecent();
+}
+async function renderRecent() {
+  const box = $("#recent"); if (!box) return;
+  let list = [];
+  try { list = await api("/api/videos"); } catch { return; }
+  if (!list.length) { box.innerHTML = ""; return; }
+  box.innerHTML = `<h3>이어서 작업하기</h3><div class="recent-list">${list.slice(0, 5).map(m => `
+    <div class="recent-item" data-id="${m.id}" role="button" tabindex="0">
+      <img src="/api/videos/${m.id}/thumb" alt="" loading="lazy">
+      <div style="min-width:0"><div class="t">${esc(m.name)}</div>
+      <div class="m">${fmtTime(m.duration)} · ${m.width}×${m.height} · ${m.has_result ? "분석 완료" : STEPS[Math.min(m.step || 1, 5)] + " 단계"}</div></div>
+      <button class="del" data-del="${m.id}" title="삭제" aria-label="${esc(m.name)} 삭제">✕</button>
+    </div>`).join("")}</div>`;
+  $$(".recent-item", box).forEach(it => {
+    it.onclick = e => { if (e.target.closest(".del")) return; openVideo(it.dataset.id); };
+    it.onkeydown = e => { if (e.key === "Enter") openVideo(it.dataset.id); };
+  });
+  $$(".del", box).forEach(b => b.onclick = async () => {
+    if (!confirm("이 영상과 분석 결과를 삭제할까요?")) return;
+    await api(`/api/videos/${b.dataset.del}`, { method: "DELETE" }); localStorage.removeItem("ss:" + b.dataset.del); toast("삭제했어요"); renderRecent();
+  });
+}
+function upload(f) {
+  const drop = $("#drop"); drop.classList.add("uploading");
+  const fill = $(".fill", drop), sh = $(".shuttle", drop), label = $(".label", drop);
+  label.innerHTML = `<span class="big">${esc(f.name)}</span><span class="small">${fmtBytes(f.size)} 올리는 중</span>`;
+  const pct = document.createElement("div"); pct.className = "pct"; drop.appendChild(pct);
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/videos");
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const p = e.loaded / e.total;
+    fill.style.height = (p * 100) + "%"; sh.style.top = (80 - p * 78) + "%"; pct.textContent = Math.round(p * 100) + "%";
+    if (p >= 1) label.innerHTML = `<span class="big">영상 확인 중</span><span class="small">프레임 정보를 읽고 있어요</span>`;
+  };
+  xhr.onload = () => {
+    let j; try { j = JSON.parse(xhr.responseText); } catch { j = {}; }
+    if (xhr.status >= 300) { toast(j.detail || "업로드 실패", true); renderUpload($("#view")); return; }
+    toast("업로드했어요");
+    openVideo(j.id, 1);
+  };
+  xhr.onerror = () => { toast("네트워크 오류로 업로드하지 못했어요", true); renderUpload($("#view")); };
+  const fd = new FormData(); fd.append("file", f); xhr.send(fd);
+}
+
+async function openVideo(id, step) {
+  try {
+    const meta = await api(`/api/videos/${id}`);
+    Object.assign(S, { vid: id, meta, suggest: null, result: null, people: [], detFrame: -1, assign: {}, job: null, renderJob: null, selEvent: null });
+    S.config = meta.config || null;
+    const loc = loadLocal(id);
+    const W = meta.width, H = meta.height;
+    S.corners = [[W * .3, H * .36], [W * .7, H * .36], [W * .9, H * .92], [W * .1, H * .92]];
+    S.frame = Math.round(meta.frames * 0.25);
+    if (S.config) { // 서버에 저장된 설정 우선
+      const c = S.config;
+      S.corners = c.court_corners_px; S.frame = c.ref_frame;
+      S.teams = { A: { name: c.teams["1"].name }, B: { name: c.teams["2"].name } };
+      S.fmt = { ...S.fmt, ...c.match };
+    }
+    if (loc) {
+      S.frame = loc.frame ?? S.frame; S.corners = loc.corners || S.corners; S.assign = loc.assign || {}; S.people = loc.people || [];
+      S.detFrame = loc.detFrame ?? -1; S.teams = loc.teams || S.teams; S.fmt = { ...S.fmt, ...(loc.fmt || {}) };
+      S.showLines = loc.showLines ?? true; S.showPose = loc.showPose ?? true;
+    }
+    if (meta.has_result) { try { S.result = await api(`/api/videos/${id}/result`); } catch { } }
+    const aj = meta.active_jobs?.analyze; if (aj && ["queued", "running"].includes(aj.state)) S.job = aj;
+    const rj = meta.active_jobs?.render; if (rj && ["queued", "running"].includes(rj.state)) S.renderJob = rj;
+    setVideoChip();
+    go(Math.min(step ?? (S.job ? 5 : S.result ? 6 : (meta.step || 1)), S.job ? 5 : maxStep()) || 1);
+  } catch (e) { toast(e.message, true); S.vid = null; S.meta = null; setVideoChip(); go(0); }
+}
+
+/* =========================================================
+   1~4. 영상 위 작업 (프레임 · 코트 · 선수 · 설정)
+   ========================================================= */
+let svg, imgEl;
+function renderStage(v) {
+  const m = S.meta, W = m.width, H = m.height;
+  v.innerHTML = `<main>
+    <section class="card stage-wrap">
+      <div class="stage-top"><span class="chip" id="modeChip"></span><span class="chip" id="hintChip">${HINTS[S.step]}</span><span class="spacer"></span><span class="chip hidden" id="detChip"></span></div>
+      <div class="stage" id="stage" style="aspect-ratio:${W}/${H}">
+        <svg class="scene" id="svg" viewBox="0 0 ${W} ${H}">
+          <defs><clipPath id="loupeClip"><circle id="loupeClipC" r="1"/></clipPath></defs>
+          <g id="scene"><image id="frameImg" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/></g>
+          <g id="overlay"></g>
+          <g id="loupe" class="hidden">
+            <circle id="loupeBg" fill="#000"/>
+            <g clip-path="url(#loupeClip)"><use id="loupeUse" href="#scene"/><use id="loupeUse2" href="#overlayStatic"/></g>
+            <circle id="loupeRing" class="loupe-ring"/><path id="loupeCross" stroke="var(--accent)"/>
+          </g>
+        </svg>
+        <div class="spin"><svg class="shuttle-loader"><use href="#i-shuttle"/></svg></div>
+      </div>
+      <div class="scrub ${S.step >= 4 ? "hidden" : ""}">
+        <button class="fbtn" id="prev10" title="1초 뒤로 (Shift+←)">«</button>
+        <button class="fbtn" id="prevF" title="이전 프레임 (←)">‹</button>
+        <input type="range" id="frameRange" min="0" max="${m.frames - 1}" value="${S.frame}" aria-label="프레임">
+        <button class="fbtn" id="nextF" title="다음 프레임 (→)">›</button>
+        <button class="fbtn" id="next10" title="1초 앞으로 (Shift+→)">»</button>
+        <span class="num" id="frameNum"></span>
+      </div>
+      <div class="suggest ${S.step !== 1 ? "hidden" : ""}" id="suggest"></div>
+    </section>
+    <aside><div class="card panel" id="panel"></div></aside>
+  </main>`;
+  svg = $("#svg"); imgEl = $("#frameImg");
+  bindStage();
+  loadFrame(S.frame);
+  if (S.step === 1) loadSuggest();
+  if (S.step === 3 && S.detFrame !== S.frame) runDetect();
+  drawOverlay(); renderPanel();
+}
+
+function loadFrame(f) {
+  S.frame = clamp(Math.round(f), 0, S.meta.frames - 1);
+  const r = $("#frameRange"); if (r) r.value = S.frame;
+  const s = S.frame / S.meta.fps;
+  const n = $("#frameNum"); if (n) n.textContent = `#${S.frame} · ${fmtTime(s)}`;
+  const url = `/api/videos/${S.vid}/frames/${S.frame}`;
+  const stage = $("#stage"); stage.classList.add("loading");
+  const pre = new Image();
+  pre.onload = () => { if (imgEl) imgEl.setAttribute("href", url); stage.classList.remove("loading"); };
+  pre.onerror = () => stage.classList.remove("loading");
+  pre.src = url;
+  $$(".thumb").forEach(t => t.classList.toggle("sel", +t.dataset.f === S.frame));
+  saveLocal();
+}
+let detTimer;
+function frameChanged() {
+  if (S.step === 3) { clearTimeout(detTimer); detTimer = setTimeout(runDetect, 350); }
+}
+
+function bindStage() {
+  const fr = $("#frameRange");
+  if (fr) {
+    fr.oninput = () => loadFrame(+fr.value);
+    fr.onchange = frameChanged;
+    const fps = Math.round(S.meta.fps);
+    $("#prevF").onclick = () => { loadFrame(S.frame - 1); frameChanged(); };
+    $("#nextF").onclick = () => { loadFrame(S.frame + 1); frameChanged(); };
+    $("#prev10").onclick = () => { loadFrame(S.frame - fps); frameChanged(); };
+    $("#next10").onclick = () => { loadFrame(S.frame + fps); frameChanged(); };
+  }
+  svg.addEventListener("pointermove", e => {
+    if (S.dragIdx < 0) return;
+    const p = svgPoint(e);
+    S.corners[S.dragIdx] = [clamp(Math.round(p.x), 0, S.meta.width), clamp(Math.round(p.y), 0, S.meta.height)];
+    drawOverlay(); showLoupe(S.corners[S.dragIdx]); updateCornerList();
+  });
+  const end = () => { if (S.dragIdx < 0) return; S.dragIdx = -1; $("#loupe").classList.add("hidden"); drawOverlay(); renderPanel(); saveLocal(); };
+  svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
+}
+function svgPoint(evt) { const p = svg.createSVGPoint(); p.x = evt.clientX; p.y = evt.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); }
+const U = () => S.meta.width / 1600; // 화면 단위 배율
+
+function showLoupe([px, py]) {
+  const u = U(), Z = 3, R = 80 * u;
+  let lx = px, ly = py - 140 * u; if (ly < R + 6) ly = py + 140 * u;
+  lx = clamp(lx, R + 4, S.meta.width - R - 4);
+  $("#loupe").classList.remove("hidden");
+  for (const id of ["loupeBg", "loupeRing"]) { const c = $("#" + id); c.setAttribute("cx", lx); c.setAttribute("cy", ly); c.setAttribute("r", R); }
+  $("#loupeRing").setAttribute("stroke-width", 4 * u);
+  const c = $("#loupeClipC"); c.setAttribute("cx", lx); c.setAttribute("cy", ly); c.setAttribute("r", R);
+  const tr = `translate(${lx} ${ly}) scale(${Z}) translate(${-px} ${-py})`;
+  $("#loupeUse").setAttribute("transform", tr); $("#loupeUse2").setAttribute("transform", tr);
+  const k = 14 * u; $("#loupeCross").setAttribute("d", `M${lx - k},${ly}H${lx + k}M${lx},${ly - k}V${ly + k}`); $("#loupeCross").setAttribute("stroke-width", 1.5 * u);
+}
+
+function drawOverlay() {
+  const g = $("#overlay"); if (!g) return; g.innerHTML = "";
+  const u = U();
+  const stat = el("g", { id: "overlayStatic" }, g);
+  if (S.step === 2 || S.step === 3) {
+    const ok = convex(S.corners);
+    if (S.step === 2) el("polygon", { points: pts(S.corners), class: "court-fill", "stroke-width": 3 * u, style: ok ? "" : "stroke:var(--bad)" }, stat);
+    if (ok && (S.showLines || S.step === 3)) {
+      const H = homography(COURT, S.corners);
+      for (const [a, b] of courtLines()) { const [p, q] = [map(H, a), map(H, b)]; el("line", { x1: p[0], y1: p[1], x2: q[0], y2: q[1], class: "preview-line", "stroke-width": (S.step === 3 ? 1.4 : 2.2) * u, opacity: S.step === 3 ? .45 : .95 }, stat); }
+      const n1 = map(H, [0, NET]), n2 = map(H, [W_M, NET]); el("line", { x1: n1[0], y1: n1[1], x2: n2[0], y2: n2[1], class: "net-line", "stroke-width": 3 * u }, stat);
+    }
+  }
+  if (S.step === 2) {
+    S.corners.forEach((c, i) => {
+      const h = el("g", { class: "handle" + (S.dragIdx === i ? " drag" : ""), transform: `translate(${c[0]},${c[1]})`, tabindex: 0, role: "button", "aria-label": `${CORNER_NAMES[i]} 꼭짓점` }, g);
+      el("circle", { r: 20 * u, class: "ring", "stroke-width": 3 * u }, h); el("circle", { r: 13 * u, class: "core" }, h);
+      const t = el("text", { "font-size": 18 * u }, h); t.textContent = i + 1;
+      h.addEventListener("pointerdown", e => { S.dragIdx = i; svg.setPointerCapture(e.pointerId); showLoupe(c); drawOverlay(); updateCornerList(); });
+      h.addEventListener("keydown", e => { // 키보드로 미세 조정
+        const d = e.shiftKey ? 10 : 1; let [x, y] = S.corners[i];
+        if (e.key === "ArrowLeft") x -= d; else if (e.key === "ArrowRight") x += d; else if (e.key === "ArrowUp") y -= d; else if (e.key === "ArrowDown") y += d; else return;
+        e.preventDefault(); e.stopPropagation(); S.corners[i] = [x, y]; drawOverlay(); updateCornerList(); saveLocal();
+        $$(".handle")[i]?.focus();
+      });
+    });
+  }
+  if (S.step === 3) drawPeople(g);
+  if (S.step === 4 && S.fmt.scoreboard) {
+    drawScoreboard(g, { score: { A: S.fmt.scoreA, B: S.fmt.scoreB }, server: S.fmt.first, game: S.fmt.game }, setupNow(), u);
+  }
+}
+
+function drawPeople(g) {
+  const u = U();
+  S.people.forEach(p => {
+    const [x1, y1, x2, y2] = p.box; const t = S.assign[p.id];
+    const b = el("g", { class: "pbox" + (t ? " " + t : "") + (p.in_play === false ? " out" : ""), tabindex: 0, role: "button", "aria-label": `선수 #${p.id}` }, g);
+    el("rect", { x: x1, y: y1, width: x2 - x1, height: y2 - y1, rx: 8 * u, class: "frame", "stroke-width": (t ? 4 : 2) * u }, b);
+    if (S.showPose && p.kps) {
+      const col = t ? `var(--team${t})` : "var(--accent)";
+      for (const [a, c] of SKELETON) {
+        const A = p.kps[a], C = p.kps[c]; if (A[2] < .3 || C[2] < .3) continue;
+        el("line", { x1: A[0], y1: A[1], x2: C[0], y2: C[1], class: "pose-bone", stroke: col, "stroke-width": 2.5 * u }, b);
+      }
+      p.kps.forEach((k, i) => { if (k[2] >= .3 && i >= 5) el("circle", { cx: k[0], cy: k[1], r: 3 * u, fill: "#fff" }, b); });
+    }
+    const label = t ? `${S.teams[t].name} · #${p.id}` : `#${p.id}${p.in_play === false ? " 코트 밖" : ""}`;
+    const fs = 15 * u, tw = (label.length * 8.6 + 18) * u;
+    const tg = el("g", { class: "tag", transform: `translate(${x1},${Math.max(0, y1 - 28 * u)})` }, b);
+    el("rect", { width: tw, height: 24 * u, rx: 7 * u, fill: t ? `var(--team${t})` : "#000000aa" }, tg);
+    const tx = el("text", { x: 9 * u, y: 12 * u, "font-size": fs }, tg); tx.textContent = label;
+    b.addEventListener("click", () => togglePlayer(p));
+    b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePlayer(p); } });
+  });
+}
+
+/* ---------------- 스코어보드 (상대팀 위 / 우리팀 아래) ---------------- */
+function setupNow() { return { ...S.fmt, nameA: S.teams.A.name, nameB: S.teams.B.name }; }
+function drawScoreboard(g, state, setup, u, popTeam = null) {
+  const ours = setup.ours || "A", opp = ours === "A" ? "B" : "A";
+  const rows = [{ t: opp, label: "상대" }, { t: ours, label: "우리" }];
+  const X = 24 * u, Y = 24 * u, Wd = 380, RH = 58;
+  const sb = el("g", { transform: `translate(${X},${Y}) scale(${u})` }, g);
+  el("rect", { x: 0, y: 0, width: Wd, height: 30 + RH * 2 + 8, rx: 14, class: "sb-bg" }, sb);
+  const hd = el("text", { x: 16, y: 21, class: "sb-head" }, sb);
+  hd.textContent = `GAME ${state.game || 1} · ${setup.target}점 · ${setup.mode === "singles" ? "단식" : "복식"}`;
+  const names = { A: setup.nameA, B: setup.nameB };
+  rows.forEach((r, i) => {
+    const y = 30 + i * RH; const row = el("g", { transform: `translate(0,${y})` }, sb);
+    if (i === 1) el("line", { x1: 12, y1: 0, x2: Wd - 12, y2: 0, stroke: "rgba(255,255,255,.10)" }, row);
+    el("rect", { x: 12, y: 10, width: 7, height: RH - 20, rx: 3, fill: `var(--team${r.t})` }, row);
+    let nm = names[r.t] || ("팀 " + r.t); if (nm.length > 7) nm = nm.slice(0, 6) + "…";
+    const nmEl = el("text", { x: 32, y: RH / 2, class: "sb-name" }, row); nmEl.textContent = nm;
+    const tw = Math.min(nm.length * 24 + 42, 200);
+    const mine = r.label === "우리";
+    el("rect", { x: tw, y: RH / 2 - 11, width: 40, height: 22, rx: 6, fill: mine ? "var(--accent)" : "rgba(255,255,255,.14)" }, row);
+    const tg = el("text", { x: tw + 20, y: RH / 2, class: "sb-tag", "text-anchor": "middle", fill: mine ? "var(--accent-ink)" : "#cfd8d2" }, row); tg.textContent = r.label;
+    if (state.server === r.t) {
+      const sv = el("g", { transform: `translate(${Wd - 118},${RH / 2})` }, row);
+      el("circle", { r: 13, fill: "var(--accent)" }, sv);
+      el("path", { d: "M-4,4 L-6,-6 L6,-6 L4,4 Z", fill: "none", stroke: "var(--accent-ink)", "stroke-width": 1.8, "stroke-linejoin": "round" }, sv);
+      el("circle", { cy: 5, r: 3, fill: "var(--accent-ink)" }, sv);
+    }
+    const box = el("rect", { x: Wd - 86, y: 6, width: 74, height: RH - 12, rx: 10, fill: `color-mix(in srgb,var(--team${r.t}) 85%,#000)`, class: popTeam === r.t ? "sb-flash" : "" }, row);
+    const scg = el("g", { transform: `translate(${Wd - 49},${RH / 2})` }, row);
+    const sc = el("text", { x: 0, y: 1, class: "sb-score" + (popTeam === r.t ? " sb-pop" : "") }, scg); sc.textContent = state.score[r.t];
+  });
+}
+
+/* ---------------- 프레임 추천 ---------------- */
+async function loadSuggest() {
+  const box = $("#suggest"); if (!box) return;
+  if (!S.suggest) {
+    box.innerHTML = Array.from({ length: 6 }, () => `<div class="thumb skel"></div>`).join("") ;
+    try { S.suggest = await api(`/api/videos/${S.vid}/suggest-frames`); }
+    catch (e) { box.innerHTML = `<div class="empty">추천 프레임을 못 불러왔어요: ${esc(e.message)}</div>`; return; }
+  }
+  if (S.step !== 1 || !$("#suggest")) return;
+  if (!S.suggest.length) { box.innerHTML = `<div class="empty">추천할 만한 프레임이 없어요. 슬라이더로 직접 골라 주세요.</div>`; return; }
+  box.innerHTML = S.suggest.map(s => `<button class="thumb ${s.frame === S.frame ? "sel" : ""}" data-f="${s.frame}" title="#${s.frame}">
+    <img src="/api/videos/${S.vid}/frames/${s.frame}?w=300" alt="" loading="lazy"><span>${fmtTime(s.frame / S.meta.fps)}</span>
+    <span class="badge ${s.people === 4 ? "" : "low"}">${s.people}명</span></button>`).join("");
+  $$(".thumb", box).forEach(t => t.onclick = () => { loadFrame(+t.dataset.f); toast("추천 프레임으로 이동했어요"); });
+}
+
+/* ---------------- 선수 검출 ---------------- */
+async function runDetect() {
+  if (S.step !== 3) return;
+  const chip = $("#detChip"); chip.classList.remove("hidden"); chip.className = "chip"; chip.innerHTML = `<span class="dot" style="background:var(--accent)"></span>선수 찾는 중`;
+  $("#stage").classList.add("loading"); S.detecting = true;
+  const frame = S.frame;
+  try {
+    const r = await api(`/api/videos/${S.vid}/detect`, { method: "POST", json: { frame, corners: convex(S.corners) ? S.corners : null } });
+    if (frame !== S.frame) return;
+    // 이전 선택을 박스 IoU로 이어 붙이기
+    const old = S.people, oldAssign = S.assign; S.assign = {};
+    for (const p of r.people) {
+      let best = null, bi = 0;
+      for (const o of old) { const v = iou(o.box, p.box); if (v > bi) { bi = v; best = o; } }
+      if (best && bi > .3 && oldAssign[best.id]) S.assign[p.id] = oldAssign[best.id];
+    }
+    S.people = r.people; S.detFrame = frame;
+    const inPlay = r.people.filter(p => p.in_play !== false).length;
+    chip.className = "chip " + (inPlay >= (S.fmt.mode === "doubles" ? 4 : 2) ? "ok" : "warn");
+    chip.innerHTML = `<span class="dot" style="background:currentColor"></span>코트 안 ${inPlay}명 · 전체 ${r.people.length}명`;
+    if (!Object.keys(S.assign).length) autoAssign(true);
+  } catch (e) { toast("검출 실패: " + e.message, true); chip.classList.add("hidden"); }
+  finally { S.detecting = false; $("#stage")?.classList.remove("loading"); drawOverlay(); renderPanel(); saveLocal(); }
+}
+function iou(a, b) {
+  const x1 = Math.max(a[0], b[0]), y1 = Math.max(a[1], b[1]), x2 = Math.min(a[2], b[2]), y2 = Math.min(a[3], b[3]);
+  const i = Math.max(0, x2 - x1) * Math.max(0, y2 - y1); return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i + 1e-9);
+}
+function autoAssign(quiet = false) {
+  const per = S.fmt.mode === "doubles" ? 2 : 1;
+  const inPlay = S.people.filter(p => p.in_play !== false && p.court);
+  const centered = p => Math.abs(p.court[0] - W_M / 2) + Math.max(0, -p.court[1]) + Math.max(0, p.court[1] - L_M);
+  const far = inPlay.filter(p => p.side === "far").sort((a, b) => centered(a) - centered(b) || b.conf - a.conf).slice(0, per);
+  const near = inPlay.filter(p => p.side === "near").sort((a, b) => centered(a) - centered(b) || b.conf - a.conf).slice(0, per);
+  if (far.length < per || near.length < per) { if (!quiet) toast("코트 양쪽에서 선수를 다 찾지 못했어요. 직접 골라 주세요"); return; }
+  S.assign = {}; far.forEach(p => S.assign[p.id] = "A"); near.forEach(p => S.assign[p.id] = "B");
+  if (!quiet) toast("위쪽 선수를 팀 A, 아래쪽 선수를 팀 B로 배정했어요");
+  drawOverlay(); renderPanel(); saveLocal();
+}
+function togglePlayer(p) {
+  const cur = S.assign[p.id];
+  if (cur === S.activeTeam) delete S.assign[p.id];
+  else {
+    const max = S.fmt.mode === "doubles" ? 2 : 1;
+    if (Object.values(S.assign).filter(t => t === S.activeTeam).length >= max) { toast(`${S.teams[S.activeTeam].name}은 최대 ${max}명이에요`); return; }
+    S.assign[p.id] = S.activeTeam;
+  }
+  drawOverlay(); renderPanel(); saveLocal();
+}
+function playerChecks() {
+  const max = S.fmt.mode === "doubles" ? 2 : 1;
+  const by = t => S.people.filter(p => S.assign[p.id] === t);
+  const sides = t => [...new Set(by(t).map(p => p.side).filter(Boolean))];
+  const cA = by("A").length, cB = by("B").length, sA = sides("A"), sB = sides("B");
+  return {
+    max, cA, cB,
+    okCount: cA === max && cB === max,
+    okSame: sA.length <= 1 && sB.length <= 1,
+    okSide: sA.length === 1 && sB.length === 1 && sA[0] !== sB[0],
+  };
+}
+
+/* ---------------- 패널 ---------------- */
+function updateCornerList() {
+  $$(".corners li").forEach((li, i) => { li.querySelector(".xy").textContent = `${Math.round(S.corners[i][0])}, ${Math.round(S.corners[i][1])}`; li.classList.toggle("hot", S.dragIdx === i); });
+}
+function renderPanel() {
+  const P = $("#panel"), chip = $("#modeChip"); if (!P) return;
+  if (S.step === 1) {
+    chip.innerHTML = '<span class="dot" style="background:var(--accent)"></span>프레임 선택';
+    P.innerHTML = `<h2>프레임 선택</h2><p class="desc">코트 라인이 잘 보이고 선수 ${S.fmt.mode === "doubles" ? 4 : 2}명이 모두 코트 안에 서 있는 장면을 골라 주세요. 서브 직전 장면이 가장 좋아요.</p>
+      <ul class="checks">
+        <li class="ok"><i>✓</i>코트 네 귀퉁이가 화면 안에 보여요</li>
+        <li class="ok"><i>✓</i>선수끼리 겹치지 않아요</li>
+        <li class="ok"><i>✓</i>아래 추천 프레임은 사람 수로 골랐어요</li>
+      </ul>
+      <button class="cta" id="next">이 프레임으로 · 코트 지정</button>`;
+    $("#next").onclick = () => { S.people = []; S.detFrame = -1; go(2); };
+  }
+  else if (S.step === 2) {
+    const ok = convex(S.corners);
+    chip.innerHTML = '<span class="dot" style="background:var(--accent)"></span>코트 지정 모드';
+    P.innerHTML = `<h2>코트 지정</h2><p class="desc">복식 바깥 라인의 꼭짓점 4개를 드래그해 맞춰 주세요. 형광 라인이 실제 코트 라인과 겹치면 정확하게 맞춘 거예요.</p>
+      <ul class="corners">${S.corners.map((c, i) => `<li><span class="n">${i + 1}</span>${CORNER_NAMES[i]}<span class="xy">${Math.round(c[0])}, ${Math.round(c[1])}</span></li>`).join("")}</ul>
+      <div class="toggle-row">코트 라인 미리보기<button class="switch ${S.showLines ? "on" : ""}" id="lineSw" role="switch" aria-checked="${S.showLines}" aria-label="코트 라인 미리보기"></button></div>
+      <p class="desc" style="margin:12px 0 0;font-size:12px">꼭짓점을 클릭한 뒤 방향키로 1px씩, <kbd>Shift</kbd>와 함께 10px씩 옮길 수 있어요.</p>
+      ${ok ? "" : `<ul class="checks"><li class="bad"><i>!</i>꼭짓점이 꼬였어요. 1→2→3→4 순서로 시계 방향이어야 해요</li></ul>`}
+      <button class="cta" id="next" ${ok ? "" : "disabled"}>다음 · 선수 선택</button>`;
+    $("#lineSw").onclick = () => { S.showLines = !S.showLines; drawOverlay(); renderPanel(); saveLocal(); };
+    $("#next").onclick = () => { S.detFrame = -1; go(3); };
+  }
+  else if (S.step === 3) {
+    chip.innerHTML = `<span class="dot" style="background:var(--team${S.activeTeam})"></span>${esc(S.teams[S.activeTeam].name)} 선택 중`;
+    const c = playerChecks();
+    const mem = t => {
+      const ids = Object.keys(S.assign).filter(k => S.assign[k] === t);
+      let h = ids.map(i => `<span class="member ${t}">선수 #${i}</span>`).join("");
+      for (let i = ids.length; i < c.max; i++) h += `<span class="member empty">빈 자리</span>`; return h;
+    };
+    P.innerHTML = `<h2>선수 선택</h2><p class="desc">팀을 고른 뒤 영상에서 선수 박스를 클릭하세요. 다시 클릭하면 해제돼요. 점선 박스는 코트 밖 사람(심판·관중)이에요.</p>
+      <div class="team-tabs">
+        <button class="team-tab A ${S.activeTeam === "A" ? "on" : ""}" data-t="A"><div class="t" style="color:var(--teamA)">Team A</div><div class="c">${c.cA}/${c.max}명</div></button>
+        <button class="team-tab B ${S.activeTeam === "B" ? "on" : ""}" data-t="B"><div class="t" style="color:var(--teamB)">Team B</div><div class="c">${c.cB}/${c.max}명</div></button>
+      </div>
+      <div class="team-card A"><input value="${esc(S.teams.A.name)}" data-n="A" maxlength="12" aria-label="팀 A 이름"><div class="members">${mem("A")}</div></div>
+      <div class="team-card B"><input value="${esc(S.teams.B.name)}" data-n="B" maxlength="12" aria-label="팀 B 이름"><div class="members">${mem("B")}</div></div>
+      <div class="btn-row"><button class="icon-btn sm" id="autoBtn">위/아래로 자동 배정</button><button class="icon-btn sm" id="swapBtn">팀 바꾸기</button><button class="icon-btn sm" id="redetBtn">다시 찾기</button></div>
+      <div class="toggle-row">관절(자세) 표시<button class="switch ${S.showPose ? "on" : ""}" id="poseSw" role="switch" aria-checked="${S.showPose}" aria-label="관절 표시"></button></div>
+      <ul class="checks" style="margin-top:12px">
+        <li class="${c.okCount ? "ok" : "bad"}"><i>${c.okCount ? "✓" : "!"}</i>팀당 ${c.max}명 선택</li>
+        <li class="${c.okSame ? "ok" : "bad"}"><i>${c.okSame ? "✓" : "!"}</i>같은 팀은 네트 같은 쪽</li>
+        <li class="${c.okSide ? "ok" : "bad"}"><i>${c.okSide ? "✓" : "!"}</i>두 팀이 네트 반대편</li>
+      </ul>
+      <button class="cta" id="next" ${c.okCount && c.okSide ? "" : "disabled"}>다음 · 경기 설정</button>`;
+    $$(".team-tab", P).forEach(b => b.onclick = () => { S.activeTeam = b.dataset.t; renderPanel(); });
+    $$("input[data-n]", P).forEach(i => i.oninput = () => { S.teams[i.dataset.n].name = i.value.trim() || ("팀 " + i.dataset.n); drawOverlay(); saveLocal(); chip.innerHTML = `<span class="dot" style="background:var(--team${S.activeTeam})"></span>${esc(S.teams[S.activeTeam].name)} 선택 중`; });
+    $("#autoBtn").onclick = () => autoAssign(false);
+    $("#swapBtn").onclick = () => { for (const k in S.assign) S.assign[k] = S.assign[k] === "A" ? "B" : "A"; drawOverlay(); renderPanel(); saveLocal(); };
+    $("#redetBtn").onclick = runDetect;
+    $("#poseSw").onclick = () => { S.showPose = !S.showPose; drawOverlay(); renderPanel(); saveLocal(); };
+    $("#next").onclick = () => go(4);
+  }
+  else if (S.step === 4) {
+    chip.innerHTML = '<span class="dot" style="background:var(--court)"></span>경기 설정';
+    const f = S.fmt, T = S.teams;
+    const sb = (t, k) => `<div class="box"><span class="nm" style="color:var(--team${t})">${esc(T[t].name)}</span><b>${f[k]}</b>
+      <span class="pm"><button data-k="${k}" data-d="1" aria-label="${esc(T[t].name)} 점수 올리기">+</button><button data-k="${k}" data-d="-1" aria-label="${esc(T[t].name)} 점수 내리기">−</button></span></div>`;
+    const seg = (g, opts) => `<div class="seg" data-g="${g}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(f[g]) === String(v) ? "on" : ""}">${esc(l)}</button>`).join("")}</div>`;
+    P.innerHTML = `<h2>경기 설정</h2><p class="desc">경기 중간부터 찍은 영상이면 시작 점수와 게임을 맞춰 주세요. 첫 서브 팀은 영상의 첫 서브 기준이에요.</p>
+      <div class="field"><label>첫 서브 팀</label>${seg("first", [["A", T.A.name], ["B", T.B.name]])}</div>
+      <div class="field"><label>시작 점수</label><div class="score-in">${sb("A", "scoreA")}<span class="vs">VS</span>${sb("B", "scoreB")}</div></div>
+      <div class="field"><label>시작 게임</label>${seg("game", [[1, "1게임"], [2, "2게임"], [3, "3게임"]])}</div>
+      <div class="field"><label>우리 팀 (스코어보드 아랫줄)</label>${seg("ours", [["A", T.A.name], ["B", T.B.name]])}</div>
+      <div class="field"><label>게임 규칙</label>${seg("target", [[21, "21점 · 듀스 최대 30"], [15, "15점"]])}</div>
+      <div class="toggle-row">스코어보드 미리보기<button class="switch ${f.scoreboard ? "on" : ""}" id="boardSw" role="switch" aria-checked="${f.scoreboard}" aria-label="스코어보드 미리보기"></button></div>
+      <button class="cta" id="next">분석 시작</button>`;
+    $$(".seg", P).forEach(s => $$("button", s).forEach(b => b.onclick = () => {
+      const g = s.dataset.g; f[g] = ["game", "target"].includes(g) ? +b.dataset.v : b.dataset.v; renderPanel(); drawOverlay(); saveLocal();
+    }));
+    $$(".pm button", P).forEach(b => b.onclick = () => {
+      f[b.dataset.k] = clamp(f[b.dataset.k] + +b.dataset.d, 0, 29); renderPanel();
+      const g = $("#overlay"); g.innerHTML = ""; drawScoreboard(g, { score: { A: f.scoreA, B: f.scoreB }, server: f.first, game: f.game }, setupNow(), U(), b.dataset.k.slice(-1)); saveLocal();
+    });
+    $("#boardSw").onclick = () => { f.scoreboard = !f.scoreboard; renderPanel(); drawOverlay(); saveLocal(); };
+    $("#next").onclick = startAnalyze;
+  }
+}
+
+async function startAnalyze() {
+  const btn = $("#next"); btn.disabled = true; btn.textContent = "설정 저장 중";
+  try {
+    const box = id => S.people.find(p => String(p.id) === String(id))?.box;
+    const teams = {};
+    for (const t of ["A", "B"]) teams[t] = { name: S.teams[t].name, bboxes: Object.keys(S.assign).filter(k => S.assign[k] === t).map(box).filter(Boolean) };
+    const { scoreboard, ...match } = S.fmt;
+    S.config = await api(`/api/videos/${S.vid}/config`, { method: "PUT", json: { ref_frame: S.detFrame >= 0 ? S.detFrame : S.frame, corners: S.corners, teams, match: { ...match, scoreboard } } });
+    S.job = await api(`/api/videos/${S.vid}/analyze`, { method: "POST" });
+    go(5);
+  } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "분석 시작"; }
+}
+
+/* =========================================================
+   5. 분석 진행
+   ========================================================= */
+let pollTimer;
+function renderAnalyze(v) {
+  const j = S.job;
+  v.innerHTML = `<main class="wide"><section class="card analyze" style="max-width:960px;margin:0 auto;width:100%">
+    <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
+      <div><h2 class="display" style="margin:0;font-size:34px">${j ? "경기를 읽는 중" : "분석 준비"}</h2>
+      <p class="desc" style="margin:4px 0 0;color:var(--muted)">${esc(S.meta.name)} · ${fmtTime(S.meta.duration)}</p></div>
+      <div class="spacer"></div><div class="big-pct" id="bigPct">0<small>%</small></div>
+    </div>
+    <div class="rally" aria-hidden="true"><div class="progress" id="rp" style="width:0"></div><div class="lines"></div><div class="netpost"></div>
+      <svg class="bird" id="bird" style="left:4%"><use href="#i-shuttle"/></svg></div>
+    <ul class="stage-list" id="stages"></ul>
+    <div id="jobErr"></div>
+    <div class="btn-row" style="margin:0">
+      ${j ? `<button class="icon-btn" id="cancelBtn">분석 취소</button>` : ""}
+      <button class="icon-btn" id="backBtn">설정으로 돌아가기</button>
+      ${S.result ? `<button class="icon-btn" id="resBtn">이전 결과 보기</button>` : ""}
+      ${!j ? `<button class="icon-btn" id="startBtn">분석 시작</button>` : ""}
+    </div>
+  </section></main>`;
+  $("#backBtn").onclick = () => go(4);
+  $("#resBtn") && ($("#resBtn").onclick = () => go(6));
+  $("#startBtn") && ($("#startBtn").onclick = async () => { try { S.job = await api(`/api/videos/${S.vid}/analyze`, { method: "POST" }); render(); } catch (e) { toast(e.message, true); } });
+  $("#cancelBtn") && ($("#cancelBtn").onclick = async () => { if (confirm("분석을 취소할까요?")) await api(`/api/jobs/${S.job.id}/cancel`, { method: "POST" }).catch(() => { }); });
+  if (j) { paintJob(j); pollJob(); }
+}
+function paintJob(j) {
+  const p = Math.round(j.progress * 100);
+  const big = $("#bigPct"); if (!big) return;
+  big.innerHTML = `${p}<small>%</small>`;
+  $("#rp").style.width = p + "%"; $("#bird").style.left = clamp(p, 4, 96) + "%";
+  $("#stages").innerHTML = j.stages.map((s, i) => `<li class="${s.state}"><i>${s.state === "done" ? "✓" : i + 1}</i>${esc(s.name)}<span class="sub">${esc(s.msg || (s.state === "run" ? Math.round(s.progress * 100) + "%" : ""))}</span></li>`).join("");
+  $("#jobErr").innerHTML = j.state === "error" ? `<div class="err-box">분석 중 오류가 났어요.\n${esc(j.error)}</div>` : j.state === "cancelled" ? `<div class="err-box">분석을 취소했어요.</div>` : "";
+}
+function pollJob() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
+    if (!S.job || S.step !== 5) return;
+    try {
+      const j = await api(`/api/jobs/${S.job.id}`); S.job = j; paintJob(j);
+      if (j.state === "done") {
+        S.result = await api(`/api/videos/${S.vid}/result`); S.job = null;
+        toast(`분석 완료 · 서브 ${S.result.events.length}개를 찾았어요`); go(6); return;
+      }
+      if (["error", "cancelled"].includes(j.state)) { S.job = null; renderStepper(); const c = $("#cancelBtn"); c && c.remove(); return; }
+    } catch (e) { toast(e.message, true); S.job = null; return; }
+    pollJob();
+  }, 900);
+}
+
+/* =========================================================
+   6. 결과 — 영상 + 실시간 스코어보드 + 점수 흐름 + 이벤트 수정
+   ========================================================= */
+let video, rafId, lastStateKey = null;
+function stopVideoLoop() { cancelAnimationFrame(rafId); rafId = null; clearTimeout(pollTimer); }
+
+function activeEvents() { return (S.result?.events || []).filter(e => !e.removed && e.server); }
+function stateAt(t) {
+  const st = S.result.setup;
+  let s = { score: { A: +st.scoreA || 0, B: +st.scoreB || 0 }, server: st.first || "A", game: +st.game || 1, ev: null, prev: null };
+  for (const e of activeEvents()) {
+    if (e.t_still > t + 1e-3) break;
+    s = { score: e.score, server: e.server, game: e.game, ev: e, prev: s };
+  }
+  return s;
+}
+function renderResult(v) {
+  const r = S.result; if (!r) { go(5); return; }
+  const m = S.meta;
+  v.innerHTML = `<main>
+    <section class="card stage-wrap">
+      <div class="stage-top"><span class="chip"><span class="dot" style="background:var(--ok)"></span>분석 결과</span><span class="chip" id="hintChip">${HINTS[6]}</span>
+        <span class="spacer"></span><div class="seg" id="srcSeg" style="padding:3px"><button data-k="auto" class="on" title="원본 영상 위에 점수를 실시간으로 표시">실시간 점수</button><button data-k="overlay" ${S.meta.has_overlay ? "title='스코어보드를 합성한 영상'" : "disabled title='점수 영상을 먼저 만들어 주세요'"}>합성 영상</button></div></div>
+      <div class="player-wrap" style="aspect-ratio:${m.width}/${m.height}">
+        <video id="vid" src="/api/videos/${S.vid}/stream?kind=auto" controls playsinline preload="metadata"></video>
+        <svg class="ov" id="ov" viewBox="0 0 ${m.width} ${m.height}"></svg>
+        <div class="flag" id="flag">확인 필요</div>
+      </div>
+      <div class="worm" id="worm"></div>
+    </section>
+    <aside>
+      <div class="card panel" id="rpanel"></div>
+    </aside>
+  </main>`;
+  video = $("#vid");
+  $$("#srcSeg button").forEach(b => b.onclick = () => {
+    if (b.disabled) return;
+    const t = video.currentTime; $$("#srcSeg button").forEach(x => x.classList.toggle("on", x === b));
+    video.src = `/api/videos/${S.vid}/stream?kind=${b.dataset.k}`; video.currentTime = t; $("#ov").classList.toggle("hidden", b.dataset.k === "overlay");
+  });
+  video.addEventListener("error", () => { if (!S.meta.has_preview) toast("브라우저가 이 영상 형식을 재생하지 못해요. 잠시 후 변환된 영상으로 다시 열어 주세요", true); });
+  renderWorm(); renderRPanel(); loop();
+  if (S.renderJob) pollRender();
+}
+function loop() {
+  const t = video?.currentTime || 0;
+  const st = stateAt(t);
+  const key = `${st.score.A}-${st.score.B}-${st.server}-${st.game}`;
+  if (key !== lastStateKey) {
+    const g = $("#ov"); g.innerHTML = "";
+    let pop = null;
+    if (st.prev && lastStateKey) { for (const k of ["A", "B"]) if (st.score[k] !== st.prev.score[k]) pop = k; }
+    drawScoreboard(g, st, S.result.setup, S.meta.width / 1600, pop);
+    lastStateKey = key;
+    $("#flag").classList.toggle("show", !!(st.ev && st.ev.flags?.length));
+    if (st.ev) $("#flag").textContent = st.ev.flags?.[0] || "";
+    markCurrent(st.ev?.id);
+  }
+  const head = $("#wormHead");
+  if (head && S._worm) { const x = S._worm.x(t); head.setAttribute("x1", x); head.setAttribute("x2", x); }
+  rafId = requestAnimationFrame(loop);
+}
+function seek(t, play = false) { if (!video) return; video.currentTime = Math.max(0, t); if (play) video.play().catch(() => { }); }
+
+/* 점수 흐름 차트 */
+function renderWorm() {
+  const box = $("#worm"); const r = S.result; const evs = activeEvents();
+  const dur = S.meta.duration || 1;
+  const setup = r.setup;
+  box.innerHTML = `<div class="worm-top"><b class="display" style="font-size:18px">점수 흐름</b>
+    <span class="leg"><i style="background:var(--teamA)"></i>${esc(setup.nameA)}</span><span class="leg"><i style="background:var(--teamB)"></i>${esc(setup.nameB)}</span>
+    <span class="leg"><i style="background:var(--warn);height:8px;width:8px;border-radius:50%"></i>확인 필요</span><span class="spacer"></span>
+    <span class="leg">점을 누르면 그 서브 장면으로 이동해요</span></div><svg id="wormSvg" preserveAspectRatio="none"></svg>`;
+  const svgW = $("#wormSvg"); const Wd = svgW.clientWidth || 800, Ht = 150, pl = 26, pr = 8, pt = 8, pb = 20;
+  svgW.setAttribute("viewBox", `0 0 ${Wd} ${Ht}`); svgW.setAttribute("preserveAspectRatio", "none");
+  const top = Math.max(0, ...evs.map(e => Math.max(e.score.A, e.score.B)), +setup.scoreA || 0, +setup.scoreB || 0);
+  let maxS = Math.max(5, Math.ceil((top + 1) / 5) * 5);
+  const x = t => pl + (Wd - pl - pr) * clamp(t / dur, 0, 1), y = s => Ht - pb - (Ht - pb - pt) * s / maxS;
+  S._worm = { x };
+  for (let s = 0; s <= maxS; s += 5) { el("line", { x1: pl, x2: Wd - pr, y1: y(s), y2: y(s), class: "grid" }, svgW); const tx = el("text", { x: pl - 6, y: y(s) + 4, class: "axis", "text-anchor": "end" }, svgW); tx.textContent = s; }
+  const ticks = Math.min(10, Math.ceil(dur / 60)); for (let i = 0; i <= ticks; i++) { const t = dur * i / ticks; const tx = el("text", { x: x(t), y: Ht - 4, class: "axis", "text-anchor": "middle" }, svgW); tx.textContent = fmtTime(t); }
+  // 게임별 선
+  const seg = { A: [], B: [] }; let game = +setup.game || 1; let cur = { A: [[0, +setup.scoreA || 0]], B: [[0, +setup.scoreB || 0]] };
+  const flush = () => { for (const k of ["A", "B"]) seg[k].push(cur[k]); };
+  let prev = { A: +setup.scoreA || 0, B: +setup.scoreB || 0 };
+  for (const e of evs) {
+    if (e.game !== game) {
+      // 이전 게임 마지막 점수 (games 기록)
+      const g = e.games?.[e.games.length - 1]; if (g) for (const k of ["A", "B"]) { cur[k].push([e.t_still, prev[k]], [e.t_still, g[k]]); }
+      flush(); el("line", { x1: x(e.t_still), x2: x(e.t_still), y1: pt, y2: Ht - pb, class: "gamebar" }, svgW);
+      const gt = el("text", { x: x(e.t_still) + 4, y: pt + 10, class: "axis" }, svgW); gt.textContent = `GAME ${e.game}`;
+      game = e.game; cur = { A: [[e.t_still, 0]], B: [[e.t_still, 0]] }; prev = { A: 0, B: 0 };
+    }
+    for (const k of ["A", "B"]) { cur[k].push([e.t_still, prev[k]], [e.t_still, e.score[k]]); }
+    prev = e.score;
+  }
+  for (const k of ["A", "B"]) { cur[k].push([dur, prev[k]]); }
+  flush();
+  for (const k of ["A", "B"]) for (const s of seg[k]) el("path", { d: "M" + s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L"), class: "path" + k }, svgW);
+  // 이벤트 점
+  for (const e of evs) {
+    const g = el("g", { class: "ev" + (e.flags?.length ? " flag" : ""), tabindex: 0, role: "button", "aria-label": `${fmtTime(e.t)} ${e.server} 서브` }, svgW);
+    el("circle", { cx: x(e.t_still), cy: y(e.score[e.server]), r: 4.5, fill: `var(--team${e.server})` }, g);
+    const ti = el("title", {}, g); ti.textContent = `${fmtTime(e.t)} · ${e.server === "A" ? setup.nameA : setup.nameB} 서브 · ${e.score.A}:${e.score.B}`;
+    g.addEventListener("click", () => selectEvent(e.id, true));
+  }
+  el("line", { id: "wormHead", x1: pl, x2: pl, y1: pt, y2: Ht - pb, class: "head" }, svgW);
+  svgW.addEventListener("click", ev => { if (ev.target.closest(".ev")) return; const rc = svgW.getBoundingClientRect(); const t = (ev.clientX - rc.left) / rc.width * Wd; seek((t - pl) / (Wd - pl - pr) * dur); });
+}
+
+function renderRPanel() {
+  const P = $("#rpanel"); const r = S.result, st = r.setup, sm = r.summary;
+  const all = r.events;
+  const nm = t => esc(t === "A" ? st.nameA : st.nameB);
+  const flagged = all.filter(e => !e.removed && e.flags?.length).length;
+  const gw = t => (sm.games || []).filter(g => g.winner === t).length;
+  const winner = sm.over ? (gw("A") > gw("B") ? "A" : "B") : null;
+  P.innerHTML = `<h2>점수</h2>
+    <div class="final">
+      <div class="side A ${winner === "A" ? "win" : ""}"><div class="nm">${nm("A")}</div><div class="sc">${sm.score.A}</div><div class="gw">게임 ${gw("A")}승${(sm.games || []).map(g => ` · ${g.A}`).join("")}</div></div>
+      <span class="vs">VS</span>
+      <div class="side B ${winner === "B" ? "win" : ""}"><div class="nm">${nm("B")}</div><div class="sc">${sm.score.B}</div><div class="gw">게임 ${gw("B")}승${(sm.games || []).map(g => ` · ${g.B}`).join("")}</div></div>
+    </div>
+    <p class="desc" style="margin-bottom:10px">서브 ${all.filter(e => !e.removed).length}개${flagged ? ` · <b style="color:var(--warn)">확인 필요 ${flagged}개</b>` : ""}. 서브를 누르면 고칠 수 있어요. 하나를 고치면 뒤쪽 점수가 다시 계산돼요.</p>
+    <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
+    <ul class="evlist" id="evlist"></ul>
+    <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
+    <h3>내보내기</h3>
+    <div class="exports">
+      <button class="icon-btn" id="renderBtn">${S.meta.has_overlay ? "점수 영상 다시 만들기" : "점수 영상 만들기"}</button>
+      <a class="icon-btn ${S.meta.has_overlay ? "" : "hidden"}" id="dlOverlay" href="/api/videos/${S.vid}/download/overlay.mp4">점수 영상 받기</a>
+      <a class="icon-btn" href="/api/videos/${S.vid}/download/events.csv">서브 기록 CSV</a>
+      <a class="icon-btn" href="/api/videos/${S.vid}/download/result.json">결과 JSON</a>
+      <a class="icon-btn" href="/api/videos/${S.vid}/download/players.csv">선수 추적 CSV</a>
+      <a class="icon-btn" href="/api/videos/${S.vid}/download/match.json">설정 match.json</a>
+    </div>`;
+  $$("#evFilter button").forEach(b => b.onclick = () => { S.evFilter = b.dataset.f; renderRPanel(); });
+  renderEvList();
+  $("#addServe").onclick = async () => {
+    const t = video.currentTime; const team = prompt(`${fmtTime(t)}에 서브한 팀은? A(${st.nameA}) 또는 B(${st.nameB})`, "A");
+    if (!team) return; const T = team.trim().toUpperCase(); if (!["A", "B"].includes(T)) { toast("A 또는 B로 입력해 주세요", true); return; }
+    await patch([{ action: "add_serve", t, team: T }]); toast("서브를 추가했어요");
+  };
+  $("#addPoint").onclick = async () => {
+    const team = prompt(`영상 마지막 랠리를 이긴 팀은? A(${st.nameA}) 또는 B(${st.nameB})`, "A");
+    if (!team) return; const T = team.trim().toUpperCase(); if (!["A", "B"].includes(T)) { toast("A 또는 B로 입력해 주세요", true); return; }
+    await patch([{ action: "add_point", t: Math.max(video.currentTime, (all.at(-1)?.t || 0) + 1), team: T }]); toast("마지막 랠리 점수를 추가했어요");
+  };
+  $("#renderBtn").onclick = startRender;
+}
+function renderEvList() {
+  const r = S.result, st = r.setup, ul = $("#evlist"); if (!ul) return;
+  const nm = t => esc(t === "A" ? st.nameA : st.nameB);
+  const list = r.events.filter(e => S.evFilter !== "flag" || (e.flags?.length && !e.removed));
+  if (!list.length) { ul.innerHTML = `<li class="empty-state">${S.evFilter === "flag" ? "확인이 필요한 서브가 없어요" : "찾은 서브가 없어요. 영상에서 4명이 멈춰 선 장면이 잘 안 보이면 코트·선수 지정을 다시 확인해 주세요."}</li>`; return; }
+  ul.innerHTML = list.map(e => {
+    const manual = e.override || e.kind === "point";
+    const what = e.kind === "point" ? "랠리 승리" : "서브";
+    const note = e.removed ? "삭제됨" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : "", manual ? "수정함" : ""].filter(Boolean).join(" · ");
+    return `<li class="ev-item ${e.id === S.selEvent ? "cur" : ""} ${e.flags?.length && !e.removed ? "flagged" : ""} ${e.removed ? "removed" : ""}" data-id="${e.id}">
+      <span class="tm">${fmtTime(e.t)}</span>
+      <span class="who">${e.server ? `<span class="sw" style="background:var(--team${e.server})"></span><span class="nm">${nm(e.server)} ${what}</span>` : `<span class="nm">—</span>`}<span class="note">${note}</span></span>
+      <span class="sc"><span style="color:var(--teamA)">${e.score.A}</span>:<span style="color:var(--teamB)">${e.score.B}</span></span>
+      ${e.conf != null && !e.removed ? `<span class="conf" title="신뢰도 ${Math.round(e.conf * 100)}%"><i style="width:${Math.round(e.conf * 100)}%;${e.conf < .75 ? "background:var(--warn)" : ""}"></i></span>` : ""}
+      <div class="acts">
+        ${e.flags?.length && !e.removed ? `<span class="chip warn" style="width:100%">${esc(e.flags.join(" · "))}</span>` : ""}
+        ${e.removed ? `<button class="icon-btn sm" data-a="restore">되살리기</button>` : `
+        <button class="icon-btn sm" data-a="A" ${e.server === "A" && manual ? "disabled" : ""}>${nm("A")} ${what}</button>
+        <button class="icon-btn sm" data-a="B" ${e.server === "B" && manual ? "disabled" : ""}>${nm("B")} ${what}</button>
+        ${e.override && e.kind !== "point" ? `<button class="icon-btn sm" data-a="clear">자동 판단으로</button>` : ""}
+        <button class="icon-btn sm" data-a="remove">서브 아님 (삭제)</button>`}
+        <button class="icon-btn sm" data-a="watch">장면 다시 보기</button>
+      </div></li>`;
+  }).join("");
+  $$(".ev-item", ul).forEach(li => {
+    li.onclick = e => { if (e.target.closest("button")) return; selectEvent(li.dataset.id, true); };
+    $$("button[data-a]", li).forEach(b => b.onclick = async () => {
+      const id = li.dataset.id, a = b.dataset.a; const ev = S.result.events.find(x => x.id === id);
+      if (a === "watch") { seek(ev.t_still - 1.5, true); return; }
+      if (a === "A" || a === "B") await patch([{ id, action: "set_server", team: a }]);
+      else await patch([{ id, action: a }]);
+    });
+  });
+}
+async function patch(body) {
+  try {
+    S.result = await api(`/api/videos/${S.vid}/events`, { method: "PATCH", json: body });
+    lastStateKey = null; renderWorm(); renderRPanel();
+  } catch (e) { toast(e.message, true); }
+}
+function selectEvent(id, doSeek) {
+  S.selEvent = id; const e = S.result.events.find(x => x.id === id);
+  $$(".ev-item").forEach(li => li.classList.toggle("cur", li.dataset.id === id));
+  $(`.ev-item[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" });
+  if (doSeek && e) seek(e.t_still - 1.0);
+}
+function markCurrent(id) {
+  if (!id || id === S._curEv) return; S._curEv = id;
+  $$(".ev-item").forEach(li => li.style.outline = li.dataset.id === id ? "2px solid color-mix(in srgb,var(--accent) 60%,transparent)" : "");
+}
+
+/* 점수 합성 영상 */
+async function startRender() {
+  try { S.renderJob = await api(`/api/videos/${S.vid}/render`, { method: "POST" }); pollRender(); }
+  catch (e) { toast(e.message, true); }
+}
+function pollRender() {
+  const btn = $("#renderBtn"); if (!btn || !S.renderJob) return;
+  btn.disabled = true;
+  const tick = async () => {
+    if (!S.renderJob || S.step !== 6) return;
+    try {
+      const j = await api(`/api/jobs/${S.renderJob.id}`);
+      const b = $("#renderBtn"); if (b) b.textContent = `점수 영상 만드는 중 ${Math.round(j.progress * 100)}%`;
+      if (j.state === "done") { S.renderJob = null; S.meta.has_overlay = true; toast("점수 영상을 만들었어요"); renderResult($("#view")); return; }
+      if (["error", "cancelled"].includes(j.state)) { S.renderJob = null; toast("점수 영상 만들기 실패: " + j.error, true); if (b) { b.disabled = false; b.textContent = "점수 영상 만들기"; } return; }
+    } catch (e) { S.renderJob = null; toast(e.message, true); return; }
+    setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+/* ---------------- 키보드 ---------------- */
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input:not([type=range]), textarea") || e.target.closest(".handle")) return;
+  if (S.step >= 1 && S.step <= 3 && $("#frameRange")) {
+    const d = e.shiftKey ? Math.round(S.meta.fps) : 1;
+    if (e.key === "ArrowLeft") { e.preventDefault(); loadFrame(S.frame - d); frameChanged(); }
+    if (e.key === "ArrowRight") { e.preventDefault(); loadFrame(S.frame + d); frameChanged(); }
+  }
+  if (S.step === 6 && video) {
+    if (e.key === " " && e.target.tagName !== "BUTTON") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
+    if (e.key === "ArrowLeft" && e.target !== video) { e.preventDefault(); seek(video.currentTime - 2); }
+    if (e.key === "ArrowRight" && e.target !== video) { e.preventDefault(); seek(video.currentTime + 2); }
+    if (e.key === "[" || e.key === "]") {
+      const evs = activeEvents(), t = video.currentTime;
+      const target = e.key === "]" ? evs.find(x => x.t_still - 1.0 > t + .3) : [...evs].reverse().find(x => x.t_still - 1.0 < t - .3);
+      if (target) selectEvent(target.id, true);
+    }
+  }
+});
+window.addEventListener("resize", () => { if (S.step === 6 && S.result) renderWorm(); });
+
+/* ---------------- 시작 ---------------- */
+checkHealth();
+const mh = location.hash.match(/^#\/v\/([a-z0-9]+)(?:\/(\d))?/);
+if (mh) openVideo(mh[1], mh[2] != null ? +mh[2] : undefined); else go(0);
