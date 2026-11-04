@@ -43,6 +43,7 @@
   → [분석] 4명 정지 구간 → 서브 대형 확인 → 서버 쪽 단서(자세·손목 움직임)
   → [분석] 점수 상태머신 + 빔 서치 (짝/홀 위치 규칙, 게임 종료, 코트 교대)
   → 결과: 실시간 스코어보드 + 점수 흐름 차트 + 서브 수정 + 점수 합성 영상(H.264)
+  → 유튜브 공개용: 머리(head) 모자이크, 고른 선수 번호만 얼굴 공개 → public.mp4
 ```
 
 ---
@@ -98,6 +99,7 @@ badminton/
 │  ├─ court.py       코트 좌표계, 호모그래피, 서비스 코트 판정
 │  ├─ analysis.py    추적 → 서브 후보 → 점수 상태머신(빔 서치)
 │  ├─ render.py      스코어보드 합성 영상, 브라우저용 미리보기 변환
+│  ├─ privacy.py     공개용 마스킹 (head 모자이크, 선수 번호 제외)
 │  ├─ assets/        영상 합성용 폰트 (Noto Sans KR, Barlow Condensed)
 │  └─ static/        index.html, style.css, app.js
 └─ data/videos/<영상ID>/      업로드·분석 결과 (git 제외)
@@ -105,7 +107,7 @@ badminton/
    ├─ match.json             코트 + 팀 + 경기 설정 (이전 match.json 형식 유지 + "match" 항목 추가)
    ├─ tracks.npz, players.csv
    ├─ serves_raw.json, result.json, events.csv
-   └─ overlay.mp4, preview.mp4(코덱 변환 시)
+   └─ overlay.mp4, public.mp4(공개용), preview.mp4(코덱 변환 시)
 ```
 
 ---
@@ -146,7 +148,18 @@ badminton/
 - 수동 수정: `override`(서버 팀 지정), `removed`, `kind="point"`(영상 마지막 랠리 승자). 수정하면 나머지를 다시 계산.
 - 경기 첫 서브는 점수 없음. 21점(20:20부터 2점 차, 최대 30) / 15점, 3판 2선승.
 
-### 5.6 API
+### 5.6 공개용 마스킹 (`app/privacy.py`)
+- 대상: Detector의 **`head` 클래스(인덱스 2)**. 클래스 순서는 `person, car, head, wheelchair, stroller, plate, heavy_machine`.
+  인덱스를 하드코딩하지 않고 `det.cls_id("head")`로 찾는다.
+- 매 프레임(샘플링 없이) 8장씩 배치 검출 → 박스를 25% 넓혀 모자이크. 검출이 끊겨도 0.3초간 마스크 유지.
+- **선수 번호**: 복식 1·2 = 팀 A, 3·4 = 팀 B (단식 1 = A, 2 = B). 팀 안 순서는 설정 때 고른 박스를 코트 왼쪽부터 정렬.
+  추적 슬롯 `{side}{idx}`와 같고, 위치→팀 매핑은 이벤트의 `sides` 기록으로 프레임마다 계산(코트 교대 반영).
+- 제외 판정: 제외 선수의 추적 박스(샘플 사이 선형 보간) 윗부분 45% 안에 머리 중심이 있으면 가리지 않음.
+- **한계**: 같은 팀 두 선수가 엇갈리거나 게임이 바뀌면 팀 안 번호(1↔2)가 바뀔 수 있다. 팀 전체를 공개할 때는 영향 없음.
+  머리 검출을 놓친 프레임이 있을 수 있으니 업로드 전에 한 번 훑어볼 것.
+- 속도: 1080p 15fps 1분 영상 약 32초 (A100, GPU 풀에서 실행).
+
+### 5.7 API
 ```
 GET   /api/health                       모델·GPU 상태
 POST  /api/videos                       업로드 (multipart) → meta
@@ -163,9 +176,10 @@ POST  /api/jobs/{job_id}/cancel
 GET   /api/videos/{id}/result           서브 이벤트 + 점수
 PATCH /api/videos/{id}/events           [{id, action: set_server|clear|remove|restore|add_serve|add_point, team, t}]
 POST  /api/videos/{id}/rescore          설정만 바꾼 뒤 점수 재계산
-POST  /api/videos/{id}/render           점수 합성 영상 만들기 → job
-GET   /api/videos/{id}/stream?kind=     영상 재생 (auto|source|preview|overlay, Range 지원)
-GET   /api/videos/{id}/download/{name}  result.json, events.csv, players.csv, match.json, overlay.mp4
+POST  /api/videos/{id}/render           {mask, exclude:[선수 번호], scoreboard} → overlay.mp4 또는 public.mp4 (job)
+GET   /api/videos/{id}/players          선수 번호 목록,  /players/{no}/thumb  설정 프레임 상반신 썸네일
+GET   /api/videos/{id}/stream?kind=     영상 재생 (auto|source|preview|overlay|public, Range 지원)
+GET   /api/videos/{id}/download/{name}  result.json, events.csv, players.csv, match.json, overlay.mp4, public.mp4
 ```
 - 작업은 메모리에 저장된다. 서버를 다시 시작하면 진행 중이던 작업 정보가 사라진다(결과 파일은 남음).
 - GPU 작업은 한 번에 하나(`GPU_POOL`), 렌더링·변환은 CPU 풀 2개.

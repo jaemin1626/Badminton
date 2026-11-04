@@ -103,7 +103,9 @@ def ffmpeg_exe():
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def render_overlay(src: str, out: str, events: list, setup: dict, progress=None, stop=None):
+def render_overlay(src: str, out: str, events: list, setup: dict, progress=None, stop=None,
+                   masker=None, scoreboard_on: bool = True, batch: int = 8):
+    """점수 합성 영상. masker가 있으면 프레임 묶음마다 masker.apply(frames, idx)로 마스킹(공개용)."""
     cap = cv2.VideoCapture(src)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -118,33 +120,46 @@ def render_overlay(src: str, out: str, events: list, setup: dict, progress=None,
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     cache = {}
     pop_frames = int(fps * 0.6)
+
+    def draw_board(img, f):
+        k = bisect.bisect_right(keys, f) - 1
+        since = f - keys[k]
+        pop = max(0.0, 1 - since / pop_frames) if (states[k]["changed"] and since < pop_frames) else 0.0
+        pop = round(pop * 6) / 6  # 캐시를 위해 단계화
+        ck = (k, pop)
+        if ck not in cache:
+            arr = np.asarray(scoreboard(states[k], setup, scale, pop))
+            cache[ck] = (arr[:, :, 2::-1].astype(np.float32), arr[:, :, 3:4].astype(np.float32) / 255.0)
+            if len(cache) > 64:
+                cache.pop(next(iter(cache)))
+        rgb, a = cache[ck]
+        h, w = rgb.shape[:2]
+        roi = img[margin:margin + h, margin:margin + w]
+        h2, w2 = roi.shape[:2]
+        roi[:] = (roi.astype(np.float32) * (1 - a[:h2, :w2]) + rgb[:h2, :w2] * a[:h2, :w2]).astype(np.uint8)
+
     try:
         f = 0
-        while True:
+        done = False
+        while not done:
             if stop is not None and stop.is_set():
                 raise InterruptedError("취소됨")
-            ok, img = cap.read()
-            if not ok:
+            imgs, idx = [], []
+            for _ in range(batch):
+                ok, img = cap.read()
+                if not ok:
+                    done = True
+                    break
+                imgs.append(img); idx.append(f); f += 1
+            if not imgs:
                 break
-            k = bisect.bisect_right(keys, f) - 1
-            since = f - keys[k]
-            pop = max(0.0, 1 - since / pop_frames) if (states[k]["changed"] and since < pop_frames) else 0.0
-            pop = round(pop * 6) / 6  # 캐시를 위해 단계화
-            ck = (k, pop)
-            if ck not in cache:
-                sb = scoreboard(states[k], setup, scale, pop)
-                arr = np.asarray(sb)
-                cache[ck] = (arr[:, :, 2::-1].astype(np.float32), arr[:, :, 3:4].astype(np.float32) / 255.0)
-                if len(cache) > 64:
-                    cache.pop(next(iter(cache)))
-            rgb, a = cache[ck]
-            h, w = rgb.shape[:2]
-            roi = img[margin:margin + h, margin:margin + w]
-            h2, w2 = roi.shape[:2]
-            roi[:] = (roi.astype(np.float32) * (1 - a[:h2, :w2]) + rgb[:h2, :w2] * a[:h2, :w2]).astype(np.uint8)
-            proc.stdin.write(img.tobytes())
-            f += 1
-            if progress and f % 30 == 0:
+            if masker is not None:
+                masker.apply(imgs, idx)  # 스코어보드보다 먼저 (스코어보드는 가리지 않게)
+            for img, fi in zip(imgs, idx):
+                if scoreboard_on:
+                    draw_board(img, fi)
+                proc.stdin.write(img.tobytes())
+            if progress and (f // batch) % 4 == 0:
                 progress(f / max(total, 1), f"{f:,} / {total:,} 프레임")
         proc.stdin.close()
         if proc.wait() != 0:

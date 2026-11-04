@@ -24,6 +24,7 @@ const S = {
   teams: { A: { name: "팀 A" }, B: { name: "팀 B" } },
   fmt: { mode: "doubles", first: "A", scoreA: 0, scoreB: 0, target: 21, ours: "A", scoreboard: true, game: 1 },
   suggest: null, config: null, job: null, renderJob: null, result: null, selEvent: null,
+  pub: { exclude: [], scoreboard: true }, publicJob: null, players: null,
 };
 
 /* ---------------- 유틸 ---------------- */
@@ -256,6 +257,8 @@ async function openVideo(id, step) {
     if (meta.has_result) { try { S.result = await api(`/api/videos/${id}/result`); } catch { } }
     const aj = meta.active_jobs?.analyze; if (aj && ["queued", "running"].includes(aj.state)) S.job = aj;
     const rj = meta.active_jobs?.render; if (rj && ["queued", "running"].includes(rj.state)) S.renderJob = rj;
+    const pj = meta.active_jobs?.public; S.publicJob = pj && ["queued", "running"].includes(pj.state) ? pj : null;
+    S.players = null; S.pub = { exclude: meta.public?.exclude || [], scoreboard: meta.public?.scoreboard ?? true };
     setVideoChip();
     go(Math.min(step ?? (S.job ? 5 : S.result ? 6 : (meta.step || 1)), S.job ? 5 : maxStep()) || 1);
   } catch (e) { toast(e.message, true); S.vid = null; S.meta = null; setVideoChip(); go(0); }
@@ -700,7 +703,7 @@ function renderResult(v) {
   v.innerHTML = `<main>
     <section class="card stage-wrap">
       <div class="stage-top"><span class="chip"><span class="dot" style="background:var(--ok)"></span>분석 결과</span><span class="chip" id="hintChip">${HINTS[6]}</span>
-        <span class="spacer"></span><div class="seg" id="srcSeg" style="padding:3px"><button data-k="auto" class="on" title="원본 영상 위에 점수를 실시간으로 표시">실시간 점수</button><button data-k="overlay" ${S.meta.has_overlay ? "title='스코어보드를 합성한 영상'" : "disabled title='점수 영상을 먼저 만들어 주세요'"}>합성 영상</button></div></div>
+        <span class="spacer"></span><div class="seg" id="srcSeg" style="padding:3px"><button data-k="auto" class="on" title="원본 영상 위에 점수를 실시간으로 표시">실시간 점수</button><button data-k="overlay" ${S.meta.has_overlay ? "title='스코어보드를 합성한 영상'" : "disabled title='점수 영상을 먼저 만들어 주세요'"}>합성 영상</button><button data-k="public" ${S.meta.has_public ? "title='얼굴 모자이크 처리한 공개용 영상'" : "disabled title='공개용 영상을 먼저 만들어 주세요'"}>공개용</button></div></div>
       <div class="player-wrap" style="aspect-ratio:${m.width}/${m.height}">
         <video id="vid" src="/api/videos/${S.vid}/stream?kind=auto" controls playsinline preload="metadata"></video>
         <svg class="ov" id="ov" viewBox="0 0 ${m.width} ${m.height}"></svg>
@@ -716,7 +719,7 @@ function renderResult(v) {
   $$("#srcSeg button").forEach(b => b.onclick = () => {
     if (b.disabled) return;
     const t = video.currentTime; $$("#srcSeg button").forEach(x => x.classList.toggle("on", x === b));
-    video.src = `/api/videos/${S.vid}/stream?kind=${b.dataset.k}`; video.currentTime = t; $("#ov").classList.toggle("hidden", b.dataset.k === "overlay");
+    video.src = `/api/videos/${S.vid}/stream?kind=${b.dataset.k}`; video.currentTime = t; $("#ov").classList.toggle("hidden", b.dataset.k !== "auto");
   });
   video.addEventListener("error", () => { if (!S.meta.has_preview) toast("브라우저가 이 영상 형식을 재생하지 못해요. 잠시 후 변환된 영상으로 다시 열어 주세요", true); });
   renderWorm(); renderRPanel(); loop();
@@ -813,7 +816,15 @@ function renderRPanel() {
       <a class="icon-btn" href="/api/videos/${S.vid}/download/result.json">결과 JSON</a>
       <a class="icon-btn" href="/api/videos/${S.vid}/download/players.csv">선수 추적 CSV</a>
       <a class="icon-btn" href="/api/videos/${S.vid}/download/match.json">설정 match.json</a>
-    </div>`;
+    </div>
+    <section class="pub">
+      <h3>유튜브 공개용</h3>
+      <p class="desc pub-desc">관중·심판처럼 화면에 잡힌 사람의 머리를 모자이크로 가려요. <b>공개</b>로 바꾼 선수만 얼굴이 그대로 나가요.</p>
+      <div class="pub-players" id="pubPlayers"><div class="pp skel"></div><div class="pp skel"></div><div class="pp skel"></div><div class="pp skel"></div></div>
+      <div class="toggle-row">스코어보드 같이 넣기<button class="switch ${S.pub.scoreboard ? "on" : ""}" id="pubBoard" role="switch" aria-checked="${S.pub.scoreboard}" aria-label="공개용 영상에 스코어보드 넣기"></button></div>
+      <button class="cta" id="pubBtn">${S.meta.has_public ? "공개용 영상 다시 만들기" : "공개용 영상 만들기"}</button>
+      <a class="icon-btn pub-dl ${S.meta.has_public ? "" : "hidden"}" id="dlPublic" href="/api/videos/${S.vid}/download/public.mp4">공개용 영상 받기${S.meta.public ? ` · 머리 ${S.meta.public.masked_heads.toLocaleString()}개 가림` : ""}</a>
+    </section>`;
   $$("#evFilter button").forEach(b => b.onclick = () => { S.evFilter = b.dataset.f; renderRPanel(); });
   renderEvList();
   $("#addServe").onclick = async () => {
@@ -827,6 +838,55 @@ function renderRPanel() {
     await patch([{ action: "add_point", t: Math.max(video.currentTime, (all.at(-1)?.t || 0) + 1), team: T }]); toast("마지막 랠리 점수를 추가했어요");
   };
   $("#renderBtn").onclick = startRender;
+  $("#pubBoard").onclick = () => { S.pub.scoreboard = !S.pub.scoreboard; const b = $("#pubBoard"); b.classList.toggle("on", S.pub.scoreboard); b.setAttribute("aria-checked", S.pub.scoreboard); };
+  $("#pubBtn").onclick = startPublic;
+  renderPubPlayers();
+  if (S.publicJob) pollPublic();
+}
+
+/* 공개용(마스킹) 영상 */
+async function renderPubPlayers() {
+  const box = $("#pubPlayers"); if (!box) return;
+  if (!S.players) { try { S.players = await api(`/api/videos/${S.vid}/players`); } catch (e) { box.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; } }
+  box.innerHTML = S.players.map(p => {
+    const open = S.pub.exclude.includes(p.no);
+    return `<button class="pp ${p.team} ${open ? "open" : ""}" data-no="${p.no}" aria-pressed="${open}" title="${open ? "얼굴 공개 · 누르면 모자이크" : "모자이크 · 누르면 얼굴 공개"}">
+      <span class="ph">${p.has_thumb ? `<img src="/api/videos/${S.vid}/players/${p.no}/thumb" alt="">` : ""}<i class="mosaic" aria-hidden="true"></i></span>
+      <span class="pn"><b>선수 ${p.no}</b><small>${esc(p.name)}</small></span>
+      <span class="state">${open ? "공개" : "가림"}</span></button>`;
+  }).join("") + `<div class="pp-quick"><button class="icon-btn sm" data-q="A">${esc(S.result.setup.nameA)} 공개</button><button class="icon-btn sm" data-q="B">${esc(S.result.setup.nameB)} 공개</button><button class="icon-btn sm" data-q="none">모두 가림</button></div>`;
+  $$(".pp[data-no]", box).forEach(b => b.onclick = () => {
+    const no = +b.dataset.no; const i = S.pub.exclude.indexOf(no);
+    if (i >= 0) S.pub.exclude.splice(i, 1); else S.pub.exclude.push(no);
+    renderPubPlayers();
+  });
+  $$("[data-q]", box).forEach(b => b.onclick = () => {
+    const q = b.dataset.q; S.pub.exclude = q === "none" ? [] : S.players.filter(p => p.team === q).map(p => p.no); renderPubPlayers();
+  });
+}
+async function startPublic() {
+  try {
+    S.publicJob = await api(`/api/videos/${S.vid}/render`, { method: "POST", json: { mask: true, exclude: S.pub.exclude, scoreboard: S.pub.scoreboard } });
+    pollPublic();
+  } catch (e) { toast(e.message, true); }
+}
+function pollPublic() {
+  const btn = $("#pubBtn"); if (!btn || !S.publicJob) return;
+  btn.disabled = true;
+  const tick = async () => {
+    if (!S.publicJob || S.step !== 6) return;
+    try {
+      const j = await api(`/api/jobs/${S.publicJob.id}`);
+      const b = $("#pubBtn"); if (b) b.textContent = `얼굴 가리는 중 ${Math.round(j.progress * 100)}%`;
+      if (j.state === "done") {
+        S.publicJob = null; S.meta = { ...S.meta, ...(await api(`/api/videos/${S.vid}`)) };
+        toast(`공개용 영상을 만들었어요 · ${j.stages[0].msg}`); renderResult($("#view")); return;
+      }
+      if (["error", "cancelled"].includes(j.state)) { S.publicJob = null; toast("공개용 영상 만들기 실패: " + j.error, true); if (b) { b.disabled = false; b.textContent = "공개용 영상 만들기"; } return; }
+    } catch (e) { S.publicJob = null; toast(e.message, true); return; }
+    setTimeout(tick, 1000);
+  };
+  tick();
 }
 function renderEvList() {
   const r = S.result, st = r.setup, ul = $("#evlist"); if (!ul) return;

@@ -246,6 +246,7 @@ def get_video(vid: str):
     meta["has_result"] = (d / "result.json").exists()
     meta["has_overlay"] = (d / "overlay.mp4").exists()
     meta["has_preview"] = (d / "preview.mp4").exists()
+    meta["has_public"] = (d / "public.mp4").exists()
     meta["active_jobs"] = {k: JOBS[j].to_dict() for k, j in meta.get("jobs", {}).items() if j in JOBS}
     return meta
 
@@ -287,8 +288,8 @@ def frame(vid: str, idx: int, w: int | None = None):
 def stream(vid: str, request: Request, kind: str = "auto"):
     """영상 재생 (Range 지원). kind: auto | source | preview | overlay"""
     d = vdir(vid)
-    if kind == "overlay":
-        p = d / "overlay.mp4"
+    if kind in ("overlay", "public"):
+        p = d / f"{kind}.mp4"
     elif kind == "preview" or (kind == "auto" and (d / "preview.mp4").exists()):
         p = d / "preview.mp4"
     else:
@@ -618,30 +619,89 @@ def tracks(vid: str, start: int = 0, end: int | None = None):
     return JSONResponse(out)
 
 
+class RenderReq(BaseModel):
+    mask: bool = False              # 공개용: 머리(head) 모자이크
+    exclude: list[int] = Field(default_factory=list)   # 마스킹하지 않을 선수 번호
+    scoreboard: bool = True
+
+
+@app.get("/api/videos/{vid}/players")
+def players(vid: str):
+    """선수 번호 목록 (복식: 1·2 팀 A, 3·4 팀 B)."""
+    from .privacy import players_of
+    d = vdir(vid)
+    cfg = read_json(d / "match.json")
+    if cfg is None:
+        raise HTTPException(404, "아직 설정이 없어요")
+    return [{k: p[k] for k in ("no", "team", "name")} | {"has_thumb": p["bbox"] is not None} for p in players_of(cfg)]
+
+
+@app.get("/api/videos/{vid}/players/{no}/thumb")
+def player_thumb(vid: str, no: int):
+    from .privacy import players_of
+    d = vdir(vid)
+    cfg = read_json(d / "match.json")
+    p = next((p for p in players_of(cfg or {"teams": {}}) if p["no"] == no), None) if cfg else None
+    if p is None or p["bbox"] is None:
+        raise HTTPException(404, "선수를 찾을 수 없어요")
+    img = read_frame(d, cfg["ref_frame"])
+    x1, y1, x2, y2 = p["bbox"]
+    w, h = x2 - x1, y2 - y1
+    x1, y1 = max(0, int(x1 - w * .15)), max(0, int(y1 - h * .08))
+    x2, y2 = min(img.shape[1], int(x2 + w * .15)), min(img.shape[0], int(y1 + h * .62))  # 상반신 위주
+    crop = img[y1:y2, x1:x2]
+    if crop.size == 0:
+        raise HTTPException(404, "선수 영역이 비어 있어요")
+    s = 160 / max(crop.shape[:2])
+    crop = cv2.resize(crop, (max(1, int(crop.shape[1] * s)), max(1, int(crop.shape[0] * s))), interpolation=cv2.INTER_AREA)
+    return Response(jpeg(crop, q=90), media_type="image/jpeg", headers={"Cache-Control": "max-age=600"})
+
+
 @app.post("/api/videos/{vid}/render")
-def render(vid: str):
+def render(vid: str, req: RenderReq | None = None):
+    """점수 합성 영상(overlay.mp4) 또는 공개용 마스킹 영상(public.mp4) 만들기."""
+    req = req or RenderReq()
     d = vdir(vid)
     res = read_json(d / "result.json")
-    if res is None:
+    cfg = read_json(d / "match.json")
+    if res is None or cfg is None:
         raise HTTPException(404, "아직 분석 결과가 없어요")
-    job = Job("render", vid, ["스코어보드 영상 만들기"])
+    kind = "public" if req.mask else "render"
+    name = "public.mp4" if req.mask else "overlay.mp4"
+    meta = read_json(d / "meta.json", {})
+    running = meta.get("jobs", {}).get(kind)
+    if running in JOBS and JOBS[running].state in {"queued", "running"}:
+        return JOBS[running].to_dict()
+    job = Job(kind, vid, ["공개용 영상 만들기 (얼굴 모자이크)" if req.mask else "스코어보드 영상 만들기"])
 
     def fn(job: Job):
-        job.stage(0)
-        tmp = d / "overlay.tmp.mp4"
+        job.stage(0, 0.0, "준비 중")
+        masker = None
+        if req.mask:
+            from .privacy import HeadMasker
+            det, _ = models()
+            tp = d / "tracks.npz"
+            tracks = A.load_tracks(tp) if tp.exists() else None
+            masker = HeadMasker(det, cfg, res, tracks, req.exclude, meta.get("fps") or 30.0)
+        tmp = d / f"{name}.tmp.mp4"
         render_overlay(str(source_path(d)), str(tmp), res["events"], res["setup"],
-                       lambda p, m: job.stage(0, p, m), stop=job.stop)
-        tmp.replace(d / "overlay.mp4")
-        job.finish_stage(0)
+                       lambda p, m: job.stage(0, p, m), stop=job.stop, masker=masker, scoreboard_on=req.scoreboard)
+        tmp.replace(d / name)
+        if masker is not None:
+            m2 = read_json(d / "meta.json", {})
+            m2["public"] = {"exclude": req.exclude, "scoreboard": req.scoreboard, "masked_heads": masker.count,
+                            "updated": time.time()}
+            write_json(d / "meta.json", m2)
+        job.finish_stage(0, f"머리 {masker.count:,}개 가림" if masker else "")
 
-    return submit(job, fn, CPU_POOL).to_dict()
+    return submit(job, fn, GPU_POOL if req.mask else CPU_POOL).to_dict()
 
 
 @app.get("/api/videos/{vid}/download/{name}")
 def download(vid: str, name: str):
     d = vdir(vid)
     allowed = {"result.json": "application/json", "events.csv": "text/csv", "players.csv": "text/csv",
-               "match.json": "application/json", "overlay.mp4": "video/mp4"}
+               "match.json": "application/json", "overlay.mp4": "video/mp4", "public.mp4": "video/mp4"}
     if name not in allowed or not (d / name).exists():
         raise HTTPException(404, "파일이 없어요")
     meta = read_json(d / "meta.json", {})

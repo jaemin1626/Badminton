@@ -497,7 +497,8 @@ def score_events(events: list, setup: dict, sides: dict):
     for i, ev in enumerate(evs):
         ev["flags"] = []
         if ev.get("removed"):
-            ev.update(server=None, auto=None, conf=None, score=dict(m.score), game=m.game, games=list(m.games))
+            ev.update(server=None, auto=None, conf=None, score=dict(m.score), game=m.game, games=list(m.games),
+                      sides=dict(m.side))
             out.append(ev); continue
         if m.over:
             ev["flags"].append("경기 종료 후")
@@ -516,7 +517,7 @@ def score_events(events: list, setup: dict, sides: dict):
         if c < 0.75:
             ev["flags"].append("서버 판단 불확실")
         ev.update(server=team, auto=(None if ev.get("override") else team), conf=c,
-                  score=dict(m.score), game=m.game, games=list(m.games), side=m.side[team])
+                  score=dict(m.score), game=m.game, games=list(m.games), side=m.side[team], sides=dict(m.side))
         out.append(ev)
     summary = {"score": dict(m.score), "game": m.game, "games": m.games, "over": m.over}
     return out, summary

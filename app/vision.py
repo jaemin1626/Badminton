@@ -78,6 +78,38 @@ class Detector:
         canvas[top:top + nh, left:left + nw] = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
         return canvas, r, left, top
 
+    def cls_id(self, name: str) -> int:
+        return self.names.index(name)
+
+    def detect(self, frames, classes, conf=0.25, iou=0.5):
+        """여러 클래스 검출. frames: BGR 리스트 → 각 프레임의 [N,6] (x1,y1,x2,y2,score,cls)."""
+        batch, metas = [], []
+        for f in frames:
+            lb, r, l, t = self.letterbox(f)
+            batch.append(lb[:, :, ::-1].transpose(2, 0, 1))
+            metas.append((r, l, t, f.shape[1], f.shape[0]))
+        x = np.ascontiguousarray(np.stack(batch), dtype=np.float32) / 255.0
+        out = self.sess.run(None, {"images": x})[0]
+        res = []
+        for pred, (r, l, t, W, H) in zip(out, metas):
+            rows = []
+            for c in classes:
+                score = pred[:, 4] * pred[:, 5 + c]
+                m = score > conf
+                if not m.any():
+                    continue
+                p, s = pred[m], score[m]
+                b = np.empty((len(p), 4), np.float32)
+                b[:, 0] = (p[:, 0] - p[:, 2] / 2 - l) / r
+                b[:, 1] = (p[:, 1] - p[:, 3] / 2 - t) / r
+                b[:, 2] = (p[:, 0] + p[:, 2] / 2 - l) / r
+                b[:, 3] = (p[:, 1] + p[:, 3] / 2 - t) / r
+                b[:, [0, 2]] = b[:, [0, 2]].clip(0, W); b[:, [1, 3]] = b[:, [1, 3]].clip(0, H)
+                k = nms(b, s, iou)
+                rows.append(np.concatenate([b[k], s[k, None], np.full((len(k), 1), c, np.float32)], 1))
+            res.append(np.concatenate(rows).astype(np.float32) if rows else np.zeros((0, 6), np.float32))
+        return res
+
     def __call__(self, frames, conf=0.25, iou=0.5):
         """frames: BGR 이미지 리스트 → 각 프레임의 [N,5] (x1,y1,x2,y2,score)."""
         single = isinstance(frames, np.ndarray)
