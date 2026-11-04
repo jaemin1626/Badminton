@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import math
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from . import court as C
 class Params:
     sample_fps: float = 15.0      # 분석 프레임레이트 (원본보다 크면 원본 사용)
     det_conf: float = 0.30
+    det_iou: float = 0.65         # 사람 NMS. 서브 때 앞뒤로 겹쳐 선 팀원이 지워지지 않게 0.5보다 높게
     batch: int = 8
     still_speed: float = 0.55     # m/s, 이보다 느리면 정지
     still_min: float = 0.6        # s, 4명 정지가 이만큼 지속되면 서브 후보
@@ -32,6 +34,9 @@ class Params:
     rally_speed: float = 1.6      # m/s, 서브 사이에 랠리(빠른 움직임)가 있었는지
     min_serve_gap: float = 3.5    # s, 서브 이벤트 최소 간격
     smooth: float = 0.45          # s, 위치 평활 창
+    occ_max: float = 3.0          # s, '가려짐'(다른 사람 뒤에 숨음)으로 볼 최대 시간
+    occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
+    occ_reappear: float = 1.0     # m, 다시 나온 위치가 이보다 멀면 가려진 동안 움직인 것 → 추정 취소
 
 
 def slots_for(mode: str):
@@ -46,7 +51,11 @@ def _core_penalty(xy) -> float:
 
 
 def track(video_path: str, cfg: dict, models, progress=None, params: Params = Params(), stop=None):
-    """반환: dict(frames, t, pos[S,N,2], box[S,N,4], conf[S,N], kps[S,N,17,3], slots, fps, step)."""
+    """반환: dict(frames, t, pos[S,N,2], box[S,N,4], conf[S,N], kps[S,N,17,3], occ[S,N], slots, fps, step).
+
+    occ=1 은 '가려짐' 추정값: 직접 보이지 않지만 마지막 위치가 다른 사람 박스 뒤에 덮여 있어
+    그 자리에 그대로 서 있다고 본 것 (예: 복식 서브 때 서버 뒤에 선 팀원).
+    """
     det, pose = models
     H = np.array(cfg["homography"], np.float64)
     mode = cfg.get("match", {}).get("mode", "doubles")
@@ -78,11 +87,14 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     box = np.full((S_est, N, 4), np.nan, np.float32)
     conf = np.zeros((S_est, N), np.float32)
     kps = np.zeros((S_est, N, 17, 3), np.float32)
+    occ = np.zeros((S_est, N), np.uint8)
     last = {s: (default[s], -10**9) for s in slots}
+    seen = {s: None for s in slots}  # 마지막으로 직접 본 (샘플, 코트 위치, 박스)
+    occ_n = max(1, int(round(params.occ_max * fps / step)))
 
     def process(batch_imgs, batch_idx, s0):
-        dets = det(batch_imgs, conf=params.det_conf)
-        crops_img, crops_box, where = [], [], []
+        dets = det(batch_imgs, conf=params.det_conf, iou=params.det_iou)
+        crops_img, crops_box, where, hidden = [], [], [], []
         for bi, (img, d) in enumerate(zip(batch_imgs, dets)):
             si = s0 + bi
             frames[si] = batch_idx[bi]
@@ -114,7 +126,19 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                     conf[si, k] = d[j, 4]
                     pos[si, k] = cxy[j]
                     last[ss[a]] = (cxy[j], si)
+                    seen[ss[a]] = (si, cxy[j].copy(), d[j, :4].copy())
                     where.append((si, k)); crops_img.append(img); crops_box.append(d[j, :4])
+            # 이번 프레임에 못 찾은 선수: 마지막 박스가 지금 누군가의 박스에 덮여 있으면 '가려짐'
+            for k, sl in enumerate(slots):
+                if not np.isnan(box[si, k, 0]) or seen[sl] is None:
+                    continue
+                s_seen, p_seen, b_seen = seen[sl]
+                if si - s_seen > occ_n or not len(d):
+                    continue
+                if max(_covered(b_seen, b) for b in d[:, :4]) >= params.occ_overlap:
+                    pos[si, k] = p_seen; box[si, k] = b_seen; occ[si, k] = 1
+                    hidden.append((si, k, s_seen))
+                    last[sl] = (p_seen, si)
         # Top-down pose: 프레임별로 묶어서 실행
         by_img = {}
         for (si, k), img, b in zip(where, crops_img, crops_box):
@@ -127,6 +151,9 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                 # 발목이 믿을 만하면 발 위치 보정
                 fx, fy = C.foot_point(box[si, k], kk)
                 pos[si, k] = C.to_court(H, [[fx, fy]])[0]
+        # 가려짐 추정 위치도 발목 보정이 끝난 마지막 위치로 맞춘다 (경계에서 가짜 속도가 생기지 않게)
+        for si, k, src in hidden:
+            pos[si, k] = pos[src, k]
 
     s = 0
     fidx = 0
@@ -151,8 +178,29 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
         process(bimgs, bidx, s); s += len(bimgs)
     cap.release()
     S = s
-    return dict(frames=frames[:S], t=frames[:S] / fps, pos=pos[:S], box=box[:S], conf=conf[:S],
-                kps=kps[:S], slots=np.array(slots), fps=np.float32(fps), step=np.int32(step))
+    pos, box, occ = pos[:S], box[:S], occ[:S]
+    _check_reappear(pos, box, occ, params.occ_reappear)
+    return dict(frames=frames[:S], t=frames[:S] / fps, pos=pos, box=box, conf=conf[:S],
+                kps=kps[:S], occ=occ, slots=np.array(slots), fps=np.float32(fps), step=np.int32(step))
+
+
+def _covered(a, b) -> float:
+    """박스 a 면적 중 박스 b에 덮인 비율."""
+    iw = min(a[2], b[2]) - max(a[0], b[0])
+    ih = min(a[3], b[3]) - max(a[1], b[1])
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    return float(iw * ih / max((a[2] - a[0]) * (a[3] - a[1]), 1e-6))
+
+
+def _check_reappear(pos, box, occ, max_move: float):
+    """가려짐 구간 뒤에 다시 나온 위치가 멀면, 가려진 동안 움직인 것이므로 추정값을 지운다."""
+    S, N = occ.shape
+    for k in range(N):
+        for a, b in _runs(occ[:, k] == 1):
+            nxt = b + 1
+            if nxt < S and not np.isnan(pos[nxt, k, 0]) and np.linalg.norm(pos[nxt, k] - pos[a, k]) > max_move:
+                pos[a:b + 1, k] = np.nan; box[a:b + 1, k] = np.nan; occ[a:b + 1, k] = 0
 
 
 def save_tracks(tr: dict, path: Path):
@@ -166,9 +214,10 @@ def load_tracks(path: Path) -> dict:
 
 def write_players_csv(tr: dict, path: Path):
     slots = list(tr["slots"])
+    occ = tr.get("occ", np.zeros(tr["pos"].shape[:2], np.uint8))
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        head = ["frame", "t", "slot", "side", "conf", "x1", "y1", "x2", "y2", "court_x", "court_y"]
+        head = ["frame", "t", "slot", "side", "occluded", "conf", "x1", "y1", "x2", "y2", "court_x", "court_y"]
         for k in range(17):
             head += [f"kp{k}_x", f"kp{k}_y", f"kp{k}_c"]
         w.writerow(head)
@@ -177,7 +226,7 @@ def write_players_csv(tr: dict, path: Path):
                 if np.isnan(tr["pos"][i, k, 0]):
                     continue
                 row = [int(tr["frames"][i]), round(float(tr["t"][i]), 3), s, s[:-1] if s[-1].isdigit() else s,
-                       round(float(tr["conf"][i, k]), 3), *[round(float(v), 1) for v in tr["box"][i, k]],
+                       int(occ[i, k]), round(float(tr["conf"][i, k]), 3), *[round(float(v), 1) for v in tr["box"][i, k]],
                        round(float(tr["pos"][i, k, 0]), 3), round(float(tr["pos"][i, k, 1]), 3)]
                 row += [round(float(v), 2) for v in tr["kps"][i, k].ravel()]
                 w.writerow(row)
@@ -266,6 +315,19 @@ def _wrist_onset(kps_k: np.ndarray, t: np.ndarray, i0: int, i1: int, thr: float 
     return math.inf
 
 
+def _behind_score(mp, ks, front, occ_tail) -> float:
+    """앞사람 바로 뒤에 팀원이 서 있는 정도 (0~1). 팀원이 앞사람에게 가려졌으면 1."""
+    others = [k for k in ks if k != front]
+    if not others:
+        return 0.0
+    k = others[0]
+    if occ_tail[:, k].mean() >= 0.5:
+        return 1.0
+    dx = abs(mp[k][0] - mp[front][0])
+    dd = C.dist_to_net(mp[k]) - C.dist_to_net(mp[front])
+    return float(np.clip(1.2 - dx, 0, 1) * np.clip(dd / 1.0, 0, 1))
+
+
 def find_serves(tr: dict, mode: str = "doubles", params: Params = Params()):
     """서브 후보 리스트. 각 후보: 시각, 서비스 코트(right/left), near 쪽이 서버일 확률 등."""
     t = tr["t"].astype(np.float64)
@@ -274,9 +336,15 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params()):
     slots = list(tr["slots"])
     p, dt = _interp_smooth(tr["pos"].astype(np.float64), t, params.smooth)
     v = _speed(p, dt)
-    all_present = ~np.isnan(v).any(1)
-    vmax = np.where(all_present, np.nanmax(np.nan_to_num(v, nan=99), 1), np.inf)
-    still = vmax < params.still_speed
+    occ = tr.get("occ")
+    occ = np.zeros(p.shape[:2], bool) if occ is None else occ.astype(bool)
+    far = [i for i, s in enumerate(slots) if s.startswith("far")]
+    near = [i for i, s in enumerate(slots) if s.startswith("near")]
+    # 정지: 위치를 아는 사람(직접 보임 + 가려짐 추정)은 모두 느려야 하고, 양쪽에 최소 1명씩은 있어야 한다.
+    # 위치를 모르는 사람은 판단에서 빼되, 서브마다 '몇 명을 봤는지'로 신뢰도를 낮춘다.
+    known = ~np.isnan(v)
+    calm = np.where(known, v < params.still_speed, True).all(1)
+    still = calm & known[:, far].any(1) & known[:, near].any(1)
 
     # 짧은 끊김 메우기
     gap = int(round(params.merge_gap / dt))
@@ -289,8 +357,6 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params()):
             merged.append((a, b))
     runs = [(a, b) for a, b in merged if t[b] - t[a] >= params.still_min]
 
-    far = [i for i, s in enumerate(slots) if s.startswith("far")]
-    near = [i for i, s in enumerate(slots) if s.startswith("near")]
     vfast = np.nan_to_num(v, nan=0.0).max(1)
     fast = vfast > params.rally_speed
     cands = []
@@ -300,11 +366,28 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params()):
             continue
         # 자세는 정지 구간 안쪽(끝 0.3초 전까지)에서 읽는다. 서브 동작이 섞이지 않게.
         tail = slice(max(a, b - int(1.0 / dt)), max(a + 1, b - int(0.3 / dt)))
-        mp = np.nanmean(p[tail], 0)  # [N,2]
-        if np.isnan(mp).any():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # 모르는 선수는 NaN
+            mp = np.nanmean(p[tail], 0)  # [N,2]
+        kn = ~np.isnan(mp[:, 0])
+        kf, kn_ = [k for k in far if kn[k]], [k for k in near if kn[k]]
+        if not kf or not kn_:
             continue
-        fi = min(far, key=lambda k: C.dist_to_net(mp[k]))
-        ni = min(near, key=lambda k: C.dist_to_net(mp[k]))
+        # 앞사람(서버/리시버) = 각 쪽에서 네트에 가장 가까운 사람. 슬롯 번호와 무관.
+        fi = min(kf, key=lambda k: C.dist_to_net(mp[k]))
+        ni = min(kn_, key=lambda k: C.dist_to_net(mp[k]))
+        # 몇 명을 봤나: 직접 보임 / 가려짐 추정 / 모름
+        vis = [k for k in range(len(slots)) if kn[k] and occ[tail, k].mean() < 0.5]
+        hid = [k for k in range(len(slots)) if kn[k] and k not in vis]
+        n_all = len(slots)
+        if len(vis) == n_all:
+            view = 1.0
+        elif len(vis) + len(hid) == n_all:
+            view = 0.8
+        elif len(vis) + len(hid) == n_all - 1:
+            view = 0.6
+        else:
+            view = 0.35
         reasons = []
         ok = True
         for k in (fi, ni):
@@ -332,16 +415,21 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params()):
         onset = 0.0
         if math.isfinite(of) or math.isfinite(on):
             onset = 0.9 if on < of else -0.9
-        logit = (sn - sf) + onset
+        # 서버 쪽 단서 3 (복식): 대형. 서브하는 팀은 팀원이 서버 바로 뒤에 선다(가려지기도 함).
+        form = {"far": _behind_score(mp, kf, fi, occ[tail]), "near": _behind_score(mp, kn_, ni, occ[tail])}
+        formation = 0.5 * (form["near"] - form["far"])
+        logit = (sn - sf) + onset + formation
         p_near = 1 / (1 + math.exp(-logit))
         cands.append(dict(
             i0=int(a), i1=int(b), t_still=float(t[a]), t=float(t[b]),
             frame=int(tr["frames"][b]), frame_still=int(tr["frames"][a]),
-            box=bf, p_near=round(p_near, 3),
+            box=bf, p_near=round(p_near, 3), view=view,
+            seen={"visible": [slots[k] for k in vis], "hidden": [slots[k] for k in hid]},
             front={"far": slots[fi], "near": slots[ni]},
             pos={s: [round(float(x), 2) for x in mp[k]] for k, s in enumerate(slots)},
             cues={"pose_far": round(sf, 2), "pose_near": round(sn, 2),
-                  "onset": "near" if onset > 0 else ("far" if onset < 0 else None)},
+                  "onset": "near" if onset > 0 else ("far" if onset < 0 else None),
+                  "formation": {k: round(v_, 2) for k, v_ in form.items()}},
         ))
 
     # 랠리 잠금: 앞 후보 뒤에 랠리가 없었으면 같은 서브 준비 → 뒤쪽 유지.
@@ -425,11 +513,12 @@ BEAM = 64
 def _ev_loglik(ev: dict, mm: "Match", team: str) -> float:
     """mm(= team이 서브하는 상태)에서 이벤트 관측값의 log-가능도."""
     side = mm.side[team]
-    pn = float(ev.get("p_near", 0.5))
+    view = float(ev.get("view", 1.0))  # 서브 때 선수를 몇 명이나 봤나 (1=4명 모두)
+    pn = 0.5 + (float(ev.get("p_near", 0.5)) - 0.5) * view
     p_side = pn if side == "near" else 1 - pn
     lp = math.log(min(max(p_side, 0.02), 0.98))
     if ev.get("box") not in (None, mm.expected_box(team)):
-        lp -= PARITY_PENALTY
+        lp -= PARITY_PENALTY * (1.0 if view >= 0.6 else 0.5)
     return lp
 
 
@@ -516,6 +605,8 @@ def score_events(events: list, setup: dict, sides: dict):
         c = 1.0 if (ev.get("override") or kind == "point") else round(cmap[i], 3)
         if c < 0.75:
             ev["flags"].append("서버 판단 불확실")
+        if kind != "point" and not ev.get("override") and ev.get("view", 1.0) < 0.6:
+            ev["flags"].append("서브 때 선수가 일부 안 보임")
         ev.update(server=team, auto=(None if ev.get("override") else team), conf=c,
                   score=dict(m.score), game=m.game, games=list(m.games), side=m.side[team], sides=dict(m.side))
         out.append(ev)
