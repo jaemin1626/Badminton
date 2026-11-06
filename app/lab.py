@@ -413,7 +413,7 @@ def save_run(vid: str, params: "A.Params", name: str = "") -> dict:
         "serves": [{k: e.get(k) for k in ("t", "server", "score", "game", "conf", "flags", "box", "p_near", "view")} for e in scored]
         or [{"t": e["t"]} for e in serves],
         "summary": summary, "stages": stages,
-        "eval": eval_serves(serves, scored, truth_data),
+        "eval": eval_serves(serves, scored, truth_data, cfg.get("match", {}).get("first", "A"), summary),
     }
     out = _results_dir(vid)
     out.mkdir(parents=True, exist_ok=True)
@@ -488,7 +488,7 @@ def lab_serves(vid: str, req: ServeReq):
             "speed": _nan_list(v, 2) if v is not None else [],
             "still": dbg["still"].astype(int).tolist() if "still" in dbg else [],
             "runs": runs, "serves": scored, "summary": summary,
-            "eval": eval_serves(serves, scored, truth_data)}
+            "eval": eval_serves(serves, scored, truth_data, cfg.get("match", {}).get("first", "A"), summary)}
 
 
 # ---------------------------------------------------------------- 정답 서브 · 채점 · 자동 맞추기
@@ -521,7 +521,7 @@ LABELS = DATA.parent / "labels"   # data/labels/<영상 이름>.json : 같은 �
 
 
 class TruthReq(BaseModel):
-    marks: list[dict] = Field(default_factory=list)   # [{t, spot: 'far-L'|'far-R'|'near-L'|'near-R', note, src: 'auto', stage, reason, ok}]
+    marks: list[dict] = Field(default_factory=list)   # [{t, winner: 'A'|'B' (그 랠리 득점 팀), spot: 'far-L'|'far-R'|'near-L'|'near-R', note, src: 'auto', stage, reason, ok}]
     final: dict | None = None                          # 최종 점수 {A, B}
     finalized: bool = False                            # '최종 정답 저장'을 눌렀는지
 
@@ -541,8 +541,8 @@ def spot_truth(spot: str | None):
     return side, box
 
 
-def eval_serves(serves: list, scored: list, truth_data: dict | None) -> dict | None:
-    """서브 시각 채점 + (정답에 서버 위치가 있으면) 서버 쪽·좌우 채점."""
+def eval_serves(serves: list, scored: list, truth_data: dict | None, first: str = "A", summary: dict | None = None) -> dict | None:
+    """서브 시각 채점 + (정답에 서버 위치가 있으면) 서버 쪽·좌우 채점 + (득점 팀이 있으면) 서버 팀·득점 팀·점수 채점."""
     marks = sorted([m for m in (truth_data or {}).get("marks", []) if m.get("src") != "auto" or m.get("ok")], key=lambda m: m["t"])
     if not marks:
         return None
@@ -575,7 +575,45 @@ def eval_serves(serves: list, scored: list, truth_data: dict | None) -> dict | N
             else:
                 sv["wrong_box"].append(m["t"])
     ev["server"] = sv if sv["labeled"] else None
+    ev["rally"] = _eval_rally(serves, scored, marks, pairs, pred, first, summary)
     return ev
+
+
+def _eval_rally(serves, scored, marks, pairs, pred, first, summary):
+    """정답의 랠리별 득점 팀(winner: 'A'=1팀, 'B'=2팀)으로 채점.
+
+    정답 서버 팀: 첫 서브는 경기 설정의 첫 서브 팀, 그다음부터는 직전 랠리 득점 팀 (랠리 포인트).
+    알고리즘 득점 팀: 다음 판정 서브의 서버 팀 (마지막 랠리는 알 수 없음).
+    """
+    wins = [m.get("winner") for m in marks]
+    if not any(w in ("A", "B") for w in wins) or not scored:
+        return None
+    r = {"labeled": sum(w in ("A", "B") for w in wins), "server_ok": 0, "server_n": 0, "winner_ok": 0, "winner_n": 0,
+         "wrong_server": [], "wrong_winner": [],
+         "truth_score": {"A": wins.count("A"), "B": wins.count("B")},
+         "pred_score": (summary or {}).get("score")}
+    order = {pi: n for n, pi in enumerate(pred)}   # pred 순번 → 시간순 위치
+    for pi, tj in pairs:
+        i = pred[pi]
+        got = scored[i].get("server") if i < len(scored) else None
+        want = first if tj == 0 else wins[tj - 1]
+        if want in ("A", "B") and got:
+            r["server_n"] += 1
+            if got == want:
+                r["server_ok"] += 1
+            else:
+                r["wrong_server"].append(marks[tj]["t"])
+        nxt = order[pi] + 1
+        if wins[tj] in ("A", "B") and nxt < len(pred):
+            ni = pred[nxt]
+            gw = scored[ni].get("server") if ni < len(scored) else None
+            if gw:
+                r["winner_n"] += 1
+                if gw == wins[tj]:
+                    r["winner_ok"] += 1
+                else:
+                    r["wrong_winner"].append(marks[tj]["t"])
+    return r
 
 
 def _stem(vid: str) -> str:

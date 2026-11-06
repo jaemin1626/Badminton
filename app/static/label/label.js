@@ -2,13 +2,36 @@
 "use strict";
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const S = { vid: null, meta: null, marks: [], final: null, sel: -1, saveT: null, dirty: false, finalized: false };
+const S = { vid: null, meta: null, marks: [], final: null, sel: -1, saveT: null, dirty: false, finalized: false,
+  team: { A: "1팀", B: "2팀" } };
 const STAGE_LBL = { OK: "판정 서브", A: "A 정지", B: "B 대형", C: "C 랠리" };
 const pending = m => m.src === "auto" && !m.ok;
 // 서버 위치 (화면 기준): 위 코트/아래 코트 × 화면 왼쪽/오른쪽
 const SPOTS = [["far-L", "Q", "위 코트 왼쪽"], ["far-R", "W", "위 코트 오른쪽"], ["near-L", "Z", "아래 코트 왼쪽"], ["near-R", "X", "아래 코트 오른쪽"]];
 const SPOT_KEY = { q: "far-L", ㅂ: "far-L", w: "far-R", ㅈ: "far-R", z: "near-L", ㅋ: "near-L", x: "near-R", ㅌ: "near-R" };
-function setSpot(m, spot) { m.spot = m.spot === spot ? undefined : spot; changed(); }
+function setSpot(m, spot) { m.spot = m.spot === spot ? undefined : spot; changed(true); }
+// 랠리 득점 팀: A = 1팀, B = 2팀. 서브 시각·개수가 아니라 덧붙이는 정보라 최종 저장 상태는 그대로 둔다
+const WIN_KEY = { a: "A", ㅁ: "A", d: "B", ㅇ: "B" };
+function setWin(i, w) {
+  const m = S.marks[i]; if (!m) return;
+  m.winner = m.winner === w ? undefined : w; S.sel = i; changed(true);
+  if (m.winner) toast(`${i + 1}번 랠리 → ${S.team[w]} 득점`);
+}
+// 득점 팀을 줄 서브: 멈춘 상태에서 목록에서 고른 서브, 아니면 지금 보고 있는 랠리(지금 시각 직전 서브)
+function rallyTarget() {
+  const el = v();
+  if (el.paused && S.sel >= 0) return S.sel;
+  return S.marks.reduce((k, m, i) => m.t <= el.currentTime + .05 ? i : k, -1);
+}
+// 랠리마다 누적 점수 (득점 팀을 아직 안 정한 랠리부터는 모름)
+function runningScore() {
+  const out = []; let a = 0, b = 0, known = true;
+  for (const m of S.marks) {
+    if (m.winner === "A") a++; else if (m.winner === "B") b++; else known = false;
+    out.push(known ? `${a}:${b}` : "");
+  }
+  return { out, a, b, n: S.marks.filter(m => m.winner).length };
+}
 const v = () => $("#vid");
 
 async function api(url, opt = {}) {
@@ -51,6 +74,12 @@ async function openVideo(vid) {
   $("#seek").max = S.meta.duration;
   const tr = await api(`/api/lab/${vid}/truth`);
   S.marks = (tr.marks || []).map(m => ({ ...m })); S.final = tr.final || null; S.finalized = !!tr.finalized;
+  S.team = { A: "1팀", B: "2팀" };
+  try {
+    const c = (await api(`/api/lab/${vid}`)).config;
+    if (c?.teams) S.team = { A: c.teams["1"]?.name || "1팀", B: c.teams["2"]?.name || "2팀" };
+  } catch { }
+  $("#winLegend").innerHTML = `<kbd>A</kbd> ${S.team.A} 득점 · <kbd>D</kbd> ${S.team.B} 득점`;
   $("#finA").value = S.final?.A ?? ""; $("#finB").value = S.final?.B ?? "";
   if (tr.from_name) { S.dirty = true; toast(`같은 이름 영상(${tr.video_name || ""})의 기록을 불러왔어요`); }
   $("#saveTag").textContent = tr.saved ? `저장됨 ${new Date(tr.saved * 1000).toLocaleTimeString("ko-KR")}` : "아직 기록 없음";
@@ -66,7 +95,7 @@ function addMark(t) {
   S.sel = S.marks.findIndex(m => m.t === t);
   toast(`${S.sel + 1}번째 서브 · ${fmt(t)}`); changed();
 }
-function changed() { S.dirty = true; S.finalized = false; render(); clearTimeout(S.saveT); S.saveT = setTimeout(save, 700); $("#saveTag").textContent = "저장 중"; }
+function changed(keepFinal = false) { S.dirty = true; if (!keepFinal) S.finalized = false; render(); clearTimeout(S.saveT); S.saveT = setTimeout(save, 700); $("#saveTag").textContent = "저장 중"; }
 async function save(now = false) {
   clearTimeout(S.saveT);
   const a = $("#finA").value, b = $("#finB").value;
@@ -83,9 +112,14 @@ function render() {
   const np = S.marks.filter(pending).length;
   $("#pText").textContent = (goal ? `서브 ${n} / ${goal}개` : `서브 ${n}개 기록`) + (np ? ` · 확인 대기 ${np}` : "");
   renderFinal(goal, np);
+  const rsT = runningScore();
+  $("#tally").innerHTML = rsT.n ? `득점 기록 ${rsT.n}/${n} · <b class="tA">${S.team.A} ${rsT.a}</b> : <b class="tB">${rsT.b} ${S.team.B}</b>`
+    + (S.final && rsT.n === n && (rsT.a !== S.final.A || rsT.b !== S.final.B) ? ` <span class="bad">최종 점수와 다름</span>` : "")
+    : "랠리가 끝나면 <kbd>A</kbd>/<kbd>D</kbd>로 득점한 팀을 기록하세요";
   const fill = $("#pFill"); fill.style.width = goal ? `${Math.min(100, n / goal * 100)}%` : "0"; fill.classList.toggle("done", goal != null && n === goal);
   const now = v().currentTime;
   const cur = S.marks.reduce((k, m, i) => m.t <= now + .05 ? i : k, -1);
+  const rs = runningScore();
   $("#marks").innerHTML = S.marks.map((m, i) => {
     const gap = i ? m.t - S.marks[i - 1].t : null;
     const chk = m.src === "auto"
@@ -95,6 +129,7 @@ function render() {
       <span class="no">${i + 1}</span>${chk}
       <span class="tt" data-go="${i}" title="이 시각으로 이동">${fmt(m.t)}${gap != null ? `<small>+${gap.toFixed(1)}s</small>` : ""}</span>
       <span class="nud"><button data-n="-0.1" title="0.1초 앞당기기">−.1</button><button data-n="0.1" title="0.1초 늦추기">+.1</button></span>
+      <span class="win"><button class="A ${m.winner === "A" ? "on" : ""}" data-w="A" title="${S.team.A} 득점 (A)">1</button><button class="B ${m.winner === "B" ? "on" : ""}" data-w="B" title="${S.team.B} 득점 (D)">2</button><small>${rs.out[i]}</small></span>
       <span class="spot" title="서버가 선 곳 (화면 기준)">${SPOTS.map(([s, k, lb]) => `<button class="${s.split("-")[0]} ${m.spot === s ? "on" : ""}" data-s="${s}" title="${lb} (${k})" aria-label="${lb}"></button>`).join("")}</span>
       <input class="note" value="${(m.note || "").replace(/"/g, "&quot;")}" placeholder="메모" maxlength="100" aria-label="${i + 1}번 메모">
       <button class="del" title="지우기" aria-label="${i + 1}번 지우기">×</button></li>`;
@@ -104,6 +139,7 @@ function render() {
     li.onclick = e => { if (e.target.tagName !== "INPUT") { S.sel = i; render(); } };
     li.querySelector("[data-go]").onclick = e => { e.stopPropagation(); S.sel = i; seek(m.t - 1.5); render(); };
     li.querySelectorAll("[data-n]").forEach(b => b.onclick = e => { e.stopPropagation(); nudge(i, +b.dataset.n); });
+    li.querySelectorAll("[data-w]").forEach(b => b.onclick = e => { e.stopPropagation(); setWin(i, b.dataset.w); });
     li.querySelectorAll("[data-s]").forEach(b => b.onclick = e => { e.stopPropagation(); S.sel = i; setSpot(m, b.dataset.s); });
     li.querySelector(".note").oninput = e => { m.note = e.target.value; S.dirty = true; clearTimeout(S.saveT); S.saveT = setTimeout(save, 900); };
     li.querySelector(".del").onclick = e => { e.stopPropagation(); S.marks.splice(i, 1); S.sel = -1; changed(); };
@@ -164,7 +200,7 @@ function drawStrip() {
   const X = t => w * t / S.meta.duration;
   for (let m = 60; m < S.meta.duration; m += 60) { c.fillStyle = "#ffffff22"; c.fillRect(X(m), 0, 1, h); c.fillStyle = "#9aa7a1"; c.font = "10px ui-monospace,monospace"; c.fillText(`${m / 60}분`, X(m) + 3, 11); }
   S.marks.forEach((m, i) => {
-    c.fillStyle = i === S.sel ? "#ffffff" : pending(m) ? "#7d8a84" : m.spot?.startsWith("far") ? "#5aa9ff" : m.spot?.startsWith("near") ? "#ff7a59" : "#d9b98a";
+    c.fillStyle = i === S.sel ? "#ffffff" : pending(m) ? "#7d8a84" : m.winner === "A" ? "#5aa9ff" : m.winner === "B" ? "#ff7a59" : "#d9b98a";
     c.fillRect(X(m.t) - 1.5, pending(m) ? 14 : 6, 3, pending(m) ? h - 14 : h - 6);
   });
   c.fillStyle = "#3ecf8e"; c.fillRect(X(v().currentTime) - 1, 0, 2, h);
@@ -220,6 +256,7 @@ function bind() {
       const t = el.currentTime, m = k === "]" ? S.marks.find(m => m.t > t + 1.6) : [...S.marks].reverse().find(m => m.t < t - 0.1 - 1.5);
       if (m) { S.sel = S.marks.indexOf(m); seek(m.t - 1.5); render(); }
     }
+    else if (WIN_KEY[k.toLowerCase()]) { e.preventDefault(); const i = rallyTarget(); if (i < 0) toast("먼저 서브를 기록하세요", true); else setWin(i, WIN_KEY[k.toLowerCase()]); }
     else if (sel && SPOT_KEY[k.toLowerCase()]) { e.preventDefault(); setSpot(sel, SPOT_KEY[k.toLowerCase()]); }
     else if (k === "n" || k === "N" || k === "ㅜ") { e.preventDefault(); nextPending(); }
     else if (sel && k === "Enter") { e.preventDefault(); if (sel.src === "auto") { sel.ok = true; changed(); nextPending(); } }

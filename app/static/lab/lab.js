@@ -904,6 +904,14 @@ function toggleMark() {
   truthT = setTimeout(async () => { await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: ms, final: S.truthFinal } }); recalc(); }, 600);
 }
 // 정답에 서버 위치가 있으면: 서버 쪽(위/아래 코트) · 좌우 맞힌 수
+// 정답에 랠리별 득점 팀이 있으면: 서버 팀 · 득점 팀 · 최종 점수
+function rallyLine(r) {
+  if (!r) return `<small style="display:block;margin-top:4px;color:var(--muted)">서버 팀·득점 팀 채점은 정답 입력 페이지에서 랠리마다 득점 팀(A/D)을 기록하면 나와요</small>`;
+  const t = ts => ts.length ? ` <span class="bad" title="${ts.map(fmt).join(", ")}">(틀림 ${ts.slice(0, 4).map(fmt).join(", ")}${ts.length > 4 ? " …" : ""})</span>` : "";
+  const ts = r.truth_score, ps = r.pred_score;
+  return `<small style="display:block;margin-top:4px">서버 팀 <b>${r.server_ok}/${r.server_n}</b>${t(r.wrong_server)}<br>득점 팀 <b>${r.winner_ok}/${r.winner_n}</b>${t(r.wrong_winner)}<br>`
+    + `점수 정답 <b>${ts.A}:${ts.B}</b>${r.labeled < r.server_n + 1 ? ` (득점 기록 ${r.labeled}개)` : ""}${ps ? ` · 계산 <b>${ps.A}:${ps.B}</b>` : ""}</small>`;
+}
 function serverLine(sv) {
   if (!sv) return `<small style="display:block;margin-top:3px;color:var(--muted)">서버 쪽·좌우 채점은 정답 입력 페이지에서 서버 위치(Q W Z X)를 기록하면 나와요</small>`;
   const t = ts => ts.length ? ` <span class="bad" title="${ts.map(fmt).join(", ")}">(틀림 ${ts.slice(0, 4).map(fmt).join(", ")}${ts.length > 4 ? " …" : ""})</span>` : "";
@@ -915,7 +923,7 @@ function renderEval() {
   if (!ev) { box.innerHTML = "영상을 보면서 서브 순간에 <b>S</b>를 누르면 정답으로 기록되고, 여기서 채점해요"; return; }
   box.innerHTML = `<div class="sc"><b>${ev.hit}</b>/${ev.truth} 맞음 · <span class="bad">${ev.missed.length} 놓침</span> · <span class="warnc">${ev.false.length} 잘못 잡음</span></div>
     <div class="bar2"><i style="width:${ev.recall * 100}%"></i></div><small>찾은 비율 ${Math.round(ev.recall * 100)}% · 맞힌 비율 ${Math.round(ev.precision * 100)}% · F1 ${ev.f1}</small>
-    ${serverLine(ev.server)}
+    ${rallyLine(ev.rally)}${serverLine(ev.server)}
     <small style="display:block;margin-top:3px">${ev.finalized ? "✓ 최종 정답 기준" : "⚠ 정답이 아직 최종 저장 전이에요"} · <a href="/label#${S.vid}" style="color:var(--wood)">정답 입력 페이지</a></small>`;
 }
 // 놓친 정답: 그 순간(서브 직전) 서브 조건 중 처음 막힌 것

@@ -49,6 +49,7 @@
         <label>팀 B<input type="number" id="finB" min="0" max="40" placeholder="16"></label>
       </div>
       <div class="prog"><div class="pbar"><i id="pFill"></i></div><span id="pText">서브 0개 기록</span></div>
+      <p class="tally" id="tally"></p>
       <p class="hint small">랠리마다 서브가 한 번이라, 서브 수 = 두 팀 점수의 합이에요 (예: 25:16 → 41번).</p>
     </section>
 
@@ -83,6 +84,8 @@
         <li><kbd>S</kbd> 지금 시각을 서브로 기록 (서버가 셔틀을 치는 순간)</li>
         <li><kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 1초 · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 5초</li>
         <li><kbd>,</kbd><kbd>.</kbd> 한 프레임 · <kbd>[</kbd><kbd>]</kbd> 이전/다음 서브로</li>
+        <li id="winLegend"><kbd>A</kbd> 1팀 득점 · <kbd>D</kbd> 2팀 득점</li>
+        <li class="small">득점은 지금 보고 있는 랠리(지금 시각 직전 서브)에 들어가요. 멈춘 채 목록에서 고르면 그 서브에.</li>
         <li>서버가 선 곳 (화면 기준): 위 코트 <kbd>Q</kbd> 왼쪽 <kbd>W</kbd> 오른쪽 · 아래 코트 <kbd>Z</kbd> 왼쪽 <kbd>X</kbd> 오른쪽</li>
         <li>목록에서 고른 서브: <kbd>Delete</kbd> 지우기 · <kbd>-</kbd><kbd>=</kbd> 0.1초 조정</li>
         <li>후보 검토: <kbd>N</kbd> 다음 후보 장면 · <kbd>Enter</kbd> 맞음(확인) · <kbd>Delete</kbd> 서브 아님</li>
