@@ -321,7 +321,8 @@ def lab_track(vid: str):
             eta = el / max(p, 1e-3) * (1 - p)
             job.stage(1, p, f"{msg} · 남은 시간 약 {int(eta // 60)}분 {int(eta % 60)}초")
 
-        tr = A.track(str(source_path(d)), cfg, ms, prog, stop=job.stop)
+        # 검출·관절 결과를 lab/detections.npz 에 저장해 두고, 다음 추적부터는 영상을 다시 읽지 않는다
+        tr = A.track(str(source_path(d)), cfg, ms, prog, stop=job.stop, cache=L / "detections.npz")
         A.save_tracks(tr, L / "tracks.npz")
         write_json(L / "tracks_meta.json", {"config_saved": cfg.get("saved"), "config_name": cfg.get("name"),
                                             "finished": time.time()})

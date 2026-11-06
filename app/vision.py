@@ -171,35 +171,52 @@ class Pose:
 
     def __call__(self, img, boxes):
         """img: BGR, boxes: [N,4+] → [N,17,3]."""
-        if len(boxes) == 0:
-            return np.zeros((0, 17, 3), np.float32)
-        crops, infos = [], []
-        for b in boxes:
-            M, info = self._affine(b)
-            c = cv2.warpAffine(img, M, (self.iw, self.ih), flags=cv2.INTER_LINEAR)
-            c = c[:, :, ::-1].astype(np.float32) / 255.0 - self.MEAN
-            crops.append(c.transpose(2, 0, 1)); infos.append(info)
-        hm = self.sess.run(None, {"input": np.ascontiguousarray(np.stack(crops))})[0]
-        n, k, hh, hw = hm.shape
+        return self.multi([(img, boxes)])[0]
+
+    def multi(self, items, batch: int = 32):
+        """여러 이미지의 박스를 한 번에 추론. items: [(img, boxes)] → [[N_i,17,3]]."""
+        crops, infos, counts = [], [], []
+        for img, boxes in items:
+            counts.append(len(boxes))
+            for b in boxes:
+                M, info = self._affine(b)
+                c = cv2.warpAffine(img, M, (self.iw, self.ih), flags=cv2.INTER_LINEAR)
+                crops.append((c[:, :, ::-1].astype(np.float32) / 255.0 - self.MEAN).transpose(2, 0, 1)); infos.append(info)
+        n = len(crops)
+        if n == 0:
+            return [np.zeros((0, 17, 3), np.float32) for _ in items]
+        # 입력 크기는 항상 batch 하나로 고정해서 채운다: CUDA 실행기는 입력 크기가 직전과 달라질 때마다
+        # 계산 계획을 다시 세우느라 ~0.4초씩 쓴다 (크기가 같으면 32명에 ~15 ms)
+        hms = []
+        for i in range(0, n, batch):
+            chunk = np.stack(crops[i:i + batch])
+            m = len(chunk)
+            if m < batch:
+                chunk = np.concatenate([chunk, np.zeros((batch - m, *chunk.shape[1:]), np.float32)])
+            hms.append(self.sess.run(None, {"input": np.ascontiguousarray(chunk)})[0][:m])
+        hm = np.concatenate(hms)
+        _, k, hh, hw = hm.shape
         flat = hm.reshape(n, k, -1)
         idx = flat.argmax(-1)
         conf = flat.max(-1)
-        py, px = (idx // hw).astype(np.float32), (idx % hw).astype(np.float32)
-        # 1/4 픽셀 보정 (이웃 값 차이 방향으로 0.25 이동)
-        for i in range(n):
-            for j in range(k):
-                x, y = int(px[i, j]), int(py[i, j])
-                h_ = hm[i, j]
-                if 0 < x < hw - 1:
-                    px[i, j] += 0.25 * np.sign(h_[y, x + 1] - h_[y, x - 1])
-                if 0 < y < hh - 1:
-                    py[i, j] += 0.25 * np.sign(h_[y + 1, x] - h_[y - 1, x])
+        py, px = (idx // hw), (idx % hw)
+        # 1/4 픽셀 보정 (이웃 값 차이 방향으로 0.25 이동) — 배열 연산
+        ii, jj = np.meshgrid(np.arange(n), np.arange(k), indexing="ij")
+        xr, xl = np.clip(px + 1, 0, hw - 1), np.clip(px - 1, 0, hw - 1)
+        yd, yu = np.clip(py + 1, 0, hh - 1), np.clip(py - 1, 0, hh - 1)
+        dx = np.sign(hm[ii, jj, py, xr] - hm[ii, jj, py, xl]) * ((px > 0) & (px < hw - 1))
+        dy = np.sign(hm[ii, jj, yd, px] - hm[ii, jj, yu, px]) * ((py > 0) & (py < hh - 1))
+        fx = px.astype(np.float32) + 0.25 * dx
+        fy = py.astype(np.float32) + 0.25 * dy
+        inf = np.array(infos, np.float32)  # cx, cy, w, h
         out = np.zeros((n, k, 3), np.float32)
-        for i, (cx, cy, w, h) in enumerate(infos):
-            out[i, :, 0] = cx - w / 2 + (px[i] + 0.5) * w / hw
-            out[i, :, 1] = cy - h / 2 + (py[i] + 0.5) * h / hh
-            out[i, :, 2] = conf[i]
-        return out
+        out[:, :, 0] = inf[:, None, 0] - inf[:, None, 2] / 2 + (fx + 0.5) * inf[:, None, 2] / hw
+        out[:, :, 1] = inf[:, None, 1] - inf[:, None, 3] / 2 + (fy + 0.5) * inf[:, None, 3] / hh
+        out[:, :, 2] = conf
+        res, o = [], 0
+        for c in counts:
+            res.append(out[o:o + c]); o += c
+        return res
 
 
 _lock = threading.Lock()

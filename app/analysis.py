@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
 import warnings
 from dataclasses import dataclass
@@ -85,14 +86,15 @@ def _read_samples(cap, total: int, step: int, batch: int, stop=None):
         yield imgs, idx
 
 
-def track(video_path: str, cfg: dict, models, progress=None, params: Params = Params(), stop=None):
+def track(video_path: str, cfg: dict, models, progress=None, params: Params = Params(), stop=None, cache=None):
     """선수 추적. 반환: dict(frames, t, pos[S,N,2], box[S,N,4], conf[S,N], kps[S,N,17,3], occ[S,N],
     slots, fps, step, off_box[S,K,4]).
 
-    1) 검출 패스  : 샘플 프레임마다 사람 검출만 해서 저장
+    1) 검출 패스  : 샘플 프레임마다 사람 검출 + 코트 근처 사람만 Pose. cache 경로를 주면 결과를 저장해 두고
+                    다음부터는 영상을 다시 읽지 않는다 (매칭 규칙만 바꿔 다시 돌릴 때 수십 초).
     2) 매칭       : 설정 프레임(ref_frame)에서 사용자가 지정한 선수·심판 박스로 시작해
-                    앞으로 한 번, 뒤로 한 번 추적한다. 심판으로 잡힌 사람은 선수 후보에서 뺀다.
-    3) 자세 패스  : 매칭된 선수 박스에만 Pose를 돌리고 발 위치를 발목 기준으로 보정
+                    앞으로 한 번, 뒤로 한 번 추적한다. 심판 자리 사람은 선수 후보에서 뺀다.
+    3) 발 위치    : 매칭된 선수는 발목 관절로 발 위치를 보정
 
     occ=1 은 '가려짐' 추정값: 직접 보이지 않지만 마지막 박스가 다른 사람 박스에 덮여 있어
     그 자리에 그대로 서 있다고 본 것 (예: 복식 서브 때 서버 뒤에 선 팀원).
@@ -126,20 +128,53 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     officials = [o for o in cfg.get("officials", []) if o.get("bbox")]
     K = len(officials)
 
-    # ---- 1) 검출 패스
-    dets, frames = [], []
+    # ---- 1) 검출 패스 (+ 코트 근처 사람 Pose). 같은 영상·같은 검출 설정이면 저장해 둔 결과를 쓴다
     fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)); fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    for imgs, idx in _read_samples(cap, total, step, params.batch, stop):
-        for d in det(imgs, conf=params.det_conf, iou=params.det_iou):
-            if len(d):
-                feet = np.array([[(b[0] + b[2]) / 2, b[3]] for b in d])
-                cxy = C.to_court(H, feet)
-            else:
-                cxy = np.zeros((0, 2))
-            dets.append((d, cxy))
-        frames += idx
-        prog(0.6 * min(idx[-1] / max(total, 1), 1.0), f"사람 찾는 중 {idx[-1]:,} / {total:,} 프레임")
+    key = {"total": total, "step": step, "det_conf": params.det_conf, "det_iou": params.det_iou, "size": [fw, fh], "v": 1}
+    data = None
+    if cache is not None:
+        try:
+            z = np.load(cache, allow_pickle=False)
+            if json.loads(str(z["key"])) == key:
+                data = {k: z[k] for k in ("frames", "det", "det_si", "kp", "posed")}
+        except Exception:  # noqa: BLE001  (없거나 깨졌으면 새로 만든다)
+            data = None
+    if data is None:
+        frames_l, det_l, si_l, kp_l, posed_l = [], [], [], [], []
+        si = 0
+        for imgs, idx in _read_samples(cap, total, step, params.batch, stop):
+            ds = det(imgs, conf=params.det_conf, iou=params.det_iou)
+            # Pose는 코트 근처(넉넉히)에 발이 있는 사람만 (관중석 사람까지 돌리면 느리다). 묶음 전체를 한 번에 추론
+            nears = []
+            for d in ds:
+                cxy = C.to_court(H, np.c_[(d[:, 0] + d[:, 2]) / 2, d[:, 3]]) if len(d) else np.zeros((0, 2))
+                nears.append([j for j in range(len(d)) if C.in_play(cxy[j])])
+            kps_b = pose.multi([(img, d[nr]) for img, d, nr in zip(imgs, ds, nears)])
+            for d, nr, kb in zip(ds, nears, kps_b):
+                kp = np.zeros((len(d), 17, 3), np.float32); posed = np.zeros(len(d), bool)
+                if nr:
+                    kp[nr] = kb; posed[nr] = True
+                det_l.append(d[:, :5]); si_l.append(np.full(len(d), si, np.int32)); kp_l.append(kp); posed_l.append(posed)
+                si += 1
+            frames_l += idx
+            prog(0.95 * min(idx[-1] / max(total, 1), 1.0), f"사람 찾기 · 자세 추정 {idx[-1]:,} / {total:,} 프레임")
+        data = {"frames": np.array(frames_l, np.int32),
+                "det": np.concatenate(det_l) if det_l else np.zeros((0, 5), np.float32),
+                "det_si": np.concatenate(si_l) if si_l else np.zeros(0, np.int32),
+                "kp": np.concatenate(kp_l).astype(np.float16) if kp_l else np.zeros((0, 17, 3), np.float16),
+                "posed": np.concatenate(posed_l) if posed_l else np.zeros(0, bool)}
+        if cache is not None:
+            np.savez_compressed(cache, key=json.dumps(key), **data)
+    else:
+        prog(0.9, "저장해 둔 검출 결과를 씀 (영상 다시 읽지 않음)")
     cap.release()
+    frames = list(data["frames"])
+    starts = np.searchsorted(data["det_si"], np.arange(len(frames) + 1))
+    dets = []
+    for si in range(len(frames)):
+        d = data["det"][starts[si]:starts[si + 1]]
+        cxy = C.to_court(H, np.c_[(d[:, 0] + d[:, 2]) / 2, d[:, 3]]) if len(d) else np.zeros((0, 2))
+        dets.append((d, cxy))
     S, N = len(frames), len(slots)
     frames = np.array(frames, np.int32)
     pos = np.full((S, N, 2), np.nan, np.float32)
@@ -148,6 +183,7 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     kps = np.zeros((S, N, 17, 3), np.float32)
     occ = np.zeros((S, N), np.uint8)
     src = np.full((S, N), -1, np.int64)          # 가려짐 추정값이 어느 샘플 위치를 복사했나
+    jidx = np.full((S, N), -1, np.int64)         # 매칭된 검출 번호 (샘플 안에서)
     off_box = np.full((S, K, 4), np.nan, np.float32)
     if S == 0:
         return dict(frames=frames, t=frames / fps, pos=pos, box=box, conf=conf, kps=kps, occ=occ,
@@ -165,6 +201,10 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     def in_court(xy) -> bool:
         x, y = xy
         return -params.court_side <= x <= C.W + params.court_side and -params.court_end <= y <= C.L + params.court_end
+
+    def outside(xy) -> float:   # 코트 라인 밖으로 나간 거리 (m, 안이면 0)
+        x, y = xy
+        return max(0.0, -x, x - C.W) + max(0.0, -y, y - C.L)
 
     def cut(b) -> bool:   # 화면 가장자리에서 잘린 박스: 발 위치를 알 수 없다
         e = params.edge_px
@@ -197,7 +237,7 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                     ov = [(_iou(ib, d[j]), j) for j in range(len(d)) if j not in used]
                     if ov and max(ov)[0] > 0.3:
                         j = max(ov)[1]; k = slots.index(s); used.add(j)
-                        box[si, k] = d[j, :4]; conf[si, k] = d[j, 4]; pos[si, k] = cxy[j]
+                        box[si, k] = d[j, :4]; conf[si, k] = d[j, 4]; pos[si, k] = cxy[j]; jidx[si, k] = j
                         last[s] = (cxy[j], si); seen[s] = (si, cxy[j].copy(), d[j, :4].copy())
             # (c) 나머지 슬롯: 쪽마다 헝가리안
             for side in ("far", "near"):
@@ -210,7 +250,8 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                 cost = np.zeros((len(ss), len(cand)))
                 for a, s in enumerate(ss):
                     lp, ls = last[s]
-                    recent = abs(si - ls) <= gap_n
+                    # 라인 밖에 머물던 칸은 '놓친 상태'로 보고 다시 찾는다 (라인 옆에 가만히 선 사람에게 계속 붙는 것 방지)
+                    recent = abs(si - ls) <= gap_n and outside(lp) < 0.1
                     ref_p = lp if recent else default[s]
                     # 지난 시간 동안 사람이 갈 수 있는 거리 안에서만 잇는다 (2초 넘게 놓쳤으면 코트 안 누구든 다시 찾기)
                     gate = min(params.max_speed * dt_s * max(1, abs(si - ls)) + params.gate_noise, params.gate_max)
@@ -219,13 +260,13 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                         if recent and dd > gate:
                             cost[a, b] = 1e6
                         else:
-                            cost[a, b] = (dd if recent else 0.4 * dd) + (1 - d[j, 4])
+                            cost[a, b] = (dd if recent else 0.4 * dd) + (1 - d[j, 4]) + 3.0 * outside(cxy[j])
                 r, c = linear_sum_assignment(cost)
                 for a, b in zip(r, c):
                     if cost[a, b] >= 1e6:
                         continue
                     j = cand[b]; k = slots.index(ss[a]); used.add(j)
-                    box[si, k] = d[j, :4]; conf[si, k] = d[j, 4]; pos[si, k] = cxy[j]
+                    box[si, k] = d[j, :4]; conf[si, k] = d[j, 4]; pos[si, k] = cxy[j]; jidx[si, k] = j
                     last[ss[a]] = (cxy[j], si); seen[ss[a]] = (si, cxy[j].copy(), d[j, :4].copy())
             # (d) 못 찾은 선수: 마지막 박스가 지금 누군가의 박스에 덮여 있으면 '가려짐'
             for k, sl in enumerate(slots):
@@ -242,23 +283,15 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     run(range(ref - 1, -1, -1))
     prog(0.62, "선수 매칭 완료")
 
-    # ---- 3) 자세 패스: 매칭된(직접 보인) 선수 박스에만 Pose
-    cap = cv2.VideoCapture(video_path)
-    si = 0
-    for imgs, idx in _read_samples(cap, total, step, params.batch, stop):
-        for img in imgs:
-            if si >= S:
-                break
-            ks = [k for k in range(N) if occ[si, k] == 0 and not np.isnan(box[si, k, 0])]
-            if ks:
-                kp = pose(img, box[si, ks])
-                for k, kk in zip(ks, kp):
-                    kps[si, k] = kk
-                    fx, fy = C.foot_point(box[si, k], kk)
-                    pos[si, k] = C.to_court(H, [[fx, fy]])[0]
-            si += 1
-        prog(0.62 + 0.38 * min(idx[-1] / max(total, 1), 1.0), f"자세 추정 {idx[-1]:,} / {total:,} 프레임")
-    cap.release()
+    # ---- 3) 발 위치: 매칭된 선수는 1)에서 구한 관절로 발목 기준 보정
+    for si, k in zip(*np.nonzero(jidx >= 0)):
+        g = starts[si] + jidx[si, k]
+        if occ[si, k] == 0 and data["posed"][g]:
+            kk = data["kp"][g].astype(np.float32)
+            kps[si, k] = kk
+            fx, fy = C.foot_point(box[si, k], kk)
+            pos[si, k] = C.to_court(H, [[fx, fy]])[0]
+    prog(1.0, "추적 완료")
     # 가려짐 추정 위치도 발목 보정이 끝난 위치로 맞춘다 (경계에서 가짜 속도가 생기지 않게)
     for s_i, k in zip(*np.nonzero(occ)):
         if src[s_i, k] >= 0:
