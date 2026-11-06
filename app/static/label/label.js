@@ -10,30 +10,30 @@ const pending = m => m.src === "auto" && !m.ok;
 const SPOTS = [["far-L", "Q", "위 코트 왼쪽"], ["far-R", "W", "위 코트 오른쪽"], ["near-L", "Z", "아래 코트 왼쪽"], ["near-R", "X", "아래 코트 오른쪽"]];
 const SPOT_KEY = { q: "far-L", ㅂ: "far-L", w: "far-R", ㅈ: "far-R", z: "near-L", ㅋ: "near-L", x: "near-R", ㅌ: "near-R" };
 function setSpot(m, spot) { m.spot = m.spot === spot ? undefined : spot; changed(true); }
-// 랠리 득점 팀: A = 1팀, B = 2팀. 서브 시각·개수가 아니라 덧붙이는 정보라 최종 저장 상태는 그대로 둔다
+// 서브 팀 (= 직전 랠리 득점 팀, 첫 서브는 경기 시작 서버): A = 1팀, B = 2팀. 서브 시각·개수가 아니라 덧붙이는 정보라 최종 저장 상태는 그대로 둔다
 const WIN_KEY = { a: "A", ㅁ: "A", d: "B", ㅇ: "B" };
 function setWin(i, w) {
   const m = S.marks[i]; if (!m) return;
   // 자동 판정 값과 같은 팀을 누르면 확인, 확인된 같은 팀을 다시 누르면 지우기
-  if (m.win_auto && m.winner === w) m.win_auto = false;
-  else { m.winner = m.winner === w ? undefined : w; m.win_auto = false; }
+  if (m.win_auto && m.server === w) m.win_auto = false;
+  else { m.server = m.server === w ? undefined : w; m.win_auto = false; }
   S.sel = i; changed(true);
-  if (m.winner) toast(`${i + 1}번 랠리 → ${S.team[w]} 득점`);
+  if (m.server) toast(i ? `${i + 1}번 서브 → ${S.team[w]} 득점 · 서브` : `1번 서브 → 경기 시작 ${S.team[w]} 서브`);
 }
-// 득점 팀을 줄 서브: 멈춘 상태에서 목록에서 고른 서브, 아니면 지금 보고 있는 랠리(지금 시각 직전 서브)
+// 서브 팀을 줄 서브: 멈춘 상태에서 목록에서 고른 서브, 아니면 지금 보고 있는 랠리(지금 시각 직전 서브)
 function rallyTarget() {
   const el = v();
   if (el.paused && S.sel >= 0) return S.sel;
   return S.marks.reduce((k, m, i) => m.t <= el.currentTime + .05 ? i : k, -1);
 }
-// 랠리마다 누적 점수 (득점 팀을 아직 안 정한 랠리부터는 모름)
+// 서브마다 그 순간 점수: 2번 서브부터 넣은 팀이 직전 랠리 득점 (첫 서브는 0:0 경기 시작)
 function runningScore() {
   const out = []; let a = 0, b = 0, known = true;
-  for (const m of S.marks) {
-    if (m.winner === "A") a++; else if (m.winner === "B") b++; else known = false;
+  S.marks.forEach((m, i) => {
+    if (i) { if (m.server === "A") a++; else if (m.server === "B") b++; else known = false; }
     out.push(known ? `${a}:${b}` : "");
-  }
-  return { out, a, b, n: S.marks.filter(m => m.winner).length, auto: S.marks.filter(m => m.winner && m.win_auto).length };
+  });
+  return { out, a, b, n: S.marks.filter(m => m.server).length, auto: S.marks.filter(m => m.server && m.win_auto).length };
 }
 const v = () => $("#vid");
 
@@ -111,7 +111,7 @@ async function openVideo(vid) {
     if (c?.teams) S.team = { A: c.teams["1"]?.name || "1팀", B: c.teams["2"]?.name || "2팀" };
     renderTeams(vid, c);
   } catch { renderTeams(vid, null); }
-  $("#winLegend").innerHTML = `<kbd>A</kbd> ${S.team.A} 득점 · <kbd>D</kbd> ${S.team.B} 득점`;
+  $("#winLegend").innerHTML = `<kbd>A</kbd> ${S.team.A} 서브 · <kbd>D</kbd> ${S.team.B} 서브 (= 직전 랠리 득점)`;
   $("#finA").value = S.final?.A ?? ""; $("#finB").value = S.final?.B ?? "";
   if (tr.from_name) { S.dirty = true; toast(`같은 이름 영상(${tr.video_name || ""})의 기록을 불러왔어요`); }
   $("#saveTag").textContent = tr.saved ? `저장됨 ${new Date(tr.saved * 1000).toLocaleTimeString("ko-KR")}` : "아직 기록 없음";
@@ -145,10 +145,11 @@ function render() {
   $("#pText").textContent = (goal ? `서브 ${n} / ${goal}개` : `서브 ${n}개 기록`) + (np ? ` · 확인 대기 ${np}` : "");
   renderFinal(goal, np);
   const rsT = runningScore();
-  $("#tally").innerHTML = rsT.n ? `득점 기록 ${rsT.n}/${n} · <b class="tA">${S.team.A} ${rsT.a}</b> : <b class="tB">${rsT.b} ${S.team.B}</b>`
+  const lastOk = S.final && rsT.n === n && ((rsT.a === S.final.A - 1 && rsT.b === S.final.B) || (rsT.a === S.final.A && rsT.b === S.final.B - 1));
+  $("#tally").innerHTML = rsT.n ? `서브 팀 기록 ${rsT.n}/${n} · 마지막 서브 때 <b class="tA">${S.team.A} ${rsT.a}</b> : <b class="tB">${rsT.b} ${S.team.B}</b>`
     + (rsT.auto ? ` <span class="bad">자동 판정 ${rsT.auto}개 확인 전</span>` : "")
-    + (S.final && rsT.n === n && (rsT.a !== S.final.A || rsT.b !== S.final.B) ? ` <span class="bad">최종 점수와 다름</span>` : "")
-    : "랠리가 끝나면 <kbd>A</kbd>/<kbd>D</kbd>로 득점한 팀을 기록하세요";
+    + (S.final && rsT.n === n ? (lastOk ? ` · 마지막 랠리 ${S.final.A > rsT.a ? S.team.A : S.team.B} 득점 → ${S.final.A}:${S.final.B}` : ` <span class="bad">최종 점수와 안 맞음</span>`) : "")
+    : "서브마다 <kbd>A</kbd>/<kbd>D</kbd>로 서브를 넣은 팀(= 직전 랠리 득점 팀)을 기록하세요";
   const fill = $("#pFill"); fill.style.width = goal ? `${Math.min(100, n / goal * 100)}%` : "0"; fill.classList.toggle("done", goal != null && n === goal);
   const now = v().currentTime;
   const cur = S.marks.reduce((k, m, i) => m.t <= now + .05 ? i : k, -1);
@@ -162,7 +163,7 @@ function render() {
       <span class="no">${i + 1}</span>${chk}
       <span class="tt" data-go="${i}" title="이 시각으로 이동">${fmt(m.t)}${gap != null ? `<small>+${gap.toFixed(1)}s</small>` : ""}</span>
       <span class="nud"><button data-n="-0.1" title="0.1초 앞당기기">−.1</button><button data-n="0.1" title="0.1초 늦추기">+.1</button></span>
-      <span class="win ${m.win_auto ? "auto" : ""}" title="${m.win_auto ? "자동 판정 · 맞으면 같은 팀을 눌러 확인" : ""}"><button class="A ${m.winner === "A" ? "on" : ""}" data-w="A" title="${S.team.A} 득점 (A)">1</button><button class="B ${m.winner === "B" ? "on" : ""}" data-w="B" title="${S.team.B} 득점 (D)">2</button><small>${rs.out[i]}</small></span>
+      <span class="win ${m.win_auto ? "auto" : ""}" title="${m.win_auto ? "자동 판정 · 맞으면 같은 팀을 눌러 확인" : "이 서브를 넣은 팀 (직전 랠리 득점 팀)"}"><button class="A ${m.server === "A" ? "on" : ""}" data-w="A" title="${S.team.A} 서브 (A)">1</button><button class="B ${m.server === "B" ? "on" : ""}" data-w="B" title="${S.team.B} 서브 (D)">2</button><small>${rs.out[i]}</small></span>
       <span class="spot" title="서버가 선 곳 (화면 기준)">${SPOTS.map(([s, k, lb]) => `<button class="${s.split("-")[0]} ${m.spot === s ? "on" : ""}" data-s="${s}" title="${lb} (${k})" aria-label="${lb}"></button>`).join("")}</span>
       <input class="note" value="${(m.note || "").replace(/"/g, "&quot;")}" placeholder="메모" maxlength="100" aria-label="${i + 1}번 메모">
       <button class="del" title="지우기" aria-label="${i + 1}번 지우기">×</button></li>`;
@@ -199,27 +200,27 @@ async function loadCandidates(which) {
     toast(`후보 ${r.candidates.length}개 중 ${added}개를 넣었어요. N으로 하나씩 확인하세요`);
   } catch (e) { toast(e.message, true); }
 }
-// 랠리별 득점 팀 자동 판정 (다음 서브의 서버 팀). 비어 있는 랠리만 채우고, 확인 전에는 채점에 안 쓴다
+// 서브마다 알고리즘이 본 서버 팀 자동 채움. 비어 있는 서브만 채우고, 확인 전에는 채점에 안 쓴다
 async function loadWinners() {
   try {
     if (S.dirty) await save(true);
     const r = await api(`/api/lab/${S.vid}/winners`);
     let added = 0, miss = 0;
-    for (const w of r.winners) {
+    for (const w of r.servers) {
       const m = S.marks.find(m => Math.abs(m.t - w.t) < .011);
-      if (!m || m.winner) continue;
-      if (w.winner) { m.winner = w.winner; m.win_auto = true; added++; } else miss++;
+      if (!m || m.server) continue;
+      if (w.server) { m.server = w.server; m.win_auto = true; added++; } else miss++;
     }
     changed(true);
-    toast(`득점 팀 ${added}개를 채웠어요${miss ? ` (판정 못 한 랠리 ${miss}개)` : ""}. 영상을 보며 맞으면 같은 팀 키(A/D)로 확인하세요`);
+    toast(`서브 팀 ${added}개를 채웠어요${miss ? ` (판정 못 한 랠리 ${miss}개)` : ""}. 영상을 보며 맞으면 같은 팀 키(A/D)로 확인하세요`);
   } catch (e) { toast(e.message, true); }
 }
 function nextAutoWin() {
   const t = v().currentTime;
   let i = S.marks.findIndex(m => m.win_auto && m.t > t + 1.0);
   if (i < 0) i = S.marks.findIndex(m => m.win_auto);
-  if (i < 0) { toast("확인할 자동 득점 팀이 없어요"); return; }
-  S.sel = i; seek(S.marks[i + 1] ? S.marks[i + 1].t - 4 : S.marks[i].t); v().play(); render();
+  if (i < 0) { toast("확인할 자동 서브 팀이 없어요"); return; }
+  S.sel = i; seek(Math.max(0, S.marks[i].t - 3)); v().play(); render();
 }
 function nextPending(fromStart = false) {
   const t = fromStart ? -1 : v().currentTime;
@@ -255,7 +256,7 @@ function drawStrip() {
   const X = t => w * t / S.meta.duration;
   for (let m = 60; m < S.meta.duration; m += 60) { c.fillStyle = "#ffffff22"; c.fillRect(X(m), 0, 1, h); c.fillStyle = "#9aa7a1"; c.font = "10px ui-monospace,monospace"; c.fillText(`${m / 60}분`, X(m) + 3, 11); }
   S.marks.forEach((m, i) => {
-    c.fillStyle = i === S.sel ? "#ffffff" : pending(m) ? "#7d8a84" : m.winner === "A" ? "#5aa9ff" : m.winner === "B" ? "#ff7a59" : "#d9b98a";
+    c.fillStyle = i === S.sel ? "#ffffff" : pending(m) ? "#7d8a84" : m.server === "A" ? "#5aa9ff" : m.server === "B" ? "#ff7a59" : "#d9b98a";
     c.fillRect(X(m.t) - 1.5, pending(m) ? 14 : 6, 3, pending(m) ? h - 14 : h - 6);
   });
   c.fillStyle = "#3ecf8e"; c.fillRect(X(v().currentTime) - 1, 0, 2, h);

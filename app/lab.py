@@ -373,17 +373,50 @@ class ServeReq(BaseModel):
     use_truth: bool = True   # 정답 득점 팀을 고정값으로 넣어 점수를 바로잡을지 (채점은 항상 넣기 전 결과로)
 
 
-def apply_truth_winners(serves: list, truth_data: dict | None, near: float = 3.0) -> list:
-    """정답의 랠리별 득점 팀을 알고리즘 서브에 고정값으로 넣은 사본.
+def label_servers(marks: list) -> list:
+    """정답 라벨 = 서브마다 '이 서브를 넣은 팀' (= 직전 랠리 득점 팀, 첫 서브는 경기 시작 서버). 자동 채움(확인 전)은 None."""
+    return [None if m.get("win_auto") else (m.get("server") if m.get("server") in ("A", "B") else None) for m in marks]
 
-    정답 j번 랠리를 w가 이겼으면 → 정답 j+1번 서브에 해당하는 판정 서브의 서버를 w로 고정(override).
-    마지막 랠리는 다음 서브가 없으니 그 판정 서브에 last_won=w.
+
+def label_winners(marks: list, final: dict | None) -> list:
+    """서버 라벨 → 랠리별 득점 팀. j번 랠리 득점 = j+1번 서브 팀. 마지막 랠리는 최종 점수에서 하나 남는 팀."""
+    srv = label_servers(marks)
+    wins = srv[1:] + [None]
+    if marks and final and None not in srv[1:]:
+        a, b = srv[1:].count("A"), srv[1:].count("B")
+        if (a, b) == (final["A"] - 1, final["B"]):
+            wins[-1] = "A"
+        elif (a, b) == (final["A"], final["B"] - 1):
+            wins[-1] = "B"
+    return wins
+
+
+def apply_truth_winners(serves: list, truth_data: dict | None, near: float = 3.0) -> list:
+    """정답 서버 라벨을 알고리즘 서브에 고정값으로 넣은 사본.
+
+    정답 j번 서브를 w가 넣었으면 → 그 서브에 해당하는 판정 서브의 서버를 w로 고정(override).
+    마지막 랠리 득점 팀(최종 점수에서 나온 것)은 마지막 판정 서브에 last_won.
     정답 서브와 판정 서브는 가까운 것끼리(near 초 안) 짝짓는다 — 채점보다 느슨하게 (조금 늦게 잡은 서브도 고치게).
     """
     out = [dict(e) for e in serves]
-    marks = sorted([m for m in (truth_data or {}).get("marks", []) if m.get("src") != "auto" or m.get("ok")], key=lambda m: m["t"])
+    td = truth_data or {}
+    marks = sorted([m for m in td.get("marks", []) if m.get("src") != "auto" or m.get("ok")], key=lambda m: m["t"])
     if not marks or not out:
         return out
+    order = sorted(range(len(out)), key=lambda i: out[i]["t"])
+    cand = sorted((abs(out[i]["t"] - m["t"]), j, i) for j, m in enumerate(marks) for i in order if abs(out[i]["t"] - m["t"]) <= near)
+    t2p: dict = {}
+    used: set = set()
+    for _, j, i in cand:
+        if j not in t2p and i not in used:
+            t2p[j] = i; used.add(i)
+    for j, w in enumerate(label_servers(marks)):
+        if w and j in t2p:
+            out[t2p[j]]["override"] = w
+    last = label_winners(marks, td.get("final"))[-1]
+    if last and order:
+        out[order[-1]]["last_won"] = last
+    return out
     order = sorted(range(len(out)), key=lambda i: out[i]["t"])
     cand = sorted((abs(out[i]["t"] - m["t"]), j, i) for j, m in enumerate(marks) for i in order if abs(out[i]["t"] - m["t"]) <= near)
     t2p: dict = {}
@@ -560,7 +593,7 @@ LABELS = DATA.parent / "labels"   # data/labels/<영상 이름>.json : 같은 �
 
 
 class TruthReq(BaseModel):
-    marks: list[dict] = Field(default_factory=list)   # [{t, winner: 'A'|'B' (그 랠리 득점 팀), spot: 'far-L'|'far-R'|'near-L'|'near-R', note, src: 'auto', stage, reason, ok}]
+    marks: list[dict] = Field(default_factory=list)   # [{t, server: 'A'|'B' (이 서브를 넣은 팀 = 직전 랠리 득점 팀), win_auto, spot: 'far-L'|'far-R'|'near-L'|'near-R', note, src: 'auto', stage, reason, ok}]
     final: dict | None = None                          # 최종 점수 {A, B}
     finalized: bool = False                            # '최종 정답 저장'을 눌렀는지
 
@@ -614,44 +647,40 @@ def eval_serves(serves: list, scored: list, truth_data: dict | None, first: str 
             else:
                 sv["wrong_box"].append(m["t"])
     ev["server"] = sv if sv["labeled"] else None
-    ev["rally"] = _eval_rally(serves, scored, marks, pairs, pred, first, summary)
+    ev["rally"] = _eval_rally(serves, scored, marks, pairs, pred, first, summary, (truth_data or {}).get("final"))
     return ev
 
 
-def _eval_rally(serves, scored, marks, pairs, pred, first, summary):
-    """정답의 랠리별 득점 팀(winner: 'A'=1팀, 'B'=2팀)으로 채점.
+def _eval_rally(serves, scored, marks, pairs, pred, first, summary, final=None):
+    """정답 서버 라벨(서브마다 넣은 팀 = 직전 랠리 득점 팀)로 채점.
 
-    정답 서버 팀: 첫 서브는 경기 설정의 첫 서브 팀, 그다음부터는 직전 랠리 득점 팀 (랠리 포인트).
-    알고리즘 득점 팀: 다음 판정 서브의 서버 팀 (마지막 랠리는 알 수 없음).
+    서버 팀: 정답 서브와 짝지은 판정 서브의 서버 비교 (첫 서브에 라벨이 없으면 경기 설정의 첫 서브 팀).
+    득점 팀: j번 랠리 정답 = j+1번 서브 팀 (마지막은 최종 점수), 알고리즘 = 판정 서브의 won.
     """
-    wins = [None if m.get("win_auto") else m.get("winner") for m in marks]   # 확인 안 한 자동 득점 팀은 정답 아님
-    if not any(w in ("A", "B") for w in wins) or not scored:
+    srv = label_servers(marks)
+    if not any(srv) or not scored:
         return None
-    r = {"labeled": sum(w in ("A", "B") for w in wins), "server_ok": 0, "server_n": 0, "winner_ok": 0, "winner_n": 0,
+    wins = label_winners(marks, final)
+    r = {"labeled": sum(1 for w in srv if w), "server_ok": 0, "server_n": 0, "winner_ok": 0, "winner_n": 0,
          "wrong_server": [], "wrong_winner": [],
          "truth_score": {"A": wins.count("A"), "B": wins.count("B")},
          "pred_score": (summary or {}).get("score")}
-    order = {pi: n for n, pi in enumerate(pred)}   # pred 순번 → 시간순 위치
     for pi, tj in pairs:
         i = pred[pi]
-        got = scored[i].get("server") if i < len(scored) else None
-        want = first if tj == 0 else wins[tj - 1]
-        if want in ("A", "B") and got:
+        e = scored[i] if i < len(scored) else {}
+        want = srv[tj] or (first if tj == 0 else None)
+        if want and e.get("server"):
             r["server_n"] += 1
-            if got == want:
+            if e["server"] == want:
                 r["server_ok"] += 1
             else:
                 r["wrong_server"].append(marks[tj]["t"])
-        nxt = order[pi] + 1
-        if wins[tj] in ("A", "B") and nxt < len(pred):
-            ni = pred[nxt]
-            gw = scored[ni].get("server") if ni < len(scored) else None
-            if gw:
-                r["winner_n"] += 1
-                if gw == wins[tj]:
-                    r["winner_ok"] += 1
-                else:
-                    r["wrong_winner"].append(marks[tj]["t"])
+        if wins[tj] and e.get("won"):
+            r["winner_n"] += 1
+            if e["won"] == wins[tj]:
+                r["winner_ok"] += 1
+            else:
+                r["wrong_winner"].append(marks[tj]["t"])
     return r
 
 
@@ -676,8 +705,7 @@ def lab_candidates(vid: str, which: str = "all"):
 
 @router.get("/api/lab/{vid}/winners")
 def lab_winners(vid: str):
-    """정답 입력용 랠리별 득점 팀 자동 판정: 정답 서브마다 짝지은 판정 서브의 다음 서브 서버 팀 = 그 랠리 득점 팀.
-    마지막 랠리는 다음 서브가 없어 최종 점수로 채운다(득점 팀 합이 최종 점수에 하나 모자랄 때)."""
+    """정답 입력용 자동 채움: 정답 서브마다 짝지은 판정 서브의 서버 팀 (= 직전 랠리 득점 팀)."""
     if not (ldir(vid) / "tracks.npz").exists():
         raise HTTPException(400, "실험 페이지에서 추적을 먼저 실행해 주세요")
     cfg = read_json(ldir(vid) / "config.json") or {}
@@ -696,13 +724,8 @@ def lab_winners(vid: str):
     out = [None] * len(marks)
     for pi, tj in pairs:
         if pred[pi] < len(scored):
-            out[tj] = scored[pred[pi]].get("won")
-    fin = truth.get("final")
-    if marks and out[-1] is None and fin and None not in out[:-1]:
-        a = out[:-1].count("A")
-        if a + out[:-1].count("B") == fin["A"] + fin["B"] - 1:
-            out[-1] = "A" if a == fin["A"] - 1 else "B" if a == fin["A"] else None
-    return {"winners": [{"t": m["t"], "winner": w} for m, w in zip(marks, out)]}
+            out[tj] = scored[pred[pi]].get("server")
+    return {"servers": [{"t": m["t"], "server": w} for m, w in zip(marks, out)]}
 
 
 @router.get("/label")
@@ -730,14 +753,13 @@ def lab_put_truth(vid: str, req: TruthReq):
         if "t" not in m:
             continue
         item = {"t": round(float(m["t"]), 2)}
-        if m.get("server") in ("A", "B"):
-            item["server"] = m["server"]
+        sv = m.get("server") if m.get("server") in ("A", "B") else m.get("winner") if m.get("winner") in ("A", "B") else None
+        if sv:   # 이 서브를 넣은 팀 = 직전 랠리 득점 팀 (예전 이름 winner 도 받음)
+            item["server"] = sv
+            if m.get("win_auto"):   # 자동 판정으로 채운 값: 사람이 확인하기 전에는 채점에 안 씀
+                item["win_auto"] = True
         if m.get("note"):
             item["note"] = str(m["note"])[:100]
-        if m.get("winner") in ("A", "B"):
-            item["winner"] = m["winner"]
-            if m.get("win_auto"):   # 자동 판정으로 채운 득점 팀: 사람이 A/D로 확인하기 전에는 채점에 안 씀
-                item["win_auto"] = True
         if m.get("spot") in ("far-L", "far-R", "near-L", "near-R"):
             item["spot"] = m["spot"]
         if m.get("src") == "auto":   # 자동 판정에서 불러온 후보: 사람이 확인(ok)해야 정답으로 쓴다

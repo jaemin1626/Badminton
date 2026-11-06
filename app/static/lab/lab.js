@@ -774,7 +774,7 @@ function loop() {
       const ra = rallyAt(t), vr = $("#vRally");
       if (vr) { vr.classList.toggle("hidden", !ra); if (ra) { const j = truthIdxNear(ra.e.t), tw = j >= 0 ? truthWin(S.truthMarks[j]) : null;
         vr.innerHTML = `${ra.n}번 랠리 · <b class="w${ra.n > 1 ? ra.e.server : ""}">${serveText(ra.e, ra.n)}</b>${ra.e.won_at ? "" : ` · <small>${lastText(ra.e)}</small>`}`
-          + (tw ? ` · <small>이 랠리 정답: <b class="w${tw}">${teamName(tw)} 득점</b></small>` : ` · <small>A/B로 이 랠리 득점 팀 정답</small>`); } }
+          + (tw ? ` · <small>정답: <b class="w${tw}">${teamName(tw)} ${ra.n > 1 ? "득점 · 서브" : "서브"}</b></small>` : ` · <small>A/B로 이 서브를 넣은 팀 정답</small>`); } }
     }
     $("#vNum").textContent = `${fmt(t)} / ${fmt(S.meta.duration)}`;
     const sk = $("#seek"); if (!S.seeking) { sk.max = S.meta.duration; sk.value = t; }
@@ -800,7 +800,7 @@ function drawWinStrip(t) {
   const cv = $("#winCv"); if (!cv) return;
   const [c, w, h] = setupCanvas(cv); c.clearRect(0, 0, w, h);
   const dur = S.meta.duration, X = s => PL + (w - PL) * s / dur, rs = truthRallies();
-  c.fillStyle = "#9aa7a1"; c.font = "11px 'Noto Sans KR',sans-serif"; c.fillText("득점", 6, h / 2 - 2);
+  c.fillStyle = "#9aa7a1"; c.font = "11px 'Noto Sans KR',sans-serif"; c.fillText("서브팀", 6, h / 2 - 2);
   const n = rs.filter(r => r.w).length; c.fillText(`${n}/${rs.length}`, 6, h / 2 + 12);
   const hj = S.hoverT != null ? truthIdxNear(S.hoverT) : -1;
   for (const r of rs) {
@@ -866,12 +866,12 @@ function drawTimeline(t) {
     c.fillStyle = col; c.beginPath(); c.moveTo(x - (fl ? 14 : 10), top - 3); c.lineTo(x + (fl ? 14 : 10), top - 3); c.lineTo(x, top + (fl ? 20 : 15)); c.fill();
     c.strokeStyle = r.w ? col : "#ffffff88"; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
     c.font = "bold 16px 'Noto Sans KR',sans-serif"; c.fillStyle = col;
-    c.fillText(r.w ? `${r.j + 1}번 · ${teamName(r.w)} 득점` : `${r.j + 1}번`, x + 12, top + 16);
+    c.fillText(r.w ? `${r.j + 1}번 · ${teamName(r.w)} ${r.j ? "득점·서브" : "서브(시작)"}` : `${r.j + 1}번`, x + 12, top + 16);
   }
   if (S.hoverT != null && S.hoverT >= t0 && S.hoverT <= t1) {
     const x = X(S.hoverT); c.strokeStyle = "#ffe14d"; c.lineWidth = 3; c.beginPath(); c.moveTo(x, top - 4); c.lineTo(x, bot); c.stroke(); c.lineWidth = 1;
     c.fillStyle = "#ffe14d"; c.font = "bold 12px 'Noto Sans KR',sans-serif";
-    const lbl = "A / B = 이 랠리 득점 팀", lw = c.measureText(lbl).width; c.fillText(lbl, Math.min(x + 6, w - lw - 4), top + 42);
+    const lbl = "A / B = 이 서브를 넣은 팀 (직전 랠리 득점)", lw = c.measureText(lbl).width; c.fillText(lbl, Math.min(x + 6, w - lw - 4), top + 42);
   }
   // 서브 표시
   for (const e of S.sv.serves) {
@@ -973,15 +973,15 @@ function renderEvents() {
   $$("#evList li[data-i]").forEach(li => {
     li.onclick = () => selectRun(runs[+li.dataset.i], true);
     const r = runs[+li.dataset.i];
-    if (r.stage === "OK") { li.onmouseenter = () => { S.hoverT = r.t1; S.dirty = true; }; li.onmouseleave = () => { S.hoverT = null; S.dirty = true; }; li.title = "마우스를 대고 A / B = 이 서브로 시작한 랠리의 득점 팀 정답"; }
+    if (r.stage === "OK") { li.onmouseenter = () => { S.hoverT = r.t1; S.dirty = true; }; li.onmouseleave = () => { S.hoverT = null; S.dirty = true; }; li.title = "마우스를 대고 A / B = 이 서브를 넣은 팀 (직전 랠리 득점 팀) 정답"; }
   });
 }
 // 이 서브로 시작한 랠리: 정답 득점 팀과 알고리즘 득점 팀 비교
 function truthCmp(e) {
   const j = truthIdxNear(e.t), tw = j >= 0 ? truthWin(S.truthMarks[j]) : null;
   if (!tw) return "";
-  const aw = "won_raw" in e ? e.won_raw : e.won, ok = aw === tw;   // 알고리즘만의 판단과 비교
-  return ` · <span style="color:${TEAM_COL[tw]}">정답 ${teamName(tw)} 득점</span> <b style="color:${ok ? "var(--ok,#3ecf8e)" : "#ff5d6c"}">${ok ? "✓" : "✗ 알고리즘은 " + (aw ? teamName(aw) : "모름")}</b>`;
+  const aw = "server_raw" in e ? e.server_raw : e.server, ok = aw === tw;   // 알고리즘만의 판단과 비교
+  return ` · <span style="color:${TEAM_COL[tw]}">정답 ${teamName(tw)} 서브</span> <b style="color:${ok ? "var(--ok,#3ecf8e)" : "#ff5d6c"}">${ok ? "✓" : "✗ 알고리즘은 " + (aw ? teamName(aw) : "모름")}</b>`;
 }
 function selectRun(r, jump) {
   S.selRun = r;
@@ -1005,7 +1005,8 @@ const truthIdxNear = (t, tol = 2.5) => {
   (S.truthMarks || []).forEach((m, j) => { const d = Math.abs(m.t - t); if (d <= best) { best = d; k = j; } });
   return k;
 };
-const truthWin = m => m && !m.win_auto && (m.winner === "A" || m.winner === "B") ? m.winner : null;
+// 정답 라벨 = 이 서브를 넣은 팀 (= 직전 랠리 득점 팀, 첫 서브는 경기 시작 서버)
+const truthWin = m => m && !m.win_auto && (m.server === "A" || m.server === "B") ? m.server : null;
 // 랠리 득점 팀 정답: 마우스를 댄 서브(타임라인 ▼·초록 선, 목록 줄) 또는 지금 보고 있는 랠리에 A/B
 function setTruthWinner(w) {
   const ms = S.truthMarks || [];
@@ -1014,8 +1015,8 @@ function setTruthWinner(w) {
   if (j < 0 && S.hoverT == null) { const t = vid().currentTime; ms.forEach((m, k) => { if (m.t <= t + .05) j = k; }); }
   if (j < 0) { toast("이 서브 근처(2.5초 안)에 정답 서브가 없어요. S로 먼저 표시하세요", true); return; }
   const m = ms[j];
-  if (truthWin(m) === w) { delete m.winner; delete m.win_auto; toast(`${j + 1}번 랠리 득점 정답을 지웠어요`); }
-  else { m.winner = w; delete m.win_auto; toast(`${j + 1}번 랠리 (${fmt(m.t)} 서브) → ${teamName(w)} 득점`); }
+  if (truthWin(m) === w) { delete m.server; delete m.win_auto; toast(`${j + 1}번 서브 정답을 지웠어요`); }
+  else { m.server = w; delete m.win_auto; toast(j ? `${j + 1}번 서브 (${fmt(m.t)}) → ${teamName(w)} 득점 · 서브` : `1번 서브 → 경기 시작 ${teamName(w)} 서브`); }
   S.flash = { j, until: performance.now() + 700 };
   S.dirty = true; renderEvents(); saveTruthSoon(300);
 }
@@ -1033,7 +1034,7 @@ function rallyLine(r) {
   if (!r) return `<small style="display:block;margin-top:4px;color:var(--muted)">서버 팀·득점 팀 채점은 정답 입력 페이지에서 랠리마다 득점 팀(A/D)을 기록하면 나와요</small>`;
   const t = ts => ts.length ? ` <span class="bad" title="${ts.map(fmt).join(", ")}">(틀림 ${ts.slice(0, 4).map(fmt).join(", ")}${ts.length > 4 ? " …" : ""})</span>` : "";
   const ts = r.truth_score, ps = r.pred_score;
-  return `<small style="display:block;margin-top:4px">서버 팀 <b>${r.server_ok}/${r.server_n}</b>${t(r.wrong_server)}<br>득점 팀 <b>${r.winner_ok}/${r.winner_n}</b>${t(r.wrong_winner)}<br>`
+  return `<small style="display:block;margin-top:4px">서브 팀 <b>${r.server_ok}/${r.server_n}</b>${t(r.wrong_server)}<br>랠리 득점 팀 <b>${r.winner_ok}/${r.winner_n}</b>${t(r.wrong_winner)}<br>`
     + `점수 정답 <b>${ts.A}:${ts.B}</b>${r.labeled < r.server_n + 1 ? ` (득점 기록 ${r.labeled}개)` : ""}${ps ? ` · 계산 <b>${ps.A}:${ps.B}</b>` : ""}</small>`;
 }
 function serverLine(sv) {
