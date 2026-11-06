@@ -580,7 +580,7 @@ function watchJob(j) {
     try {
       const k = await api(`/api/jobs/${j.id}`); draw(k);
       if (k.state === "done") {
-        $("#tabView").disabled = false; S.tr = null; S.kps = null; S.sv = null; S.info.has_tracks = true;
+        $("#tabView").disabled = false; S.tr = null; S.kps = null; S.sv = null; S.info.has_tracks = true; S.info.tracks_stale = false;
         toast("추적이 끝났어요. 추적 · 서브 확인 탭에서 볼 수 있어요"); if (S.mode === "view") enterView(); return;
       }
       if (!["running", "queued"].includes(k.state)) return;
@@ -612,6 +612,7 @@ async function enterView() {
   }
   if (!S.truthLoaded) { const tr = await api(`/api/lab/${S.vid}/truth`); S.truthMarks = tr.marks || []; S.truthFinal = tr.final || null; S.truth = S.truthMarks.map(m => m.t); S.truthLoaded = true; }
   if (!S.sv) await recalc();
+  loadRuns();
   loop();
 }
 
@@ -930,6 +931,28 @@ function renderEvalList(f) {
   $$("#evList li[data-t]").forEach(li => li.onclick = () => { const tt = +li.dataset.t; S.view.t0 = Math.max(0, tt - 8); S.view.span = Math.max(S.view.span, 16); seek(Math.max(0, tt - 3), true); });
 }
 
+/* ---- 실행 기록 ---- */
+async function loadRuns() {
+  try { S.runs = await api(`/api/lab/${S.vid}/runs`); } catch { S.runs = []; }
+  renderRuns();
+}
+function renderRuns() {
+  const runs = S.runs || [];
+  $("#runCnt").textContent = runs.length ? `${runs.length}개` : "";
+  const when = t => new Date(t * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  $("#runList").innerHTML = runs.map(r => {
+    const ev = r.eval, ch = Object.entries(r.changed || {}).map(([k, v]) => `${(PARAM_DOC[k]?.[0] || k).split(" (")[0]} ${v}`).join(", ");
+    return `<li><div class="rh"><b>${when(r.at)}</b>${r.name ? ` · ${r.name}` : ""}</div>
+      <div class="rs">서브 ${r.n}개${ev ? ` · <b class="okc">${ev.hit}/${ev.truth} 맞음</b> · F1 ${ev.f1}` : ""}${r.summary ? ` · 점수 ${r.summary.score.A}:${r.summary.score.B}` : ""}</div>
+      <div class="rc">${ch ? `바꾼 기준값: ${ch}` : "기본 기준값"}</div>
+      <button class="b" data-run="${r.id}">이 기준값 불러오기</button></li>`;
+  }).join("") || `<li class="empty">아직 기록이 없어요</li>`;
+  $$("#runList [data-run]").forEach(b => b.onclick = async () => {
+    const rec = await api(`/api/lab/${S.vid}/runs/${b.dataset.run}`);
+    Object.assign(S.params, rec.params); buildParams(); await recalc(); toast("그때 기준값을 불러왔어요");
+  });
+}
+
 /* ---- 기준값 ---- */
 function buildParams() {
   $("#paramList").innerHTML = Object.keys(PARAM_DOC).map(k => `<div class="prm"><label for="p_${k}">${PARAM_DOC[k][0]}</label>
@@ -975,6 +998,12 @@ function bindView() {
   $$("#evFilter button").forEach(b => b.onclick = () => { S.filter = b.dataset.f; $$("#evFilter button").forEach(x => x.classList.toggle("on", x === b)); renderEvents(); });
   $("#resetParams").onclick = () => { S.params = { ...S.defaults }; buildParams(); recalc(); };
   $("#markBtn").onclick = toggleMark;
+  $("#runSave").onclick = async () => {
+    try {
+      await api(`/api/lab/${S.vid}/runs`, { method: "POST", json: { params: S.params, name: $("#runName").value.trim() } });
+      $("#runName").value = ""; await loadRuns(); toast("지금 결과를 실행 기록으로 저장했어요");
+    } catch (e) { toast(e.message, true); }
+  };
   $("#tuneBtn").onclick = async () => {
     const b = $("#tuneBtn"); b.disabled = true; b.textContent = "찾는 중";
     try {

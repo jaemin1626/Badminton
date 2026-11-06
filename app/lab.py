@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import time
+import traceback
 from pathlib import Path
 
 import cv2
@@ -327,6 +328,10 @@ def lab_track(vid: str):
         write_json(L / "tracks_meta.json", {"config_saved": cfg.get("saved"), "config_name": cfg.get("name"),
                                             "finished": time.time()})
         job.finish_stage(1, f"{len(tr['frames']):,}개 샘플 · {time.time() - t0:.0f}초")
+        try:   # 추적이 끝나면 기본 기준값으로 판정한 결과를 실행 기록으로 남긴다
+            save_run(vid, A.Params(), name="추적 직후 (기본 기준값)")
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
 
     return submit(job, fn, GPU_POOL).to_dict()
 
@@ -365,6 +370,90 @@ def lab_kps(vid: str):
 
 class ServeReq(BaseModel):
     params: dict = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------- 실행 기록
+RESULTS = DATA.parent / "results"   # data/results/<영상 이름>/<날짜-시각>.json (영상 작업 폴더를 지워도 남는다)
+
+
+def _results_dir(vid: str):
+    stem = _stem(vid)
+    if not NAME_RE.match(stem):
+        raise HTTPException(400, "영상 이름으로 결과 폴더를 만들 수 없어요")
+    return RESULTS / stem
+
+
+def save_run(vid: str, params: "A.Params", name: str = "") -> dict:
+    """지금 추적 결과 + 기준값으로 서브를 판정·채점해서 실행 기록으로 저장한다."""
+    L = ldir(vid)
+    tr = _tracks(vid)
+    cfg = read_json(L / "config.json") or {}
+    dbg: dict = {}
+    serves = A.find_serves(tr, cfg.get("match", {}).get("mode", "doubles"), params, debug=dbg)
+    scored, summary = [], None
+    if cfg.get("teams"):
+        setup = dict(cfg.get("match", {}))
+        setup["nameA"], setup["nameB"] = cfg["teams"]["1"]["name"], cfg["teams"]["2"]["name"]
+        sides = {"A": cfg["teams"]["1"]["side"], "B": cfg["teams"]["2"]["side"]}
+        scored, summary = A.score_events(serves, setup, sides)
+    truth_data = read_json(L / "truth.json", {})
+    truth = truth_times(truth_data)
+    stages: dict = {}
+    for r in dbg.get("runs", []):
+        stages[r["stage"]] = stages.get(r["stage"], 0) + 1
+    default = dataclasses.asdict(A.Params())
+    p = dataclasses.asdict(params)
+    now = time.time()
+    rid = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
+    rec = {
+        "id": rid, "at": now, "name": name, "video_name": read_json(vdir(vid) / "meta.json", {}).get("name"),
+        "config_name": cfg.get("name"), "config_saved": cfg.get("saved"),
+        "tracks_finished": read_json(L / "tracks_meta.json", {}).get("finished"),
+        "params": p, "changed": {k: v for k, v in p.items() if default.get(k) != v},
+        "serves": [{k: e.get(k) for k in ("t", "server", "score", "game", "conf", "flags", "box", "p_near", "view")} for e in scored]
+        or [{"t": e["t"]} for e in serves],
+        "summary": summary, "stages": stages,
+        "eval": (evaluate([e["t"] for e in serves], truth) | {"finalized": bool(truth_data.get("finalized"))}) if truth else None,
+    }
+    out = _results_dir(vid)
+    out.mkdir(parents=True, exist_ok=True)
+    write_json(out / f"{rid}.json", rec)
+    return rec
+
+
+def _run_brief(rec: dict) -> dict:
+    ev = rec.get("eval") or {}
+    return {"id": rec["id"], "at": rec["at"], "name": rec.get("name", ""), "n": len(rec.get("serves", [])),
+            "changed": rec.get("changed", {}), "summary": rec.get("summary"), "stages": rec.get("stages"),
+            "eval": {k: ev.get(k) for k in ("truth", "hit", "recall", "precision", "f1", "finalized")} if ev else None}
+
+
+class RunReq(BaseModel):
+    params: dict = Field(default_factory=dict)
+    name: str = ""
+
+
+@router.get("/api/lab/{vid}/runs")
+def lab_runs(vid: str):
+    d = _results_dir(vid)
+    return [_run_brief(read_json(p)) for p in sorted(d.glob("*.json"), reverse=True)] if d.exists() else []
+
+
+@router.post("/api/lab/{vid}/runs")
+def lab_save_run(vid: str, req: RunReq):
+    fields = {f.name for f in dataclasses.fields(A.Params)}
+    params = A.Params(**{k: float(v) for k, v in req.params.items() if k in fields})
+    return _run_brief(save_run(vid, params, req.name[:60]))
+
+
+@router.get("/api/lab/{vid}/runs/{rid}")
+def lab_get_run(vid: str, rid: str):
+    if not re.match(r"^\d{8}-\d{6}$", rid):
+        raise HTTPException(400, "잘못된 기록 ID")
+    rec = read_json(_results_dir(vid) / f"{rid}.json")
+    if rec is None:
+        raise HTTPException(404, "그 기록이 없어요")
+    return rec
 
 
 @router.post("/api/lab/{vid}/serves")

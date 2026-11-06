@@ -148,6 +148,10 @@
     <div class="score-box" id="evalBox">정답 서브를 표시하면 채점 결과가 여기 나와요</div>
     <button class="btn primary" id="tuneBtn" style="width:100%;margin-top:8px">정답에 맞춰 기준값 자동 조정</button>
     <div class="row"><button class="btn" id="resetParams">기본값</button><button class="btn" id="rerunTrack">추적 다시 실행</button></div>
+    <h2 style="margin-top:16px">실행 기록 <span class="tag" id="runCnt"></span></h2>
+    <p class="hint small" style="margin:0 0 6px">추적이 끝날 때마다 자동으로, 또는 아래 버튼으로 지금 결과(판정 서브·기준값·채점)를 남겨요.</p>
+    <div class="row preset-new"><input id="runName" maxlength="60" placeholder="메모 (예: 정지 0.4초)"><button class="btn" id="runSave">이 결과 저장</button></div>
+    <ol class="runs" id="runList"></ol>
   </aside>
 </main>
 
