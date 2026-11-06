@@ -902,7 +902,8 @@ function renderEval() {
   const ev = S.sv?.eval, box = $("#evalBox");
   if (!ev) { box.innerHTML = "영상을 보면서 서브 순간에 <b>S</b>를 누르면 정답으로 기록되고, 여기서 채점해요"; return; }
   box.innerHTML = `<div class="sc"><b>${ev.hit}</b>/${ev.truth} 맞음 · <span class="bad">${ev.missed.length} 놓침</span> · <span class="warnc">${ev.false.length} 잘못 잡음</span></div>
-    <div class="bar2"><i style="width:${ev.recall * 100}%"></i></div><small>찾은 비율 ${Math.round(ev.recall * 100)}% · 맞힌 비율 ${Math.round(ev.precision * 100)}% · F1 ${ev.f1}</small>`;
+    <div class="bar2"><i style="width:${ev.recall * 100}%"></i></div><small>찾은 비율 ${Math.round(ev.recall * 100)}% · 맞힌 비율 ${Math.round(ev.precision * 100)}% · F1 ${ev.f1}</small>
+    <small style="display:block;margin-top:3px">${ev.finalized ? "✓ 최종 정답 기준" : "⚠ 정답이 아직 최종 저장 전이에요"} · <a href="/label#${S.vid}" style="color:var(--wood)">정답 입력 페이지</a></small>`;
 }
 // 놓친 정답: 그 순간(서브 직전) 서브 조건 중 처음 막힌 것
 function missReason(tt) {

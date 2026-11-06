@@ -53,12 +53,28 @@
     </section>
 
     <section class="box">
+      <h2>자동 판정 불러오기</h2>
+      <p class="hint">실험 페이지 추적 결과에서 서브 후보를 목록에 넣어요. 후보마다 영상을 보고 맞으면 <kbd>Enter</kbd>, 아니면 <kbd>Delete</kbd>. 후보에 없는 서브는 <kbd>S</kbd>로 추가하세요.</p>
+      <div class="row">
+        <button class="btn" id="loadAll" title="정지 구간 전부 (서브로 판정된 것 + 탈락한 것)">정지 구간 전부</button>
+        <button class="btn" id="loadOk" title="서브로 판정된 것만">서브 판정만</button>
+        <button class="btn primary" id="nextBtn" title="확인 안 한 다음 후보 장면으로 (N)">다음 후보 <kbd>N</kbd></button>
+      </div>
+    </section>
+
+    <section class="box">
       <h2>서브 목록 <span class="tag" id="cnt">0</span></h2>
       <div class="row addrow">
         <input id="tIn" placeholder="4:30.5" aria-label="직접 입력할 시각 (분:초)">
         <button class="btn" id="tAdd">시각으로 추가</button>
       </div>
       <ol class="marks" id="marks"></ol>
+    </section>
+
+    <section class="box fin">
+      <h2>최종 정답 <span class="tag" id="finTag">아직 저장 안 함</span></h2>
+      <p class="hint small" id="finMsg">확인하지 않은 후보가 없어야 최종 저장할 수 있어요. 채점에는 직접 기록한 서브와 확인한 후보만 쓰여요.</p>
+      <div class="row"><button class="btn primary" id="finBtn">최종 정답 저장</button><a class="btn hidden" id="anaLink" href="/lab">결과 분석 보기 →</a></div>
     </section>
 
     <section class="box keys">
@@ -68,6 +84,7 @@
         <li><kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 1초 · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 5초</li>
         <li><kbd>,</kbd><kbd>.</kbd> 한 프레임 · <kbd>[</kbd><kbd>]</kbd> 이전/다음 서브로</li>
         <li>목록에서 고른 서브: <kbd>A</kbd><kbd>B</kbd> 서버 팀 · <kbd>Delete</kbd> 지우기 · <kbd>-</kbd><kbd>=</kbd> 0.1초 조정</li>
+        <li>후보 검토: <kbd>N</kbd> 다음 후보 장면 · <kbd>Enter</kbd> 맞음(확인) · <kbd>Delete</kbd> 서브 아님</li>
       </ul>
     </section>
   </aside>

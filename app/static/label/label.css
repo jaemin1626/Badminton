@@ -36,3 +36,14 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .marks li.empty{display:block;color:var(--muted);text-align:center;padding:14px}
 .keys ul{list-style:none;padding:0;margin:0;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:5px}
 @media (max-width:1000px){.lbl{grid-template-columns:1fr}}
+
+/* 자동 후보 검토 */
+.marks li{grid-template-columns:28px auto 72px auto auto 1fr 22px}
+.marks li.pend{border-style:dashed;border-color:#7d8a84;opacity:.9}
+.marks .chk{display:flex;gap:4px;align-items:center}
+.marks .stg{font-size:10px;border-radius:4px;padding:1px 5px;background:var(--line);color:var(--muted);white-space:nowrap}
+.marks .stg.OK{background:#3ecf8e33;color:#3ecf8e} .marks .stg.B{background:#ff5d6c26;color:#ff8a95} .marks .stg.C{background:#ffa63d26;color:#ffa63d}
+.marks .cf{border:1px solid var(--ok);background:none;color:var(--ok);border-radius:5px;font-size:11px;height:22px;padding:0 6px;cursor:pointer;white-space:nowrap}
+.marks .okb{color:var(--ok);font-size:13px}
+.fin .row a.btn{text-decoration:none;color:var(--text)}
+#finBtn:disabled{opacity:.45;cursor:not-allowed}

@@ -393,12 +393,14 @@ def lab_serves(vid: str, req: ServeReq):
                 "run_s": np.round(lv["run_s"], 2).tolist(), "front": lv["front"].tolist(),
                 "dist": _nan_list(lv["dist"], 2), "x": _nan_list(lv["x"], 2), "box": lv["box"],
                 "box_range": [round(float(x), 2) for x in lv["box_range"]]}
-    truth = read_json(ldir(vid) / "truth.json", {}).get("marks", [])
+    truth_data = read_json(ldir(vid) / "truth.json", {})
+    truth = truth_times(truth_data)
     return {"params": dataclasses.asdict(params), "ms": round((time.time() - t0) * 1000), "live": live,
             "speed": _nan_list(v, 2) if v is not None else [],
             "still": dbg["still"].astype(int).tolist() if "still" in dbg else [],
             "runs": runs, "serves": scored, "summary": summary,
-            "eval": evaluate([e["t"] for e in serves], [m["t"] for m in truth]) if truth else None}
+            "eval": (evaluate([e["t"] for e in serves], truth) | {"finalized": bool(truth_data.get("finalized"))})
+            if truth else None}
 
 
 # ---------------------------------------------------------------- 정답 서브 · 채점 · 자동 맞추기
@@ -429,12 +431,33 @@ LABELS = DATA.parent / "labels"   # data/labels/<영상 이름>.json : 같은 �
 
 
 class TruthReq(BaseModel):
-    marks: list[dict] = Field(default_factory=list)   # [{t: 초, server: 'A'|'B'|None, note: str}]
+    marks: list[dict] = Field(default_factory=list)   # [{t, server: 'A'|'B', note, src: 'auto', stage, reason, ok}]
     final: dict | None = None                          # 최종 점수 {A, B}
+    finalized: bool = False                            # '최종 정답 저장'을 눌렀는지
+
+
+def truth_times(data: dict | None) -> list[float]:
+    """채점에 쓰는 정답 시각: 직접 기록한 것 + 자동 후보 중 사람이 확인한 것."""
+    return [m["t"] for m in (data or {}).get("marks", []) if m.get("src") != "auto" or m.get("ok")]
 
 
 def _stem(vid: str) -> str:
     return Path(read_json(vdir(vid) / "meta.json", {}).get("name") or vid).stem
+
+
+@router.get("/api/lab/{vid}/candidates")
+def lab_candidates(vid: str, which: str = "all"):
+    """정답 입력용 서브 후보: 실험 페이지 추적 결과의 정지 구간 (which=all 전부 · ok 서브로 판정된 것만).
+    후보 시각은 정지가 끝난 때(서브 순간 근처)."""
+    if not (ldir(vid) / "tracks.npz").exists():
+        raise HTTPException(400, "실험 페이지에서 추적을 먼저 실행해 주세요")
+    tr = _tracks(vid)
+    mode = (read_json(ldir(vid) / "config.json") or {}).get("match", {}).get("mode", "doubles")
+    dbg: dict = {}
+    A.find_serves(tr, mode, A.Params(), debug=dbg)
+    out = [{"t": round(r["t1"], 2), "stage": r["stage"], "reason": r["reason"]} for r in dbg.get("runs", [])
+           if which == "all" or r["stage"] == "OK"]
+    return {"candidates": out}
 
 
 @router.get("/label")
@@ -466,13 +489,19 @@ def lab_put_truth(vid: str, req: TruthReq):
             item["server"] = m["server"]
         if m.get("note"):
             item["note"] = str(m["note"])[:100]
+        if m.get("src") == "auto":   # 자동 판정에서 불러온 후보: 사람이 확인(ok)해야 정답으로 쓴다
+            item.update(src="auto", ok=bool(m.get("ok")), stage=str(m.get("stage", ""))[:4], reason=str(m.get("reason", ""))[:200])
         marks.append(item)
     marks.sort(key=lambda m: m["t"])
     final = None
     if req.final and all(str(req.final.get(k, "")).strip().isdigit() for k in ("A", "B")):
         final = {"A": int(req.final["A"]), "B": int(req.final["B"])}
-    data = {"marks": marks, "final": final, "video_name": read_json(vdir(vid) / "meta.json", {}).get("name"),
-            "saved": time.time()}
+    pending = sum(1 for m in marks if m.get("src") == "auto" and not m.get("ok"))
+    if req.finalized and pending:
+        raise HTTPException(400, f"확인하지 않은 후보가 {pending}개 남았어요")
+    data = {"marks": marks, "final": final, "finalized": bool(req.finalized),
+            "finalized_at": time.time() if req.finalized else None,
+            "video_name": read_json(vdir(vid) / "meta.json", {}).get("name"), "saved": time.time()}
     write_json(ldir(vid) / "truth.json", data)
     stem = _stem(vid)
     if NAME_RE.match(stem):
@@ -502,7 +531,7 @@ class TuneReq(BaseModel):
 @router.post("/api/lab/{vid}/tune")
 def lab_tune(vid: str, req: TuneReq):
     """정답 서브에 가장 잘 맞도록 기준값을 하나씩 바꿔 보며 찾는다 (좌표 하강, 3바퀴)."""
-    truth = [m["t"] for m in read_json(ldir(vid) / "truth.json", {}).get("marks", [])]
+    truth = truth_times(read_json(ldir(vid) / "truth.json", {}))
     if len(truth) < 5:
         raise HTTPException(400, "정답 서브를 5개 이상 표시해 주세요")
     tr = _tracks(vid)

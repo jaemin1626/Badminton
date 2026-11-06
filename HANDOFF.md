@@ -207,6 +207,9 @@ GET   /api/videos/{id}/download/{name}  result.json, events.csv, players.csv, ma
 - 최종 점수(예: 25:16)를 적으면 기록 진행(서브 n / 41)을 보여 준다. 서브 수 = 두 팀 점수의 합.
 - 저장: `data/videos/<ID>/lab/truth.json` + `data/labels/<영상 이름>.json`(같은 이름 영상을 다시 올려도 불러옴). 자동 저장.
 - 채점 기준: 판정 시각(정지가 끝난 때) 기준 정답이 −1.5초~+2.5초 안이면 맞음 (`lab.evaluate`).
+- **자동 판정 불러오기 → 검토 → 최종 저장**: 실험 페이지 추적 결과의 정지 구간(전부 또는 서브 판정만)을 후보(`src: auto`)로 넣고,
+  N(다음 후보 장면) → Enter(맞음) / Delete(아님)로 검토한다. 확인 안 한 후보가 있으면 최종 저장이 막힌다.
+  채점에는 직접 기록한 서브와 확인한 후보만 쓴다(`lab.truth_times`). 최종 저장 후 고치면 다시 최종 저장이 필요하다.
 
 ### 5.8 실험 페이지 (`/lab`, `app/lab.py`, `app/static/lab/`)
 운영 화면과 분리된 알고리즘 확인용 페이지. 설정·결과는 `data/videos/<id>/lab/`에만 저장하고 운영 파일은 건드리지 않는다.
