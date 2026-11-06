@@ -704,9 +704,6 @@ class Match:
         self.started = False
         self.server = s.get("first", "A")
         self.over = False
-        # 코트 교대는 경기를 멈추고 자리를 바꾸므로 서브 간격이 길다. 다음 서브까지 이보다 짧으면 교대 안 함
-        self.switch_gap = float(s.get("switch_gap", SWITCH_GAP))
-        self.gap = None   # 이번 랠리 서브 → 다음 서브 간격 (score_events가 넣어 줌)
 
     def clone(self):
         m = Match.__new__(Match)
@@ -723,8 +720,7 @@ class Match:
         a, b = self.score["A"], self.score["B"]
         # 마지막 게임(단판이면 그 게임) 중간 코트 교대: 21점 11점, 15점 8점, 25점 13점
         last_game = 2 * self.games_to_win - 1
-        if (self.game == last_game and not self.switched_mid and max(a, b) >= self.rules["switch_at"]
-                and (self.gap is None or self.gap >= self.switch_gap)):
+        if self.game == last_game and not self.switched_mid and max(a, b) >= self.rules["switch_at"]:
             self._swap(); self.switched_mid = True
         if game_over(a, b, self.target, self.rules):
             self.games.append({"A": a, "B": b, "winner": winner})
@@ -735,8 +731,7 @@ class Match:
             self.game += 1
             self.score = {"A": 0, "B": 0}
             self.switched_mid = False
-            if self.gap is None or self.gap >= self.switch_gap:
-                self._swap()
+            self._swap()
 
     def _swap(self):
         self.side = {"A": self.side["B"], "B": self.side["A"]}
@@ -745,7 +740,6 @@ class Match:
         return "right" if self.score[team] % 2 == 0 else "left"
 
 
-SWITCH_GAP = 40.0      # 코트 교대로 볼 최소 서브 간격 (초)
 PARITY_PENALTY = 2.2   # 서브 위치가 점수 짝/홀과 다를 때 log-확률 감점
 BEAM = 64
 
@@ -790,10 +784,6 @@ def score_events(events: list, setup: dict, sides: dict):
 
     # ---- 빔 서치: 각 가설 = (logp, Match, choices)
     beam = [(0.0, Match(setup, sides), [])]
-    prev_t = {}
-    for a, b in zip(active, active[1:]):
-        prev_t[b] = evs[a]["t"]
-    gap_of = lambda i: (evs[i]["t"] - prev_t[i]) if i in prev_t else None
     for i in active:
         ev = evs[i]
         nxt = {}
@@ -807,7 +797,6 @@ def score_events(events: list, setup: dict, sides: dict):
                 teams = [ev["override"]] if ev.get("override") else ["A", "B"]
             for team in teams:
                 mm = m.clone()
-                mm.gap = gap_of(i)
                 if kind == "point":
                     mm.point(team); mm.started = True; l2 = lp
                 else:
@@ -846,7 +835,6 @@ def score_events(events: list, setup: dict, sides: dict):
             ev["flags"].append("경기 종료 후")
         team = choice[i]
         kind = ev.get("kind", "serve")
-        m.gap = gap_of(i)
         if kind == "point":
             m.point(team); m.started = True
         else:
@@ -878,11 +866,11 @@ def score_events(events: list, setup: dict, sides: dict):
             # 마지막 랠리: 다음 서브가 없어 직접은 모른다. 한 팀만 게임 포인트면 그 팀이 이겨 경기가 끝난 것으로 본다
             ends = []
             for tm in ("A", "B"):
-                mm = m.clone(); mm.gap = None; mm.point(tm)
+                mm = m.clone(); mm.point(tm)
                 if mm.over or mm.game != m.game:
                     ends.append(tm)
             if len(ends) == 1 and not m.over:
-                g = m.clone(); g.gap = None; g.point(ends[0])
+                g = m.clone(); g.point(ends[0])
                 sc = g.games[-1] if g.games else g.score
                 e.update(won=ends[0], won_conf=None, won_guess=True, won_at=None, score_after={"A": sc["A"], "B": sc["B"]})
                 m = g
