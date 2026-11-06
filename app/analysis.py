@@ -43,6 +43,8 @@ class Params:
     occ_max: float = 3.0          # s, '가려짐'(다른 사람 뒤에 숨음)으로 볼 최대 시간
     occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
     occ_reappear: float = 1.0     # m, 다시 나온 위치가 이보다 멀면 가려진 동안 움직인 것 → 추정 취소
+    rally_min: float = 0.0        # s, (실험 중 · 기본 끔) 두 정지 구간 사이 빠른 움직임이 이보다 짧으면 랠리가 아니라 서브 준비 중 자리 잡기
+    rear_drop: float = 0.0        # (실험 중 · 기본 끔) 1이면 팀원과 겹친 뒷사람 위치를 서브 판정에서 버리고 보간 (발 위치가 튀어 가짜 움직임이 생김)
     # 추적 후보: 발이 코트 안(약간의 여유)인 사람만
     court_side: float = 0.5       # m, 사이드라인 밖 허용
     court_end: float = 1.0        # m, 엔드라인 뒤 허용
@@ -302,6 +304,31 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                 slots=np.array(slots), fps=np.float32(fps), step=np.int32(step), off_box=off_box)
 
 
+def rear_overlap(tr: dict, overlap: float) -> np.ndarray:
+    """[S,N] 같은 쪽 팀원과 박스가 겹친 샘플 중 카메라에서 더 먼 사람(가려지는 사람).
+
+    카메라는 near 쪽 끝(y > 13.4) 뒤에 있으므로 코트 y가 작은 사람이 더 멀다:
+    far 쪽은 네트에서 먼 사람, near 쪽은 네트에 가까운 사람. 이 사람은 다리가 앞사람에 가려져 박스 아래쪽이나 발목을 앞사람 것으로 읽기 쉽다 → 발 위치가 프레임마다
+    1~1.5 m씩 튀어 가짜 속도가 생긴다. 서브 판정에서는 이 샘플 위치를 버리고 앞뒤 값으로 보간한다.
+    """
+    box, pos, occ = tr["box"], tr["pos"], tr["occ"]
+    S, N = occ.shape
+    side = [str(s).rstrip("0123456789") for s in tr["slots"]]
+    out = np.zeros((S, N), bool)
+    for k in range(N):
+        for j in range(k + 1, N):
+            if side[j] != side[k]:
+                continue
+            for i in np.flatnonzero(~np.isnan(box[:, k, 0]) & ~np.isnan(box[:, j, 0])):
+                if max(_covered(box[i, k], box[i, j]), _covered(box[i, j], box[i, k])) < overlap:
+                    continue
+                if np.isnan(pos[i, k, 0]) or np.isnan(pos[i, j, 0]):
+                    continue
+                rear = k if pos[i, k, 1] < pos[i, j, 1] else j
+                out[i, rear] = True
+    return out & (occ == 0)
+
+
 def _covered(a, b) -> float:
     """박스 a 면적 중 박스 b에 덮인 비율."""
     iw = min(a[2], b[2]) - max(a[0], b[0])
@@ -496,7 +523,11 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             log.append(dict(i0=int(a), i1=int(b), t0=float(t[a]), t1=float(t[b]), stage=stage, reason=reason, **kw))
     slots = list(tr["slots"])
     p, dt = _interp_smooth(tr["pos"].astype(np.float64), t, params.smooth)
-    v = _speed(p, dt)
+    if params.rear_drop >= 0.5:   # 속도(정지 판단)만: 팀원과 겹친 뒷사람의 튀는 발 위치를 빼고 보간한 위치로 잰다
+        raw = tr["pos"].astype(np.float64).copy(); raw[rear_overlap(tr, params.occ_overlap)] = np.nan
+        v = _speed(_interp_smooth(raw, t, params.smooth)[0], dt)
+    else:
+        v = _speed(p, dt)
     occ = tr.get("occ")
     occ = np.zeros(p.shape[:2], bool) if occ is None else occ.astype(bool)
     far = [i for i, s in enumerate(slots) if s.startswith("far")]
@@ -611,7 +642,8 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
     for c in cands:
         if out:
             prev = out[-1]
-            moved = bool(fast[prev["i1"]:c["i0"]].any())
+            # 사이 랠리: 빠른 움직임이 rally_min초 이상 있어야 랠리로 본다 (자리 잡으며 한두 발 움직인 건 랠리 아님)
+            moved = float(fast[prev["i1"]:c["i0"]].sum()) * dt >= params.rally_min
             if not moved:
                 note(prev["i0"], prev["i1"], "C", f"사이에 랠리 없이 {c['t_still']:.1f}초에 다시 멈춤 → 뒤쪽 정지로 대체",
                      **{k: prev[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
