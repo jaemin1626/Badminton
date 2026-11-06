@@ -725,9 +725,16 @@ function rallyAt(t) {
   let k = -1; sv.forEach((e, j) => { if (e.t <= t + .05 && !e.removed) k = j; });
   return k < 0 ? null : { n: sv.slice(0, k + 1).filter(e => !e.removed).length, e: sv[k] };
 }
-function wonText(e) {
-  if (!e.won) return "득점 팀 판정 못 함 (다음 서브 없음)";
-  return `${teamName(e.won)} 득점 → ${e.score_after.A}:${e.score_after.B}${e.won_conf != null && e.won_conf < .75 ? ` (불확실 ${Math.round(e.won_conf * 100)}%)` : ""}`;
+// 서브 순간 상황: 첫 서브는 경기 시작, 그다음부터는 직전 랠리를 이긴 팀이 득점하고 그 팀이 서브 (랠리 포인트)
+function serveText(e, n) {
+  const sc = `${e.score.A}:${e.score.B}`, unc = e.conf != null && e.conf < .75 ? ` (불확실 ${Math.round(e.conf * 100)}%)` : "";
+  if (n === 1) return `경기 시작 · ${teamName(e.server)} 서브 ${sc}`;
+  return `${teamName(e.server)} 득점 → ${sc} · ${teamName(e.server)} 서브${unc}`;
+}
+// 마지막 랠리 (다음 서브가 없어 서브로는 득점 팀을 모름)
+function lastText(e) {
+  if (e.won_guess) return `마지막 랠리 → ${teamName(e.won)} 득점 ${e.score_after.A}:${e.score_after.B} (게임 포인트라 추정)`;
+  return "마지막 랠리 득점 팀은 다음 서브가 없어 모름";
 }
 function drawNow(i, t) {
   const r = (S.sv?.runs || []).find(r => t >= r.t0 - .05 && t <= r.t1 + .05);
@@ -742,7 +749,12 @@ function drawNow(i, t) {
   if (r) h += `<div class="lc-run">이 정지 구간 판정 · <b style="color:${STAGE_COL[r.stage]}">${STAGE_NAME[r.stage]}</b> ${fmt(r.t0)}–${fmt(r.t1)}<br>${r.reason}</div>`;
   if (lastServe) h += `<div class="lc-score">현재 점수 <b>${lastServe.score.A} : ${lastServe.score.B}</b> · ${lastServe.game}게임 · 서버 ${teamName(lastServe.server)}</div>`;
   const ra = rallyAt(t);
-  if (ra) h += `<div class="lc-score">${ra.n}번 랠리 판정 · <b>${wonText(ra.e)}</b>${ra.e.won_at ? `<br><small>근거: ${fmt(ra.e.won_at)} 다음 서브를 ${teamName(ra.e.won)}이 넣음</small>` : ""}</div>`;
+  if (ra) h += `<div class="lc-score">${ra.n}번 랠리 · <b>${serveText(ra.e, ra.n)}</b>${ra.n > 1 ? `<br><small>근거: 이 서브를 ${teamName(ra.e.server)}이 넣음 = 직전 랠리 득점</small>` : ""}${ra.e.won_at ? "" : `<br><small>${lastText(ra.e)}</small>`}</div>`;
+  const sm = S.sv?.summary;
+  if (sm?.rallies) {
+    const pts = sm.score.A + sm.score.B + (sm.games || []).slice(0, sm.over ? -1 : undefined).reduce((k, g) => k + g.A + g.B, 0);
+    h += `<div class="lc-score">경기 끝 점수 <b>${teamName("A")} ${sm.score.A} : ${sm.score.B} ${teamName("B")}</b><br><small>서브 ${sm.rallies}개 = 랠리 ${sm.rallies}개 중 ${pts}개 반영${sm.last_rally === "unknown" ? " · 마지막 랠리는 다음 서브가 없어 득점 팀을 모름" : sm.last_rally === "guess" ? " · 마지막 랠리는 게임 포인트라 추정" : ""}</small></div>`;
+  }
   $("#nowBox").innerHTML = h || "판정 정보 없음";
 }
 
@@ -758,7 +770,7 @@ function loop() {
       drawVideoOverlay(i); drawCourtMini(i); drawNow(i, t);
       $("#vInfo").textContent = `샘플 ${i} · 프레임 ${S.tr.frames[i]}`;
       const ra = rallyAt(t), vr = $("#vRally");
-      if (vr) { vr.classList.toggle("hidden", !ra); if (ra) vr.innerHTML = `${ra.n}번 랠리 · ${teamName(ra.e.server)} 서브 ${ra.e.score.A}:${ra.e.score.B} · <b class="w${ra.e.won || ""}">${wonText(ra.e)}</b>`; }
+      if (vr) { vr.classList.toggle("hidden", !ra); if (ra) vr.innerHTML = `${ra.n}번 랠리 · <b class="w${ra.n > 1 ? ra.e.server : ""}">${serveText(ra.e, ra.n)}</b>${ra.e.won_at ? "" : ` · <small>${lastText(ra.e)}</small>`}`; }
     }
     $("#vNum").textContent = `${fmt(t)} / ${fmt(S.meta.duration)}`;
     const sk = $("#seek"); if (!S.seeking) { sk.max = S.meta.duration; sk.value = t; }
@@ -822,7 +834,7 @@ function drawTimeline(t) {
     if (e.t < t0 || e.t > t1) continue; const x = X(e.t);
     c.strokeStyle = "#3ecf8e"; c.lineWidth = 2; c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke();
     c.fillStyle = "#3ecf8e"; c.font = "bold 12px ui-monospace,'Noto Sans KR',monospace";
-    c.fillText(`${e.server} 서브 ${e.score.A}:${e.score.B}${e.won ? ` → ${e.won} 득점` : ""}`, x + 4, bot - 6);
+    c.fillText(e.score.A + e.score.B === 0 && e === S.sv.serves.find(s => !s.removed) ? `시작 · ${e.server} 서브 0:0` : `${e.server} 득점 ${e.score.A}:${e.score.B}`, x + 4, bot - 6);
   }
   // 기준선
   const hline = (v, col, txt) => { c.strokeStyle = col; c.setLineDash([5, 4]); c.lineWidth = 1; c.beginPath(); c.moveTo(PL, Y(v)); c.lineTo(w, Y(v)); c.stroke(); c.setLineDash([]); c.fillStyle = col; c.font = "10px ui-monospace,'Noto Sans KR',monospace"; c.fillText(txt, 2, Y(v) + 3); };
@@ -897,7 +909,7 @@ function renderEvents() {
     const cues = r.cues ? `p_near ${r.p_near} · ${r.box || "-"} · view ${r.view} · 자세 far ${r.cues.pose_far} / near ${r.cues.pose_near} · 손목 ${r.cues.onset || "-"} · 대형 ${r.cues.formation ? `${r.cues.formation.far}/${r.cues.formation.near}` : "-"}` : "";
     return `<li class="${r.stage} ${r === S.selRun ? "cur" : ""}" data-i="${idx}">
       <span class="t">${fmt(r.t0)}–${fmt(r.t1)} (${(r.t1 - r.t0).toFixed(1)}s)</span><span class="st" style="color:${STAGE_COL[r.stage]}">${STAGE_NAME[r.stage]}</span>
-      <span class="r">${e ? `<b>${teamName(e.server)} 서브 ${e.score.A}:${e.score.B} · ${wonText(e)}</b> · 신뢰도 ${e.conf}${e.flags?.length ? " · " + e.flags.join(", ") : ""}` : r.reason}</span>
+      <span class="r">${e ? `<b>${serveText(e, S.sv.serves.filter(s => !s.removed && s.t <= e.t + 1e-6).length)}</b> · 신뢰도 ${e.conf}${e.flags?.length ? " · " + e.flags.join(", ") : ""}` : r.reason}</span>
       ${cues ? `<span class="cues">${cues}</span>` : ""}</li>`;
   }).join("") || `<li>해당하는 구간이 없어요</li>`;
   $$("#evList li[data-i]").forEach(li => li.onclick = () => selectRun(runs[+li.dataset.i], true));

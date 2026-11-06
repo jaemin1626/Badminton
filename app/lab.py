@@ -656,8 +656,8 @@ def lab_winners(vid: str):
     evaluate([serves[i]["t"] for i in pred], [m["t"] for m in marks], pairs)
     out = [None] * len(marks)
     for pi, tj in pairs:
-        if pi + 1 < len(pred) and pred[pi + 1] < len(scored):
-            out[tj] = scored[pred[pi + 1]].get("server")
+        if pred[pi] < len(scored):
+            out[tj] = scored[pred[pi]].get("won")
     fin = truth.get("final")
     if marks and out[-1] is None and fin and None not in out[:-1]:
         a = out[:-1].count("A")
