@@ -12,6 +12,7 @@
   both    : 양 팀 팀원을 모두 놓침 (앞의 2명만 보임)
   mixed   : 서브마다 위 상황 중 하나를 무작위로
 """
+import json
 import random
 import sys
 from pathlib import Path
@@ -108,8 +109,10 @@ def run(seed: int, scenario: str, rounds: int = 30, noise: float = 8.0):
     tr = dict(frames=(T * 30).astype(np.int32), t=T, pos=np.array(P, np.float32),
               box=np.zeros((len(T), 4, 4)), conf=np.ones((len(T), 4)), kps=np.array(K, np.float32),
               occ=np.array(O, np.uint8), slots=np.array(slots), fps=30.0, step=2)
-    cands = A.find_serves(tr)
+    dbg = {}
+    cands = A.find_serves(tr, debug=dbg)
     res, _ = A.score_events(cands, setup, sides)
+    json.dumps({"runs": dbg["runs"], "serves": res}, allow_nan=False)   # 화면으로 보낼 수 있어야 함 (NaN 금지)
     pred = [e["server"] for e in res]
     acc = sum(a == b for a, b in zip(pred, truth)) / len(truth)
     return len(cands), len(truth), acc

@@ -512,7 +512,7 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             box=bf, p_near=round(p_near, 3), view=view,
             seen={"visible": [slots[k] for k in vis], "hidden": [slots[k] for k in hid]},
             front={"far": slots[fi], "near": slots[ni]},
-            pos={s: [round(float(x), 2) for x in mp[k]] for k, s in enumerate(slots)},
+            pos={s: [round(float(x), 2) for x in mp[k]] for k, s in enumerate(slots) if kn[k]},  # 모르는 선수(NaN)는 뺀다
             cues={"pose_far": round(sf, 2), "pose_near": round(sn, 2),
                   "onset": "near" if onset > 0 else ("far" if onset < 0 else None),
                   "formation": {k: round(v_, 2) for k, v_ in form.items()}},
