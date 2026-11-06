@@ -131,9 +131,16 @@ const eqCount = () => 2 * S.cpts.length + 2 * goodLines().length;
 // 카메라 뒤로 넘어가는 점은 null
 const mapS = (H, [X, Y]) => { const d = H[6] * X + H[7] * Y + H[8]; if (d <= 1e-9) return null; return [(H[0] * X + H[1] * Y + H[2]) / d, (H[3] * X + H[4] * Y + H[5]) / d]; };
 const curH = () => S.fit && !S.fit.error ? S.fit.H : null;
+// 바깥 네 면이 각각 '라인 하나' 또는 '그 면 위 점 2개'로 정해졌나. 식 수만 채우면 찍은 곳에만 맞고
+// 안 찍은 쪽(예: 먼 쪽 오른 꼭짓점)이 1m 넘게 틀어져도 오차가 작게 나온다 → 서브를 놓친다
+const SIDES = [{ k: "left", nm: "왼쪽 사이드라인", ax: 0, v: 0 }, { k: "right", nm: "오른쪽 사이드라인", ax: 0, v: W_M },
+  { k: "far", nm: "먼 쪽 엔드라인", ax: 1, v: 0 }, { k: "near", nm: "가까운 쪽 엔드라인", ax: 1, v: L_M }];
+const onSide = (c, sd) => Math.abs(c[sd.ax] - sd.v) < 1e-6;
+const sideFixed = sd => goodLines().some(l => onSide(l.line[0], sd) && onSide(l.line[1], sd)) || S.cpts.filter(q => onSide(q.court, sd)).length >= 2;
+const sidesMissing = () => SIDES.filter(sd => !sideFixed(sd));
 function courtOk() {
   const f = S.fit;
-  return !!(f && !f.error && eqCount() >= 8 && f.mean_err <= 12 && S.corners && convex(S.corners));
+  return !!(f && !f.error && eqCount() >= 8 && f.mean_err <= 12 && !sidesMissing().length && S.corners && convex(S.corners));
 }
 let fitSeq = 0, fitTimer;
 function refit(now = false) {
@@ -757,6 +764,7 @@ function renderPanel() {
       <div class="btn-row"><button class="icon-btn sm" id="labCourt" title="같은 영상의 실험 페이지 코트 설정(점·라인)을 가져와요">실험 페이지 코트 불러오기</button><button class="icon-btn sm" id="clearCourt">모두 지우기</button></div>
       <ul class="checks" style="margin-top:12px">
         <li class="${eq >= 8 ? "ok" : "bad"}"><i>${eq >= 8 ? "✓" : "!"}</i>점·라인 충분 (식 8개 이상)</li>
+        ${(() => { const m = sidesMissing(); return `<li class="${m.length ? "bad" : "ok"}"><i>${m.length ? "!" : "✓"}</i>${m.length ? `바깥 네 면 중 안 정해짐: <b>${m.map(x => x.nm).join(", ")}</b> · 라인으로 찍어 주세요` : "바깥 네 면 모두 정해짐"}</li>`; })()}
         <li class="${f && !f.error && f.mean_err <= 8 ? "ok" : "bad"}"><i>${f && !f.error && f.mean_err <= 8 ? "✓" : "!"}</i>평균 오차 8px 이하</li>
         <li class="${f && !f.error && !f.mirrored ? "ok" : "bad"}"><i>${f && !f.error && !f.mirrored ? "✓" : "!"}</i>${f?.mirrored ? "좌우가 뒤집힌 것 같아요 (왼쪽·오른쪽은 카메라에서 볼 때)" : "좌우 방향 맞음"}</li>
       </ul>
