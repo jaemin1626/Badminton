@@ -360,7 +360,10 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .diag .d-ln.dim{stroke:#ffffff40;stroke-width:.05}
 .diag .d-l{cursor:pointer}
 .diag .d-l .hit{stroke:transparent;stroke-width:.55}
-.diag .d-l .vis{stroke:#ffffffcc;stroke-width:.09;transition:stroke .15s}
+.diag .d-l .vis{stroke:#ffffffcc;stroke-width:.12;transition:stroke .15s}
+.diag .d-l .dm{fill:var(--panel);stroke:#4fe3ff;stroke-width:.08;transition:.15s}
+.diag .d-l:hover .dm,.diag .d-l:focus-visible .dm{fill:#4fe3ff88}
+.diag .d-l.done .dm,.diag .d-l.pick .dm{fill:#4fe3ff}
 .diag .d-l:hover .vis,.diag .d-l:focus-visible .vis{stroke:#4fe3ff;stroke-width:.16}
 .diag .d-l.done .vis{stroke:#4fe3ff;stroke-width:.16}
 .diag .d-l.pick .vis{stroke:#4fe3ff;stroke-width:.26;animation:blink .9s ease-in-out infinite}
@@ -406,3 +409,6 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 :root{--teamR:#c9d1cc}
 .team-tab.R.on{border-color:var(--teamR);background:color-mix(in srgb,var(--teamR) 14%,var(--panel))}
 .pbox.R rect.frame{stroke:var(--teamR);stroke-dasharray:10 6;fill:color-mix(in srgb,var(--teamR) 12%,transparent)}
+.guide-btn{margin:0 0 12px;height:44px;font-size:15px}
+.pick-msg .gstep{display:inline-block;font:800 15px "Barlow Condensed",sans-serif;background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:0 7px;margin-right:8px}
+.pick-msg .gbtns{display:flex;gap:6px;margin-top:8px}

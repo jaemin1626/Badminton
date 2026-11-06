@@ -19,7 +19,7 @@ const SKELETON = [[5, 7], [7, 9], [6, 8], [8, 10], [5, 6], [5, 11], [6, 12], [11
 const S = {
   step: 0, vid: null, meta: null, frame: 0,
   corners: null, showLines: true,
-  cpts: [], clines: [], pick: null, sel: null, drag: null, fit: null, wide: false, inner: false,
+  cpts: [], clines: [], pick: null, sel: null, drag: null, fit: null, wide: false, inner: false, guide: null,
   people: [], detFrame: -1, detecting: false, assign: {}, activeTeam: "A", showPose: true,
   teams: { A: { name: "팀 A" }, B: { name: "팀 B" } },
   fmt: { mode: "doubles", first: "A", scoreA: 0, scoreB: 0, target: 21, ours: "A", scoreboard: true, game: 1 },
@@ -106,6 +106,24 @@ const LINE_CATALOG = [
 for (const c of LINE_CATALOG) { const [[x1, y1], [x2, y2]] = c.l; c.outer = (x1 === x2 && (x1 === 0 || x1 === W_M)) || (y1 === y2 && (y1 === 0 || y1 === L_M)); }
 const sameC = (a, b) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
 const sameL = (a, b) => sameC(a[0], b[0]) && sameC(a[1], b[1]);
+const GUIDE = [
+  { kind: "p", i: CATALOG.findIndex(q => sameC(q.c, [0, NET])), how: "바닥에 닿은 곳을 한 번 클릭" },
+  { kind: "p", i: CATALOG.findIndex(q => sameC(q.c, [W_M, NET])), how: "바닥에 닿은 곳을 한 번 클릭" },
+  { kind: "l", i: 0, how: "라인 위 서로 먼 곳 2군데 클릭 (끝이 화면 밖이어도 보이는 곳 아무 데나)" },
+  { kind: "l", i: 3, how: "라인 위 서로 먼 곳 2군데 클릭" },
+  { kind: "l", i: 4, how: "라인 위 서로 먼 곳 2군데 클릭" },
+  { kind: "l", i: 9, how: "라인 위 서로 먼 곳 2군데 클릭 (화면 아래로 잘려 있으면 건너뛰기)" },
+];
+const guideDone = g => g.kind === "p" ? S.cpts.some(q => sameC(q.court, CATALOG[g.i].c)) : S.clines.some(l => sameL(l.line, LINE_CATALOG[g.i].l) && l.px.length >= 2);
+function guideNext(from = 0) {
+  for (let k = from; k < GUIDE.length; k++) if (!guideDone(GUIDE[k])) { S.guide = k; S.pick = { kind: GUIDE[k].kind, i: GUIDE[k].i }; S.sel = null; return true; }
+  S.guide = null; S.pick = null; return false;
+}
+function startGuide() {
+  if (!guideNext(0)) { toast("안내 순서를 모두 찍었어요. 오차가 큰 건 끌어서 고치세요"); }
+  drawOverlay(); renderPanel();
+}
+function skipGuide() { if (S.guide == null) return; if (!guideNext(S.guide + 1)) toast("안내 순서를 마쳤어요"); drawOverlay(); renderPanel(); }
 const cName = c => CATALOG.find(q => sameC(q.c, c))?.name || "점";
 const lName = l => LINE_CATALOG.find(c => sameL(c.l, l))?.name || "라인";
 const goodLines = () => S.clines.filter(l => l.px.length >= 2);
@@ -146,6 +164,7 @@ function placeCourt(px) {
     if (i < 0) { S.clines.push({ line: c.map(q => [...q]), px: [] }); i = S.clines.length - 1; }
     S.clines[i].px.push(px); S.sel = { kind: "l", i, j: S.clines[i].px.length - 1 };
   }
+  if (S.guide != null && guideDone(GUIDE[S.guide]) && !guideNext(S.guide + 1)) toast("안내 순서를 다 찍었어요. 오차가 큰 건 끌어서 고치세요");
   drawOverlay(); renderPanel(); refit();
 }
 function selRef() { return !S.sel ? null : S.sel.kind === "p" ? S.cpts[S.sel.i]?.px : S.clines[S.sel.i]?.px[S.sel.j]; }
@@ -175,8 +194,11 @@ function courtDiagram() {
     const [[x1, y1], [x2, y2]] = c.l, show = c.outer || S.inner || S.clines.some(l => sameL(l.line, c.l));
     if (!show) { h += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="d-ln dim"/>`; return; }
     const pick = S.pick?.kind === "l" && S.pick.i === i;
+    const vert = x1 === x2;
+    const marks = vert ? (y2 - y1 > 10 ? [(NET - SHORT) / 2, (NET + SHORT + L_M - LONG_DBL) / 2] : [(y1 + y2) / 2]).map(y => [x1, y]) : [[W_M * .25, y1], [W_M * .75, y1]];
     h += `<g class="d-l ${ldone(c.l) ? "done" : ""} ${pick ? "pick" : ""}" data-l="${i}" tabindex="0" role="button" aria-label="${c.name}"><title>${c.name} · 영상에서 이 라인 위를 2곳 이상 클릭</title>
-      <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="hit"/><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="vis"/></g>`;
+      <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="hit"/><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="vis"/>
+      ${marks.map(([mx, my]) => `<path d="M${mx},${my - .34}L${mx + .34},${my}L${mx},${my + .34}L${mx - .34},${my}Z" class="dm"/>`).join("")}</g>`;
   });
   h += `<line x1="-.45" y1="${NET}" x2="${W_M + .45}" y2="${NET}" class="d-net"/>`;
   CATALOG.forEach((q, i) => {
@@ -187,7 +209,7 @@ function courtDiagram() {
   return h + "</svg>";
 }
 function bindDiagram() {
-  const choose = (kind, i) => { S.pick = S.pick?.kind === kind && S.pick.i === i ? null : { kind, i }; S.sel = null; drawOverlay(); renderPanel(); };
+  const choose = (kind, i) => { S.guide = null; S.pick = S.pick?.kind === kind && S.pick.i === i ? null : { kind, i }; S.sel = null; drawOverlay(); renderPanel(); };
   $$("#diag [data-p]").forEach(g => { g.onclick = () => choose("p", +g.dataset.p); g.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("p", +g.dataset.p); } }; });
   $$("#diag [data-l]").forEach(g => { g.onclick = () => choose("l", +g.dataset.l); g.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("l", +g.dataset.l); } }; });
 }
@@ -708,9 +730,12 @@ function renderPanel() {
   else if (S.step === 2) {
     const f = S.fit, eq = eqCount(), ok = courtOk(), gl = goodLines();
     chip.innerHTML = `<span class="dot" style="background:${S.pick ? (S.pick.kind === "p" ? "var(--accent)" : "#4fe3ff") : "var(--accent)"}"></span>${S.pick ? "영상에서 찍는 중" : "코트 지정 모드"}`;
-    const msg = S.pick?.kind === "p" ? `<b>${CATALOG[S.pick.i].name}</b> · 영상에서 이 자리를 클릭하세요 <kbd>Esc</kbd> 취소`
+    const gd = S.guide != null ? GUIDE[S.guide] : null;
+    const msg = gd ? `<span class="gstep">${S.guide + 1} / ${GUIDE.length}</span><b>${gd.kind === "p" ? CATALOG[gd.i].name : LINE_CATALOG[gd.i].name}</b><br>${gd.how}
+        <span class="gbtns"><button class="icon-btn sm" id="gSkip">건너뛰기</button><button class="icon-btn sm" id="gStop">그만</button></span>`
+      : S.pick?.kind === "p" ? `<b>${CATALOG[S.pick.i].name}</b> · 영상에서 이 자리를 클릭하세요 <kbd>Esc</kbd> 취소`
       : S.pick?.kind === "l" ? `<b>${LINE_CATALOG[S.pick.i].name}</b> · 영상에서 이 라인 위를 클릭하세요. 서로 멀리 2곳 이상 · 다 찍었으면 <kbd>Esc</kbd>`
-      : eq < 8 ? "네트 기둥 바닥 2개와 보이는 바깥 라인 4개면 충분해요. 꼭짓점은 화면 밖이어도 괜찮아요"
+      : eq < 8 ? "<b>순서대로 찍기</b>를 누르면 네트 기둥 2개 → 바깥 라인 네 면을 차례로 안내해요. 꼭짓점은 화면 밖이어도 괜찮아요"
       : f?.error ? `<span class="bad-t">${esc(f.error)}</span>`
       : f && f.spare < 2 ? "점이나 라인을 하나 더 찍으면 잘못 찍은 걸 오차로 알아챌 수 있어요"
       : "오차가 큰 점·라인은 끌어서 옮기거나 지우세요";
@@ -722,7 +747,8 @@ function renderPanel() {
       <div class="court-pick">${courtDiagram()}
         <div class="fit-stat"><span class="lbl">평균 오차</span><b class="display ${f && !f.error && f.mean_err > 8 ? "warn" : ""}">${big}<small>px</small></b>
           <span class="lbl">식 ${eq} / 8${f && !f.error ? ` · 여유 ${f.spare}` : ""}</span>
-          <span class="legend"><i class="lp"></i>점 · 한 번 클릭</span><span class="legend"><i class="ll"></i>라인 · 2곳 이상</span></div></div>
+          <span class="legend"><i class="lp"></i>● 점 · 한 번 클릭</span><span class="legend"><i class="ll"></i>◆ 라인 · 2곳 이상</span></div></div>
+      ${S.guide == null ? `<button class="cta ghost guide-btn" id="gStart">${S.cpts.length || S.clines.length ? "빠진 것 순서대로 찍기" : "순서대로 찍기 · 기둥 2 + 라인 4"}</button>` : ""}
       <p class="pick-msg">${msg}</p>
       ${items ? `<ul class="corners cp-list">${items}</ul>` : ""}
       <div class="toggle-row">안쪽 점·라인도 고르기<button class="switch ${S.inner ? "on" : ""}" id="innerSw" role="switch" aria-checked="${S.inner}" aria-label="안쪽 점·라인도 고르기"></button></div>
@@ -736,9 +762,13 @@ function renderPanel() {
       </ul>
       <button class="cta" id="next" ${ok ? "" : "disabled"}>다음 · 선수 선택</button>`;
     bindDiagram();
+    $("#gStart")?.addEventListener("click", startGuide);
+    $("#gSkip")?.addEventListener("click", skipGuide);
+    $("#gStop")?.addEventListener("click", () => { S.guide = null; S.pick = null; drawOverlay(); renderPanel(); });
     $$(".cp-list li", P).forEach(li => li.onclick = e => {
       const k = li.dataset.k, i = +li.dataset.i;
       if (e.target.dataset.del) { (k === "p" ? S.cpts : S.clines).splice(i, 1); S.sel = null; drawOverlay(); renderPanel(); refit(true); return; }
+      S.guide = null;
       if (k === "l") { S.pick = { kind: "l", i: LINE_CATALOG.findIndex(c => sameL(c.l, S.clines[i].line)) }; S.sel = { kind: "l", i, j: S.clines[i].px.length - 1 }; }
       else { S.sel = { kind: "p", i }; S.pick = null; }
       drawOverlay(); renderPanel();
@@ -747,8 +777,8 @@ function renderPanel() {
     $("#wideSw").onclick = () => { S.wide = !S.wide; applyView(); drawOverlay(); renderPanel(); saveLocal(); };
     $("#lineSw").onclick = () => { S.showLines = !S.showLines; drawOverlay(); renderPanel(); saveLocal(); };
     $("#labCourt").onclick = loadLabCourt;
-    $("#clearCourt").onclick = () => { if (!S.cpts.length && !S.clines.length) return; if (!confirm("찍은 점·라인을 모두 지울까요?")) return; S.cpts = []; S.clines = []; S.sel = null; S.pick = null; S.fit = null; drawOverlay(); renderPanel(); saveLocal(); };
-    $("#next").onclick = () => { S.pick = null; S.detFrame = -1; go(3); };
+    $("#clearCourt").onclick = () => { if (!S.cpts.length && !S.clines.length) return; if (!confirm("찍은 점·라인을 모두 지울까요?")) return; S.cpts = []; S.clines = []; S.sel = null; S.pick = null; S.guide = null; S.fit = null; drawOverlay(); renderPanel(); saveLocal(); };
+    $("#next").onclick = () => { S.pick = null; S.guide = null; S.detFrame = -1; go(3); };
   }
   else if (S.step === 3) {
     const actName = S.activeTeam === "R" ? "심판" : S.teams[S.activeTeam].name;
@@ -1160,7 +1190,9 @@ function pollRender() {
 document.addEventListener("keydown", e => {
   if (e.target.matches("input:not([type=range]), textarea") || e.target.closest(".handle")) return;
   if (S.step === 2) {
-    if (e.key === "Escape" && (S.pick || S.sel)) { S.pick = null; S.sel = null; $("#loupe")?.classList.add("hidden"); drawOverlay(); renderPanel(); return; }
+    if (e.key === "Escape" && (S.pick || S.sel)) {
+      if (S.guide != null && S.pick?.kind === "l") { skipGuide(); return; }   // 안내 중 라인: Esc = 이 라인 끝내고 다음
+      S.guide = null; S.pick = null; S.sel = null; $("#loupe")?.classList.add("hidden"); drawOverlay(); renderPanel(); return; }
     const ref = selRef();
     if (ref && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); delSel(); return; }
     const d = e.shiftKey ? 10 : 1, k = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[e.key];
