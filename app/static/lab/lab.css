@@ -174,3 +174,8 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .lpm.sel rect{fill:#fff;stroke:#4fe3ff}
 .lbl-l{fill:#4fe3ff;font:700 18px "Noto Sans KR",sans-serif;paint-order:stroke;stroke:#000;stroke-width:5px;pointer-events:none}
 .pts li.ln span:first-child{color:#4fe3ff}
+#diag .cl-d .dm{fill:#1c1611;stroke:#4fe3ff;stroke-width:.06}
+#diag .cl-d:hover .dm,#diag .cl-d.done .dm{fill:#4fe3ff}
+#diag .cl-d.pick .dm{fill:#4fe3ff;stroke:#fff;stroke-width:.1}
+.legend-pick{list-style:none;padding:0;margin:0 0 10px;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+.legend-pick b{color:var(--text);font-weight:600}

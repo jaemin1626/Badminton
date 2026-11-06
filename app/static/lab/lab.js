@@ -314,6 +314,11 @@ function buildDiagram() {
     const g = el("g", { class: "cl-d" + (done ? " done" : "") + (pick ? " pick" : ""), tabindex: 0, role: "button", "aria-label": c.name }, svg);
     el("line", { x1: c.l[0][0], y1: c.l[0][1], x2: c.l[1][0], y2: c.l[1][1], class: "hit" }, g);
     el("line", { x1: c.l[0][0], y1: c.l[0][1], x2: c.l[1][0], y2: c.l[1][1], class: "vis" }, g);
+    // ◆ 손잡이: 교차점이 없는 구간(라인 중간)에도 고를 거리가 보이게
+    const [[x1, y1], [x2, y2]] = c.l, vert = x1 === x2;
+    const marks = vert ? (y2 - y1 > 10 ? [(NET - SHORT) / 2, (NET + SHORT + L_M - LONG_DBL) / 2] : [(y1 + y2) / 2]).map(y => [x1, y])
+      : [[W_M * .25, y1], [W_M * .75, y1]];
+    for (const [mx, my] of marks) el("path", { d: `M${mx},${my - .3}L${mx + .3},${my}L${mx},${my + .3}L${mx - .3},${my}Z`, class: "dm" }, g);
     const tt = el("title", {}, g); tt.textContent = c.name + " · 라인 위 아무 곳이나 2개 이상 찍기";
     const choose = () => { S.pick = pick ? null : { kind: "l", i }; S.sel = null; drawSetup(); renderPoints(); };
     g.addEventListener("click", choose);

@@ -41,8 +41,11 @@
   <aside class="side">
     <section class="box">
       <h2>코트 <span class="tag" id="fitTag">점 0개</span></h2>
-      <p class="hint">① 도면에서 영상에 <b>잘 보이는 교차점</b>을 고르고 ② 영상에서 그 위치를 클릭하세요. 4개 이상, 서로 다른 줄의 점을 넓게 퍼뜨릴수록 정확해요.
-        왼쪽·오른쪽은 <b>카메라에서 볼 때</b> 기준이에요.</p>
+      <p class="hint">도면에서 고르고 영상에서 클릭하세요. 왼쪽·오른쪽은 <b>카메라에서 볼 때</b> 기준이에요.</p>
+      <ul class="legend-pick">
+        <li><i class="lg-p"></i><b>● 교차점</b> · 영상에서 그 위치를 한 번 클릭</li>
+        <li><i class="lg-l"></i><b>◆ 라인</b> · 끝이 잘려 교차점이 안 보일 때. 그 라인 위 아무 곳이나 2번 이상 클릭하고 Esc</li>
+      </ul>
       <div class="diag-wrap"><svg id="diag" aria-label="코트 도면에서 점 고르기"></svg></div>
       <p class="hint small" id="pickMsg">도면에서 점을 고르세요</p>
       <ol class="pts" id="ptList"></ol>
