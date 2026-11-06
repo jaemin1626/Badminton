@@ -524,6 +524,7 @@ def put_config(vid: str, body: ConfigIn):
         "teams": teams, "match": match,
         "officials": [{"bbox": b, "court_pos": C.to_court(H, [[(b[0] + b[2]) / 2, b[3]]])[0].round(3).tolist()}
                       for b in body.officials if len(b) >= 4],
+        "saved": time.time(),
     }
     write_json(d / "match.json", cfg)
     return cfg

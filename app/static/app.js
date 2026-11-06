@@ -240,7 +240,7 @@ async function loadLabCourt() {
 /* ---------------- 상태 저장 (새로고침해도 이어서) ---------------- */
 function saveLocal() {
   if (!S.vid) return;
-  const keep = { frame: S.frame, corners: S.corners, cpts: S.cpts, clines: S.clines, wide: S.wide, inner: S.inner, assign: S.assign, people: S.people, detFrame: S.detFrame, teams: S.teams, fmt: S.fmt, showLines: S.showLines, showPose: S.showPose };
+  const keep = { ts: Date.now() / 1000, frame: S.frame, corners: S.corners, cpts: S.cpts, clines: S.clines, wide: S.wide, inner: S.inner, assign: S.assign, people: S.people, detFrame: S.detFrame, teams: S.teams, fmt: S.fmt, showLines: S.showLines, showPose: S.showPose };
   localStorage.setItem("ss:" + S.vid, JSON.stringify(keep));
 }
 function loadLocal(vid) { try { return JSON.parse(localStorage.getItem("ss:" + vid) || "null"); } catch { return null; } }
@@ -403,14 +403,25 @@ async function openVideo(id, step) {
       S.teams = { A: { name: c.teams["1"].name }, B: { name: c.teams["2"].name } };
       S.fmt = { ...S.fmt, ...c.match };
     }
+    // 브라우저에 남은 작업은 서버 설정보다 나중 것일 때만 코트를 덮는다 (서버에서 고친 설정이 옛 작업에 가려지지 않게)
+    const locCourt = loc && (!S.config || (loc.ts || 0) > (S.config.saved || 0));
     if (loc) {
+      S.wide = !!loc.wide; S.inner = !!loc.inner;
+      S.showLines = loc.showLines ?? true; S.showPose = loc.showPose ?? true;
+    }
+    if (locCourt) {
+      S.assign = loc.assign || {}; S.people = loc.people || [];
+      S.detFrame = loc.detFrame ?? -1; S.teams = loc.teams || S.teams; S.fmt = { ...S.fmt, ...(loc.fmt || {}) };
+    } else if (S.config) {
+      // 서버 설정의 선수·심판 박스를 그대로 깔아 둔다. 선수 단계에서 다시 찾으면 박스 겹침으로 이어 붙는다
+      const c = S.config, add = (box, t, extra = {}) => { const id = "s" + (S.people.length + 1); S.people.push({ id, box, conf: 1, ...extra }); S.assign[id] = t; };
+      [["A", "1"], ["B", "2"]].forEach(([t, k]) => (c.teams[k].bboxes || []).forEach((b, i) => add(b, t, { court: c.teams[k].court_pos?.[i], side: c.teams[k].side, in_play: true })));
+      (c.officials || []).forEach(o => add(o.bbox, "R", { court: o.court_pos, in_play: false }));
+    }
+    if (locCourt) {
       S.frame = loc.frame ?? S.frame; S.corners = loc.corners || S.corners;
       if (loc.cpts) { S.cpts = loc.cpts; S.clines = loc.clines || []; }
       else if (loc.corners && !S.cpts.length) S.cpts = COURT.map((cc, i) => ({ court: [...cc], px: loc.corners[i] }));   // 예전 꼭짓점 작업 이어받기
-      S.wide = !!loc.wide; S.inner = !!loc.inner;
-      S.assign = loc.assign || {}; S.people = loc.people || [];
-      S.detFrame = loc.detFrame ?? -1; S.teams = loc.teams || S.teams; S.fmt = { ...S.fmt, ...(loc.fmt || {}) };
-      S.showLines = loc.showLines ?? true; S.showPose = loc.showPose ?? true;
     }
     refit(true);
     if (meta.has_result) { try { S.result = await api(`/api/videos/${id}/result`); } catch { } }
@@ -694,7 +705,15 @@ function autoAssign(quiet = false) {
   if (far.length < per || near.length < per) { if (!quiet) toast("코트 양쪽에서 선수를 다 찾지 못했어요. 직접 골라 주세요"); return; }
   for (const k in S.assign) if (S.assign[k] !== "R") delete S.assign[k];   // 심판 지정은 그대로
   far.forEach(p => S.assign[p.id] = "A"); near.forEach(p => S.assign[p.id] = "B");
-  if (!quiet) toast("위쪽 선수를 팀 A, 아래쪽 선수를 팀 B로 배정했어요");
+  let ref = null;
+  if (!Object.values(S.assign).includes("R")) {
+    const out = p => p.court && !S.assign[p.id] && p.in_play === false;
+    const dx = p => p.court[0] < 0 ? -p.court[0] : p.court[0] - W_M;     // 사이드라인 바깥으로 얼마나
+    const cand = S.people.filter(p => out(p) && dx(p) > 0.1 && dx(p) < 3 && Math.abs(p.court[1] - NET) < 4)
+      .sort((a, b) => Math.abs(a.court[1] - NET) - Math.abs(b.court[1] - NET));
+    if (cand.length) { ref = cand[0]; S.assign[ref.id] = "R"; }
+  }
+  if (!quiet) toast(`위쪽 선수를 팀 A, 아래쪽 선수를 팀 B로 배정했어요${ref ? ` · 네트 옆 #${ref.id}는 심판으로` : ""}`);
   drawOverlay(); renderPanel(); saveLocal();
 }
 function togglePlayer(p) {
@@ -812,6 +831,7 @@ function renderPanel() {
         <li class="${c.okCount ? "ok" : "bad"}"><i>${c.okCount ? "✓" : "!"}</i>팀당 ${c.max}명 선택</li>
         <li class="${c.okSame ? "ok" : "bad"}"><i>${c.okSame ? "✓" : "!"}</i>같은 팀은 네트 같은 쪽</li>
         <li class="${c.okSide ? "ok" : "bad"}"><i>${c.okSide ? "✓" : "!"}</i>두 팀이 네트 반대편</li>
+        <li class="${nR ? "ok" : "opt"}"><i>${nR ? "✓" : "–"}</i>${nR ? `심판 ${nR}명 지정 · 선수로 잡지 않아요` : "코트 옆 심판이 있으면 <b>심판</b> 탭을 누르고 그 사람을 클릭 (선택)"}</li>
       </ul>
       <button class="cta" id="next" ${c.okCount && c.okSide ? "" : "disabled"}>다음 · 경기 설정</button>`;
     $$(".team-tab", P).forEach(b => b.onclick = () => { S.activeTeam = b.dataset.t; renderPanel(); });

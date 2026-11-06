@@ -412,3 +412,5 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .guide-btn{margin:0 0 12px;height:44px;font-size:15px}
 .pick-msg .gstep{display:inline-block;font:800 15px "Barlow Condensed",sans-serif;background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:0 7px;margin-right:8px}
 .pick-msg .gbtns{display:flex;gap:6px;margin-top:8px}
+.checks li.opt{color:var(--muted)}
+.checks li.opt i{background:transparent;border:1px dashed currentColor}
