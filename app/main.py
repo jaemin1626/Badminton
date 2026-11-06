@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import shutil
@@ -209,12 +210,26 @@ async def upload(file: UploadFile = File(...)):
         with open(dst, "wb") as f:
             while chunk := await file.read(8 << 20):
                 f.write(chunk)
+    except Exception:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    return _register(vid, d, dst, file.filename or dst.name)
+
+
+VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
+_reg_lock = threading.Lock()
+
+
+def _register(vid: str, d: Path, dst: Path, name: str, **extra) -> dict:
+    """영상 폴더에 메타·썸네일을 만들고, 필요하면 브라우저용 미리보기 변환을 건다."""
+    ext = dst.suffix.lower()
+    try:
         info, img = probe(dst)
     except Exception:
         shutil.rmtree(d, ignore_errors=True)
         raise
     cv2.imwrite(str(d / "thumb.jpg"), cv2.resize(img, (320, round(img.shape[0] * 320 / img.shape[1]))))
-    meta = {"id": vid, "name": file.filename, "file": dst.name, "created": time.time(), **info, "step": 1}
+    meta = {"id": vid, "name": name, "file": dst.name, "created": time.time(), **info, "step": 1, **extra}
     write_json(d / "meta.json", meta)
     # 브라우저가 못 읽는 코덱이면 미리보기용 H.264 사본을 만든다
     if info["codec"] not in {"avc1", "h264", "x264"} or ext not in {".mp4", ".m4v", ".mov"}:
@@ -227,8 +242,32 @@ async def upload(file: UploadFile = File(...)):
     return meta
 
 
+def register_local_files():
+    """data/videos 에 직접 넣어 둔 영상 파일을 등록한다 (복사 없이 원본을 가리키는 링크).
+
+    영상 ID는 파일 이름으로 정해지므로 같은 파일은 한 번만 등록된다. 등록을 지워도 원본 파일은 남는다.
+    """
+    with _reg_lock:
+        for f in sorted(DATA.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in VIDEO_EXT:
+                continue
+            vid = "f" + hashlib.sha1(f.name.encode()).hexdigest()[:11]
+            d = DATA / vid
+            if (d / "meta.json").exists():
+                continue
+            d.mkdir(exist_ok=True)
+            dst = d / f"source{f.suffix.lower()}"
+            if not dst.exists():
+                dst.symlink_to(Path("..") / f.name)
+            try:
+                _register(vid, d, dst, f.name, local=str(f))
+            except Exception:  # noqa: BLE001  (못 여는 파일은 건너뛴다)
+                traceback.print_exc()
+
+
 @app.get("/api/videos")
 def list_videos():
+    register_local_files()
     out = []
     for d in sorted(DATA.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
         if not d.is_dir():  # data/videos 에 영상 파일을 직접 넣어 둔 경우 등

@@ -211,6 +211,7 @@ GET   /api/videos/{id}/download/{name}  result.json, events.csv, players.csv, ma
   - 기준값: `Params`의 서브 판정 값을 바꾸면 추적은 그대로 두고 서브 판정만 다시 계산(수 ms).
 - `find_serves(..., debug={})`가 탈락 이유를 채운다. 서브 판정 기준값은 모두 `Params`에 있다
   (`rally_window`, `box_front`, `box_back`, `center_margin` 추가).
+- `data/videos/`에 영상 파일을 직접 넣으면 목록을 열 때 자동 등록된다(ID = 파일 이름 해시, `source.*`는 원본을 가리키는 링크, 등록을 지워도 원본은 남음).
 - 코트 자동 맞춤은 시도했으나 넣지 않음: 체육관에 코트가 여러 면이라 평행한 라인이 반복돼서, 몇 px만 어긋나도 옆 라인에 붙었다.
 
 ---
