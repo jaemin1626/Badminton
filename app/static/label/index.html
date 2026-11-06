@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smash Label · 실제 서브 시각 기록</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/lab/lab.css">
+<link rel="stylesheet" href="/static/label/label.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/label">Smash <b>Label</b></a>
+  <select id="vidSel" aria-label="영상 선택"></select>
+  <span class="tag" id="saveTag">-</span>
+  <div class="spacer"></div>
+  <a class="link" href="/lab" id="labLink">실험 페이지</a>
+  <a class="link" href="/">운영 화면</a>
+</header>
+
+<main class="lbl">
+  <section class="player">
+    <div class="vwrap"><video id="vid" playsinline preload="auto" muted></video><div class="vinfo" id="vInfo"></div></div>
+    <canvas id="strip" class="strip" aria-label="영상 전체 · 기록한 서브 위치"></canvas>
+    <div class="seekrow"><input type="range" id="seek" min="0" max="1" step="0.01" value="0" aria-label="재생 위치"></div>
+    <div class="vbar">
+      <button class="b" id="playBtn" title="재생/정지 (Space)">▶</button>
+      <button class="b" data-j="-5" title="5초 뒤로 (Shift+←)">−5s</button>
+      <button class="b" data-j="-1" title="1초 뒤로 (←)">−1s</button>
+      <button class="b" data-f="-1" title="이전 프레임 (,)">‹</button>
+      <button class="b" data-f="1" title="다음 프레임 (.)">›</button>
+      <button class="b" data-j="1" title="1초 앞으로 (→)">+1s</button>
+      <button class="b" data-j="5" title="5초 앞으로 (Shift+→)">+5s</button>
+      <select id="rate" aria-label="재생 속도"><option value="0.5">0.5×</option><option value="1">1×</option><option value="1.5">1.5×</option><option value="2" selected>2×</option><option value="3">3×</option><option value="4">4×</option></select>
+      <span class="num big" id="tNow">0:00.00</span>
+      <div class="spacer"></div>
+      <button class="btn primary add" id="addBtn" title="지금 시각을 서브로 기록 (S)">지금 서브 기록 <kbd>S</kbd></button>
+    </div>
+  </section>
+
+  <aside class="side">
+    <section class="box">
+      <h2>최종 점수</h2>
+      <div class="final">
+        <label>팀 A<input type="number" id="finA" min="0" max="40" placeholder="25"></label>
+        <span>:</span>
+        <label>팀 B<input type="number" id="finB" min="0" max="40" placeholder="16"></label>
+      </div>
+      <div class="prog"><div class="pbar"><i id="pFill"></i></div><span id="pText">서브 0개 기록</span></div>
+      <p class="hint small">랠리마다 서브가 한 번이라, 서브 수 = 두 팀 점수의 합이에요 (예: 25:16 → 41번).</p>
+    </section>
+
+    <section class="box">
+      <h2>서브 목록 <span class="tag" id="cnt">0</span></h2>
+      <div class="row addrow">
+        <input id="tIn" placeholder="4:30.5" aria-label="직접 입력할 시각 (분:초)">
+        <button class="btn" id="tAdd">시각으로 추가</button>
+      </div>
+      <ol class="marks" id="marks"></ol>
+    </section>
+
+    <section class="box keys">
+      <h2>단축키</h2>
+      <ul>
+        <li><kbd>S</kbd> 지금 시각을 서브로 기록 (서버가 셔틀을 치는 순간)</li>
+        <li><kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 1초 · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 5초</li>
+        <li><kbd>,</kbd><kbd>.</kbd> 한 프레임 · <kbd>[</kbd><kbd>]</kbd> 이전/다음 서브로</li>
+        <li>목록에서 고른 서브: <kbd>A</kbd><kbd>B</kbd> 서버 팀 · <kbd>Delete</kbd> 지우기 · <kbd>-</kbd><kbd>=</kbd> 0.1초 조정</li>
+      </ul>
+    </section>
+  </aside>
+</main>
+<div class="toast" id="toast"></div>
+<script src="/static/label/label.js"></script>
+</body>
+</html>

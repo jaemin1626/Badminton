@@ -112,6 +112,8 @@
       <select id="rate" aria-label="재생 속도"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
       <span class="num" id="vNum"></span>
       <div class="spacer"></div>
+      <button class="btn mark" id="markBtn" title="지금 시각을 정답 서브로 표시 (S). 1초 안에 이미 표시가 있으면 지워요">정답 서브 표시 (S)</button>
+      <span class="num" id="truthNum"></span>
       <label class="sw"><input type="checkbox" id="oBox" checked> 박스</label>
       <label class="sw"><input type="checkbox" id="oPose" checked> 관절</label>
       <label class="sw"><input type="checkbox" id="oLines"> 코트</label>
@@ -134,7 +136,7 @@
   <aside class="events">
     <div class="evhead">
       <h2>정지 구간 <span class="tag" id="evCount"></span></h2>
-      <div class="seg" id="evFilter"><button data-f="all" class="on">전체</button><button data-f="OK">서브</button><button data-f="X">탈락</button></div>
+      <div class="seg" id="evFilter"><button data-f="all" class="on">전체</button><button data-f="OK">서브</button><button data-f="X">탈락</button><button data-f="MISS">놓친 정답</button><button data-f="FALSE">잘못 잡음</button></div>
     </div>
     <ol id="evList"></ol>
   </aside>
@@ -142,6 +144,8 @@
   <aside class="params">
     <h2>기준값 <span class="tag" id="calcTag"></span></h2>
     <div id="paramList"></div>
+    <div class="score-box" id="evalBox">정답 서브를 표시하면 채점 결과가 여기 나와요</div>
+    <button class="btn primary" id="tuneBtn" style="width:100%;margin-top:8px">정답에 맞춰 기준값 자동 조정</button>
     <div class="row"><button class="btn" id="resetParams">기본값</button><button class="btn" id="rerunTrack">추적 다시 실행</button></div>
   </aside>
 </main>

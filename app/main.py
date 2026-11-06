@@ -40,7 +40,7 @@ async def no_stale_pages(request: Request, call_next):
     """화면 파일(html·js·css)은 매번 최신인지 확인하게 한다 (고친 뒤 예전 화면이 보이는 문제 방지)."""
     resp = await call_next(request)
     path = request.url.path
-    if path in ("/", "/lab") or path.startswith("/static/"):
+    if path in ("/", "/lab", "/label") or path.startswith("/static/"):
         resp.headers["Cache-Control"] = "no-cache"
     return resp
 

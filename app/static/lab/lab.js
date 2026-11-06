@@ -28,7 +28,7 @@ const S = {
   frame: 0, points: [], clines: [], inner: false, pick: null, sel: null, fit: null, wide: false, lines: true, drag: null, people: [], assign: {}, role: "A", detFrame: -1,
   // 확인
   tr: null, kps: null, kshape: null, sv: null, params: null, defaults: null, cur: 0, filter: "all", selRun: null,
-  view: { t0: 0, span: 40 }, jobTimer: null,
+  view: { t0: 0, span: 40 }, jobTimer: null, truth: [],
 };
 
 /* ---------------- 공통 ---------------- */
@@ -136,7 +136,7 @@ function upload(f) {
 
 async function openVideo(vid, mode) {
   stopVideo();
-  S.vid = vid; S.tr = null; S.kps = null; S.sv = null; S.selRun = null; S.baseSig = null;
+  S.vid = vid; S.tr = null; S.kps = null; S.sv = null; S.selRun = null; S.baseSig = null; S.truth = []; S.truthLoaded = false;
   S.info = await api(`/api/lab/${vid}`); S.meta = S.info.meta;
   S.defaults = { ...S.info.params };
   const saved = JSON.parse(localStorage.getItem("lab:params") || "null");
@@ -603,6 +603,7 @@ async function enterView() {
     S.Hinv = S.cfg?.homography ? S.cfg.homography.flat() : null;
     buildCourtMini(); buildParams();
   }
+  if (!S.truthLoaded) { const tr = await api(`/api/lab/${S.vid}/truth`); S.truthMarks = tr.marks || []; S.truthFinal = tr.final || null; S.truth = S.truthMarks.map(m => m.t); S.truthLoaded = true; }
   if (!S.sv) await recalc();
   loop();
 }
@@ -765,6 +766,7 @@ function drawTimeline(t) {
     c.fillStyle = "#262f2b"; c.fillRect(PL, 4, w - PL, h - 8);
     const X = s => PL + (w - PL) * s / dur;
     for (const r of runs) { c.fillStyle = STAGE_COL[r.stage]; c.globalAlpha = r.stage === "OK" ? 1 : .6; c.fillRect(X(r.t0), r.stage === "OK" ? 4 : 10, Math.max(2, X(r.t1) - X(r.t0)), r.stage === "OK" ? h - 8 : h - 20); }
+    c.globalAlpha = 1; c.fillStyle = "#ffffff"; for (const tt of S.truth) c.fillRect(X(tt) - 1, 0, 2, 5);
     c.globalAlpha = 1;
     c.strokeStyle = "#d9b98a"; c.lineWidth = 1.5; c.strokeRect(X(S.view.t0), 2, X(S.view.t0 + S.view.span) - X(S.view.t0), h - 4);
     c.fillStyle = "#fff"; c.fillRect(X(t) - 1, 0, 2, h);
@@ -786,6 +788,12 @@ function drawTimeline(t) {
     c.fillRect(X(r.t0), top, X(r.t1) - X(r.t0), bot - top); c.globalAlpha = 1;
     c.fillRect(X(r.t0), top, X(r.t1) - X(r.t0), 3);
     c.font = "11px 'Noto Sans KR',sans-serif"; c.fillText(STAGE_NAME[r.stage], X(r.t0) + 3, top + 14);
+  }
+  // 정답 서브 (흰 ▼)
+  for (const tt of S.truth) {
+    if (tt < t0 || tt > t1) continue; const x = X(tt);
+    c.fillStyle = "#ffffff"; c.beginPath(); c.moveTo(x - 6, top - 2); c.lineTo(x + 6, top - 2); c.lineTo(x, top + 9); c.fill();
+    c.strokeStyle = "#ffffff88"; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
   }
   // 서브 표시
   for (const e of S.sv.serves) {
@@ -855,7 +863,9 @@ function bindTimeline() {
 
 /* ---- 정지 구간 목록 ---- */
 function renderEvents() {
+  renderEval();
   const runs = S.sv.runs, f = S.filter;
+  if (f === "MISS" || f === "FALSE") return renderEvalList(f);
   const list = runs.filter(r => f === "all" || (f === "OK" ? r.stage === "OK" : r.stage !== "OK"));
   const nOK = runs.filter(r => r.stage === "OK").length;
   $("#evCount").textContent = `서브 ${nOK} · 탈락 ${runs.length - nOK}`;
@@ -874,6 +884,42 @@ function selectRun(r, jump) {
   S.selRun = r;
   if (jump) { S.view.t0 = Math.max(0, r.t0 - 6); S.view.span = Math.max(S.view.span, 16); seek(Math.max(0, r.t0 - 1.5), true); }
   renderEvents();
+}
+
+/* ---- 정답 서브 · 채점 ---- */
+let truthT;
+function toggleMark() {
+  const t = vid().currentTime, ms = S.truthMarks || (S.truthMarks = []), i = ms.findIndex(m => Math.abs(m.t - t) < 1.0);
+  if (i >= 0) { ms.splice(i, 1); toast(`${fmt(t)} 정답 표시를 지웠어요`); }
+  else { ms.push({ t: Math.round(t * 100) / 100 }); ms.sort((a, b) => a.t - b.t); toast(`${fmt(t)} 정답 서브 (${ms.length}개)`); }
+  S.truth = ms.map(m => m.t);
+  $("#truthNum").textContent = `정답 ${S.truth.length}개`;
+  clearTimeout(truthT);
+  truthT = setTimeout(async () => { await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: ms, final: S.truthFinal } }); recalc(); }, 600);
+}
+function renderEval() {
+  $("#truthNum").textContent = S.truth.length ? `정답 ${S.truth.length}개` : "";
+  const ev = S.sv?.eval, box = $("#evalBox");
+  if (!ev) { box.innerHTML = "영상을 보면서 서브 순간에 <b>S</b>를 누르면 정답으로 기록되고, 여기서 채점해요"; return; }
+  box.innerHTML = `<div class="sc"><b>${ev.hit}</b>/${ev.truth} 맞음 · <span class="bad">${ev.missed.length} 놓침</span> · <span class="warnc">${ev.false.length} 잘못 잡음</span></div>
+    <div class="bar2"><i style="width:${ev.recall * 100}%"></i></div><small>찾은 비율 ${Math.round(ev.recall * 100)}% · 맞힌 비율 ${Math.round(ev.precision * 100)}% · F1 ${ev.f1}</small>`;
+}
+// 놓친 정답: 그 순간(서브 직전) 서브 조건 중 처음 막힌 것
+function missReason(tt) {
+  const i = sampleAt(Math.max(0, tt - 0.5)), lc = liveChecks(i);
+  const r = (S.sv?.runs || []).find(r => tt >= r.t0 - 1 && tt <= r.t1 + 2.5);
+  if (r) return `근처 정지 구간 ${fmt(r.t0)}–${fmt(r.t1)} · ${STAGE_NAME[r.stage]}: ${r.reason}`;
+  return lc?.fail ? `정지 구간 없음 · 서브 0.5초 전: ${lc.fail.st} ${lc.fail.label} ✗ (${lc.fail.why})` : "정지 구간 없음";
+}
+function renderEvalList(f) {
+  const ev = S.sv?.eval;
+  if (!ev) { $("#evList").innerHTML = `<li>먼저 정답 서브를 표시해 주세요 (S 키)</li>`; return; }
+  const items = f === "MISS" ? ev.missed : ev.false;
+  $("#evCount").textContent = f === "MISS" ? `놓친 정답 ${items.length}` : `잘못 잡음 ${items.length}`;
+  $("#evList").innerHTML = items.map(tt => `<li class="${f === "MISS" ? "B" : "C"}" data-t="${tt}"><span class="t">${fmt(tt)}</span>
+    <span class="st">${f === "MISS" ? "놓친 서브" : "정답에 없는 서브"}</span><span class="r">${f === "MISS" ? missReason(tt) : "이 시각 근처에 정답 표시가 없어요"}</span></li>`).join("")
+    || `<li>없어요</li>`;
+  $$("#evList li[data-t]").forEach(li => li.onclick = () => { const tt = +li.dataset.t; S.view.t0 = Math.max(0, tt - 8); S.view.span = Math.max(S.view.span, 16); seek(Math.max(0, tt - 3), true); });
 }
 
 /* ---- 기준값 ---- */
@@ -920,6 +966,16 @@ function bindView() {
   ["oBox", "oPose", "oLines", "oOff"].forEach(id => $("#" + id).onchange = () => S.dirty = true);
   $$("#evFilter button").forEach(b => b.onclick = () => { S.filter = b.dataset.f; $$("#evFilter button").forEach(x => x.classList.toggle("on", x === b)); renderEvents(); });
   $("#resetParams").onclick = () => { S.params = { ...S.defaults }; buildParams(); recalc(); };
+  $("#markBtn").onclick = toggleMark;
+  $("#tuneBtn").onclick = async () => {
+    const b = $("#tuneBtn"); b.disabled = true; b.textContent = "찾는 중";
+    try {
+      const r = await api(`/api/lab/${S.vid}/tune`, { method: "POST", json: { params: S.params } });
+      Object.assign(S.params, r.params); buildParams(); await recalc();
+      toast(`F1 ${r.before.f1} → ${r.after.f1} · 맞음 ${r.before.hit} → ${r.after.hit} (${r.tried}가지 조합, ${r.sec}초)`);
+    } catch (e) { toast(e.message, true); }
+    b.disabled = false; b.textContent = "정답에 맞춰 기준값 자동 조정";
+  };
   $("#rerunTrack").onclick = async () => { try { watchJob(await api(`/api/lab/${S.vid}/track`, { method: "POST" })); toast("추적을 다시 시작했어요"); } catch (e) { toast(e.message, true); } };
   bindTimeline();
   document.addEventListener("keydown", e => {
@@ -929,6 +985,7 @@ function bindView() {
     else if (e.key === "ArrowRight") seek(v.currentTime + (e.shiftKey ? 1 : 5));
     else if (e.key === ",") $("[data-fr='-1']").click();
     else if (e.key === ".") $("[data-fr='1']").click();
+    else if (e.key === "s" || e.key === "S" || e.key === "ㄴ") { e.preventDefault(); toggleMark(); }
   });
 }
 

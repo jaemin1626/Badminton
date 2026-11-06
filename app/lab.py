@@ -393,7 +393,143 @@ def lab_serves(vid: str, req: ServeReq):
                 "run_s": np.round(lv["run_s"], 2).tolist(), "front": lv["front"].tolist(),
                 "dist": _nan_list(lv["dist"], 2), "x": _nan_list(lv["x"], 2), "box": lv["box"],
                 "box_range": [round(float(x), 2) for x in lv["box_range"]]}
+    truth = read_json(ldir(vid) / "truth.json", {}).get("marks", [])
     return {"params": dataclasses.asdict(params), "ms": round((time.time() - t0) * 1000), "live": live,
             "speed": _nan_list(v, 2) if v is not None else [],
             "still": dbg["still"].astype(int).tolist() if "still" in dbg else [],
-            "runs": runs, "serves": scored, "summary": summary}
+            "runs": runs, "serves": scored, "summary": summary,
+            "eval": evaluate([e["t"] for e in serves], [m["t"] for m in truth]) if truth else None}
+
+
+# ---------------------------------------------------------------- 정답 서브 · 채점 · 자동 맞추기
+TOL_BEFORE, TOL_AFTER = 1.5, 2.5   # 판정 시각(정지가 끝난 때) 기준으로 정답(사람이 누른 서브 순간)이 이 범위 안이면 맞음
+
+
+def evaluate(pred: list[float], truth: list[float]) -> dict:
+    """판정 서브와 정답 서브를 시간순으로 1:1 짝짓는다."""
+    pred, truth = sorted(pred), sorted(truth)
+    used, hit = set(), {}
+    for i, pt in enumerate(pred):
+        best = None
+        for j, tt in enumerate(truth):
+            if j in used or not (pt - TOL_BEFORE <= tt <= pt + TOL_AFTER):
+                continue
+            if best is None or abs(tt - pt) < abs(truth[best] - pt):
+                best = j
+        if best is not None:
+            used.add(best); hit[i] = best
+    tp = len(hit)
+    return {"truth": len(truth), "pred": len(pred), "hit": tp, "missed": [t for j, t in enumerate(truth) if j not in used],
+            "false": [t for i, t in enumerate(pred) if i not in hit],
+            "recall": round(tp / max(len(truth), 1), 3), "precision": round(tp / max(len(pred), 1), 3),
+            "f1": round(2 * tp / max(len(truth) + len(pred), 1), 3)}
+
+
+LABELS = DATA.parent / "labels"   # data/labels/<영상 이름>.json : 같은 이름 영상을 다시 올려도 정답을 다시 쓴다
+
+
+class TruthReq(BaseModel):
+    marks: list[dict] = Field(default_factory=list)   # [{t: 초, server: 'A'|'B'|None, note: str}]
+    final: dict | None = None                          # 최종 점수 {A, B}
+
+
+def _stem(vid: str) -> str:
+    return Path(read_json(vdir(vid) / "meta.json", {}).get("name") or vid).stem
+
+
+@router.get("/label")
+def label_page():
+    return FileResponse(STATIC / "label" / "index.html")
+
+
+@router.get("/api/lab/{vid}/truth")
+def lab_get_truth(vid: str):
+    """정답 서브. 이 영상에 아직 없으면 같은 이름으로 저장된 정답(data/labels)을 돌려준다 (from_name=True)."""
+    cur = read_json(ldir(vid) / "truth.json")
+    if cur and (cur.get("marks") or cur.get("final")):
+        return cur
+    stem = _stem(vid)
+    named = read_json(LABELS / f"{stem}.json") if NAME_RE.match(stem) else None
+    if named:
+        return {**named, "from_name": True}
+    return {"marks": [], "final": None}
+
+
+@router.put("/api/lab/{vid}/truth")
+def lab_put_truth(vid: str, req: TruthReq):
+    marks = []
+    for m in req.marks:
+        if "t" not in m:
+            continue
+        item = {"t": round(float(m["t"]), 2)}
+        if m.get("server") in ("A", "B"):
+            item["server"] = m["server"]
+        if m.get("note"):
+            item["note"] = str(m["note"])[:100]
+        marks.append(item)
+    marks.sort(key=lambda m: m["t"])
+    final = None
+    if req.final and all(str(req.final.get(k, "")).strip().isdigit() for k in ("A", "B")):
+        final = {"A": int(req.final["A"]), "B": int(req.final["B"])}
+    data = {"marks": marks, "final": final, "video_name": read_json(vdir(vid) / "meta.json", {}).get("name"),
+            "saved": time.time()}
+    write_json(ldir(vid) / "truth.json", data)
+    stem = _stem(vid)
+    if NAME_RE.match(stem):
+        LABELS.mkdir(parents=True, exist_ok=True)
+        write_json(LABELS / f"{stem}.json", data)
+    return data
+
+
+TUNE_GRID = {   # 자동 맞추기에서 바꿔 보는 값 (서브 판정 기준만, 추적은 그대로)
+    "still_speed": [0.4, 0.55, 0.7, 0.9, 1.1],
+    "still_min": [0.2, 0.3, 0.4, 0.6, 0.8],
+    "merge_gap": [0.2, 0.35, 0.6, 0.9],
+    "rally_speed": [1.0, 1.3, 1.6, 2.0],
+    "rally_window": [1.5, 2.5, 4.0],
+    "min_serve_gap": [2.0, 3.5, 5.0],
+    "box_front": [0.3, 0.7, 1.2, 1.8],
+    "box_back": [0.2, 0.4, 1.0, 1.6],
+    "center_margin": [0.0, 0.1, 0.25],
+    "smooth": [0.3, 0.45, 0.7],
+}
+
+
+class TuneReq(BaseModel):
+    params: dict = Field(default_factory=dict)   # 시작값
+
+
+@router.post("/api/lab/{vid}/tune")
+def lab_tune(vid: str, req: TuneReq):
+    """정답 서브에 가장 잘 맞도록 기준값을 하나씩 바꿔 보며 찾는다 (좌표 하강, 3바퀴)."""
+    truth = [m["t"] for m in read_json(ldir(vid) / "truth.json", {}).get("marks", [])]
+    if len(truth) < 5:
+        raise HTTPException(400, "정답 서브를 5개 이상 표시해 주세요")
+    tr = _tracks(vid)
+    mode = (read_json(ldir(vid) / "config.json") or {}).get("match", {}).get("mode", "doubles")
+    fields = {f.name for f in dataclasses.fields(A.Params)}
+    cur = dataclasses.asdict(A.Params()) | {k: float(v) for k, v in req.params.items() if k in fields}
+    cache = {}
+
+    def score(p):
+        key = tuple(sorted(p.items()))
+        if key not in cache:
+            sv = A.find_serves(tr, mode, A.Params(**p))
+            ev = evaluate([e["t"] for e in sv], truth)
+            cache[key] = (ev["f1"], ev["hit"], -ev["pred"], ev)
+        return cache[key]
+
+    t0 = time.time()
+    start = score(cur)[3]
+    best = score(cur)
+    for _ in range(3):
+        changed = False
+        for k, vals in TUNE_GRID.items():
+            for v in vals:
+                cand = dict(cur, **{k: v})
+                sc = score(cand)
+                if sc[:3] > best[:3]:
+                    best, cur, changed = sc, cand, True
+        if not changed:
+            break
+    return {"params": cur, "before": start, "after": best[3], "tried": len(cache), "sec": round(time.time() - t0, 1)}
