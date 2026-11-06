@@ -180,3 +180,14 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .legend-pick{list-style:none;padding:0;margin:0 0 10px;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
 .legend-pick b{color:var(--text);font-weight:600}
 #diag .ln.dim{stroke:#ffffff55;stroke-width:.04}
+
+/* 설정 보관함 */
+.preset-new{flex-wrap:nowrap}
+.preset-new input{flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.presets{list-style:none;padding:0;margin:10px 0 0;display:flex;flex-direction:column;gap:4px}
+.presets li{display:flex;gap:6px;align-items:center;background:var(--panel2);border-radius:8px;padding:6px 8px}
+.presets li.cur{outline:1px solid var(--wood)}
+.presets li.empty{color:var(--muted);font-size:12px;background:none}
+.presets .nm{flex:1;display:flex;flex-direction:column;min-width:0}
+.presets .nm small{color:var(--muted);font-size:11px}
+.presets .b{height:26px;padding:0 8px;font-size:12px}

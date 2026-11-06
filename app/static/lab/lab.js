@@ -136,7 +136,7 @@ function upload(f) {
 
 async function openVideo(vid, mode) {
   stopVideo();
-  S.vid = vid; S.tr = null; S.kps = null; S.sv = null; S.selRun = null;
+  S.vid = vid; S.tr = null; S.kps = null; S.sv = null; S.selRun = null; S.baseSig = null;
   S.info = await api(`/api/lab/${vid}`); S.meta = S.info.meta;
   S.defaults = { ...S.info.params };
   const saved = JSON.parse(localStorage.getItem("lab:params") || "null");
@@ -164,7 +164,10 @@ async function openVideo(vid, mode) {
   $("#tabView").disabled = !S.info.has_tracks;
   watchJob(S.info.job);
   setMode(mode === "view" && S.info.has_tracks ? "view" : (S.info.has_tracks && !mode ? "view" : "setup"));
-  if (S.info.seeded) toast("운영 화면 설정을 시작점으로 불러왔어요. 저장해야 실험용으로 쓰여요");
+  clearTimeout(draftT); S.baseSig = stateSig();   // 서버 설정 상태를 기준으로
+  if (applyDraft(c)) { toast("저장하지 않은 작업을 이어서 불러왔어요. 저장 버튼을 눌러야 설정 파일에 들어가요"); if (S.mode === "setup") { buildStage(); loadFrame(S.frame); renderSetupPanel(); refit(true); } }
+  else if (S.info.seeded) toast("운영 화면 설정을 시작점으로 불러왔어요. 저장해야 실험용으로 쓰여요");
+  renderPresets();
 }
 
 function setMode(m) {
@@ -240,6 +243,7 @@ function refit(now = false) {
 }
 
 function drawSetup() {
+  saveDraft();
   const g = $("#sOver"); g.innerHTML = ""; const u = U();
   $("#sStage").classList.toggle("picking", S.pick !== null);
   const H = curH();
@@ -436,6 +440,8 @@ function bindSetup() {
   $("#detBtn").onclick = detect;
   $("#saveBtn").onclick = () => saveConfig(false);
   $("#runBtn").onclick = () => saveConfig(true);
+  $("#presetSave").onclick = () => { const n = $("#presetName").value.trim(); if (!n) { toast("이름을 적어 주세요", true); return; } saveConfig(false, n); };
+  ["nameA", "nameB", "mMode", "mTarget", "mFirst", "mGame", "mScoreA", "mScoreB"].forEach(id => $("#" + id).addEventListener("input", saveDraft));
 }
 
 async function detect() {
@@ -455,7 +461,7 @@ async function detect() {
   drawSetup(); renderSetupPanel();
 }
 
-async function saveConfig(run) {
+async function saveConfig(run, name = null) {
   const per = $("#mMode").value === "doubles" ? 2 : 1;
   const by = t => S.people.filter(p => S.assign[p.id] === t).map(p => p.box);
   if (by("A").length !== per || by("B").length !== per) { toast(`팀마다 ${per}명씩 지정해 주세요`, true); return; }
@@ -469,12 +475,66 @@ async function saveConfig(run) {
       scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value },
   };
   try {
-    const cfg = await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });
-    S.info.seeded = false; S.cfg = cfg; S.tr = null;
-    $("#setupMsg").textContent = `저장했어요 · 기준 프레임 #${S.detFrame} · 심판 ${body.officials.length}명`;
+    let cfg = await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });
+    if (name) { S.info.presets = await api(`/api/lab/${S.vid}/presets/${encodeURIComponent(name)}`, { method: "POST" }); cfg = { ...cfg, name }; }
+    S.info.seeded = false; S.info.config = cfg; S.cfg = cfg; S.tr = null; S.sv = null;
+    S.baseSig = stateSig(); dropDraft(); renderPresets();
+    $("#setupMsg").textContent = `저장했어요${name ? ` · '${name}'` : ""} · data/videos/${S.vid}/lab/config.json · 기준 프레임 #${S.detFrame} · 심판 ${body.officials.length}명`;
     if (run) { const j = await api(`/api/lab/${S.vid}/track`, { method: "POST" }); watchJob(j); toast("추적을 시작했어요"); }
-    else toast("저장했어요");
+    else toast(name ? `'${name}'(으)로 저장했어요` : "저장했어요");
   } catch (e) { toast(e.message, true); }
+}
+
+/* ---------------- 임시 저장 · 설정 보관함 ---------------- */
+const draftKey = () => `lab:draft:${S.vid}`;
+const dropDraft = () => localStorage.removeItem(draftKey());
+let draftT;
+function stateSig() {
+  const roles = ["A", "B", "R"].map(t => S.people.filter(p => S.assign[p.id] === t).map(p => p.box.map(v => Math.round(v))).sort());
+  return JSON.stringify({ p: S.points, l: S.clines, roles, f: S.detFrame, n: [$("#nameA").value, $("#nameB").value],
+    m: ["mMode", "mTarget", "mFirst", "mGame", "mScoreA", "mScoreB"].map(id => String($("#" + id).value)) });
+}
+function saveDraft() {
+  clearTimeout(draftT);
+  draftT = setTimeout(() => {
+    if (!S.vid || S.mode !== "setup" || S.baseSig == null) return;
+    if (stateSig() === S.baseSig) { localStorage.removeItem(draftKey()); return; }   // 바뀐 게 없으면 임시 저장도 없다
+    localStorage.setItem(draftKey(), JSON.stringify({
+      ts: Date.now(), frame: S.frame, points: S.points, clines: S.clines, people: S.people, assign: S.assign, detFrame: S.detFrame,
+      names: [$("#nameA").value, $("#nameB").value],
+      match: { mode: $("#mMode").value, target: $("#mTarget").value, first: $("#mFirst").value, game: $("#mGame").value, scoreA: $("#mScoreA").value, scoreB: $("#mScoreB").value },
+    }));
+  }, 400);
+}
+function applyDraft(c) {
+  let d; try { d = JSON.parse(localStorage.getItem(draftKey()) || "null"); } catch { d = null; }
+  if (!d || d.ts <= (c?.saved || 0) * 1000) return false;   // 서버에 저장한 게 더 최신이면 무시
+  Object.assign(S, { frame: d.frame, points: d.points || [], clines: d.clines || [], people: d.people || [], assign: d.assign || {}, detFrame: d.detFrame ?? -1 });
+  [$("#nameA").value, $("#nameB").value] = d.names || ["", ""];
+  for (const [k, id] of [["mode", "mMode"], ["target", "mTarget"], ["first", "mFirst"], ["game", "mGame"], ["scoreA", "mScoreA"], ["scoreB", "mScoreB"]])
+    if (d.match?.[k] != null) $("#" + id).value = d.match[k];
+  return true;
+}
+function renderPresets() {
+  const cur = S.info?.config?.name;
+  $("#curName").textContent = cur ? `지금: ${cur}` : "이름 없음";
+  if (cur && !$("#presetName").value) $("#presetName").value = cur;
+  const when = t => t ? new Date(t * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  $("#presetList").innerHTML = (S.info?.presets || []).map(p => `<li class="${p.name === cur ? "cur" : ""}">
+    <span class="nm"><b>${p.name}</b><small>${when(p.saved)} · 점 ${p.points} · 라인 ${p.lines} · 심판 ${p.officials} · #${p.ref_frame}</small></span>
+    <button class="b" data-load="${p.name}">불러오기</button><button class="b" data-del="${p.name}" title="삭제" aria-label="${p.name} 삭제">×</button></li>`).join("")
+    || `<li class="empty">아직 보관한 설정이 없어요</li>`;
+  $$("#presetList [data-load]").forEach(b => b.onclick = async () => {
+    try {
+      await api(`/api/lab/${S.vid}/presets/${encodeURIComponent(b.dataset.load)}/load`, { method: "POST" });
+      dropDraft(); toast(`'${b.dataset.load}' 설정을 불러왔어요`);
+      await openVideo(S.vid, "setup");
+    } catch (e) { toast(e.message, true); }
+  });
+  $$("#presetList [data-del]").forEach(b => b.onclick = async () => {
+    if (!confirm(`'${b.dataset.del}' 설정을 지울까요?`)) return;
+    S.info.presets = await api(`/api/lab/${S.vid}/presets/${encodeURIComponent(b.dataset.del)}`, { method: "DELETE" }); renderPresets();
+  });
 }
 
 /* ---------------- 작업 진행 ---------------- */
@@ -515,6 +575,7 @@ async function enterView() {
   const src = `/api/videos/${S.vid}/stream?kind=auto`;
   if (v.dataset.src !== src) { v.src = src; v.dataset.src = src; }
   $("#vSvg").setAttribute("viewBox", `0 0 ${S.meta.width} ${S.meta.height}`);
+  if (S.info?.tracks_stale) toast("지금 추적 결과는 예전 설정으로 만든 거예요. 설정 탭에서 추적을 다시 실행하세요", true);
   if (!S.tr) {
     $("#nowBox").textContent = "추적 결과 불러오는 중";
     const [tr, kb, cfg] = await Promise.all([api(`/api/lab/${S.vid}/tracks`), api(`/api/lab/${S.vid}/kps`, { raw: true }), api(`/api/lab/${S.vid}`)]);

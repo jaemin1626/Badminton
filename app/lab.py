@@ -9,6 +9,7 @@
   PUT  /api/lab/{vid}/config         코트 점·라인 · 선수 4명 · 심판 · 경기 설정 저장
   POST /api/lab/{vid}/detect         설정 프레임 사람 검출 (코트 점으로 코트 위치 계산)
   POST /api/lab/{vid}/track          추적 실행 (작업 ID 반환, /api/jobs/{id}로 진행 확인)
+  GET/POST/DELETE /api/lab/{vid}/presets[/{이름}[/load]]  설정 이름 붙여 보관 · 불러오기 (lab/configs/)
   GET  /api/lab/{vid}/tracks         추적 결과 (위치·박스·가려짐·심판 박스)
   GET  /api/lab/{vid}/kps            관절 (int16 바이너리: S×N×17×3, 신뢰도는 ×1000)
   POST /api/lab/{vid}/serves         기준값으로 서브 판정만 다시 계산 (추적은 재사용)
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import time
 
 import cv2
@@ -63,8 +65,65 @@ def lab_info(vid: str):
             seeded = True
     jid = meta.get("jobs", {}).get("lab_track")
     job = JOBS[jid].to_dict() if jid in JOBS else read_json(d / "job_lab_track.json")
-    return {"meta": meta, "config": cfg, "seeded": seeded, "has_tracks": (L / "tracks.npz").exists(),
-            "job": job, "params": dataclasses.asdict(A.Params())}
+    tmeta = read_json(L / "tracks_meta.json", {})
+    has_tracks = (L / "tracks.npz").exists()
+    # 추적 결과가 지금 설정으로 만든 것인지 (설정을 바꾸거나 다른 설정을 불러오면 다시 추적해야 함)
+    stale = bool(has_tracks and cfg and tmeta.get("config_saved") != cfg.get("saved"))
+    return {"meta": meta, "config": cfg, "seeded": seeded, "has_tracks": has_tracks, "tracks_stale": stale,
+            "tracks_config": tmeta.get("config_name"), "job": job, "params": dataclasses.asdict(A.Params()),
+            "presets": _presets(vid)}
+
+
+NAME_RE = re.compile(r"^[\w가-힣 .\-]{1,40}$")
+
+
+def _presets(vid: str) -> list[dict]:
+    out = []
+    for p in sorted((ldir(vid) / "configs").glob("*.json"), key=lambda p: -p.stat().st_mtime):
+        c = read_json(p, {})
+        out.append({"name": p.stem, "saved": c.get("saved"), "points": len(c.get("points", [])),
+                    "lines": len(c.get("lines", [])), "ref_frame": c.get("ref_frame"),
+                    "officials": len(c.get("officials", []))})
+    return out
+
+
+@router.get("/api/lab/{vid}/presets")
+def lab_presets(vid: str):
+    return _presets(vid)
+
+
+@router.post("/api/lab/{vid}/presets/{name}")
+def lab_save_preset(vid: str, name: str):
+    """지금 저장된 설정(config.json)을 이름 붙여 보관: lab/configs/<이름>.json"""
+    if not NAME_RE.match(name):
+        raise HTTPException(400, "이름은 40자 이내 글자·숫자·공백·.-_ 만 쓸 수 있어요")
+    cfg = read_json(ldir(vid) / "config.json")
+    if cfg is None:
+        raise HTTPException(400, "먼저 저장해 주세요")
+    cfg["name"] = name
+    (ldir(vid) / "configs").mkdir(exist_ok=True)
+    write_json(ldir(vid) / "configs" / f"{name}.json", cfg)
+    write_json(ldir(vid) / "config.json", cfg)
+    return _presets(vid)
+
+
+@router.post("/api/lab/{vid}/presets/{name}/load")
+def lab_load_preset(vid: str, name: str):
+    """보관한 설정을 지금 설정으로 불러온다."""
+    p = ldir(vid) / "configs" / f"{name}.json"
+    if not NAME_RE.match(name) or not p.exists():
+        raise HTTPException(404, "그 이름의 설정이 없어요")
+    cfg = read_json(p)
+    write_json(ldir(vid) / "config.json", cfg)
+    return cfg
+
+
+@router.delete("/api/lab/{vid}/presets/{name}")
+def lab_delete_preset(vid: str, name: str):
+    p = ldir(vid) / "configs" / f"{name}.json"
+    if NAME_RE.match(name) and p.exists():
+        p.unlink()
+    return _presets(vid)
 
 
 class TeamIn(BaseModel):
@@ -199,6 +258,9 @@ def lab_put_config(vid: str, body: LabConfig):
            "homography": H.tolist(), "h_court2px": fitres["h_court2px"].tolist(), "teams": teams, "match": match,
            "officials": [{"bbox": b, "court_pos": _foot_court(H, b)} for b in body.officials if len(b) >= 4],
            "saved": time.time()}
+    old = read_json(ldir(vid) / "config.json", {}) or {}
+    if old.get("name"):
+        cfg["name"] = old["name"]   # 이름 붙인 설정을 고쳐 저장하면 이름은 유지 (보관본은 '이름 붙여 저장'으로 갱신)
     write_json(ldir(vid) / "config.json", cfg)
     return cfg
 
@@ -246,6 +308,8 @@ def lab_track(vid: str):
 
         tr = A.track(str(source_path(d)), cfg, ms, prog, stop=job.stop)
         A.save_tracks(tr, L / "tracks.npz")
+        write_json(L / "tracks_meta.json", {"config_saved": cfg.get("saved"), "config_name": cfg.get("name"),
+                                            "finished": time.time()})
         job.finish_stage(1, f"{len(tr['frames']):,}개 샘플 · {time.time() - t0:.0f}초")
 
     return submit(job, fn, GPU_POOL).to_dict()
