@@ -394,6 +394,39 @@ def _behind_score(mp, ks, front, occ_tail) -> float:
     return float(np.clip(1.2 - dx, 0, 1) * np.clip(dd / 1.0, 0, 1))
 
 
+def _live_checks(p, v, known, still, t, far, near, params) -> dict:
+    """매 샘플마다 서브 조건(A 정지 · B 대형)을 검사한 값. 실험 페이지에서 '지금 왜 서브가 아닌지' 보여 주는 용도.
+
+    서브 판정(find_serves)은 정지 구간 끝쪽 평균 위치로 B를 보지만, 여기서는 그 순간 위치로 본다.
+    """
+    S = len(t)
+    vv = np.where(known, v, -1.0)
+    fast_k = vv.argmax(1)
+    fast_v = vv.max(1)
+    # 지금까지 정지가 이어진 시간
+    run_s = np.zeros(S)
+    for i in range(1, S):
+        run_s[i] = run_s[i - 1] + (t[i] - t[i - 1]) if still[i] and still[i - 1] else 0.0
+    lo, hi = C.SHORT - params.box_front, C.NET - C.LONG_DBL + params.box_back
+    front = np.full((S, 2), -1, int)
+    dist = np.full((S, 2), np.nan)
+    box = [[None, None] for _ in range(S)]
+    for i in range(S):
+        for j, (side, ks) in enumerate((("far", far), ("near", near))):
+            kk = [k for k in ks if not np.isnan(p[i, k, 0])]
+            if not kk:
+                continue
+            k = min(kk, key=lambda k: C.dist_to_net(p[i, k]))
+            front[i, j] = k
+            dist[i, j] = C.dist_to_net(p[i, k])
+            box[i][j] = C.service_box(side, p[i, k])
+    in_box = (dist >= lo) & (dist <= hi)
+    xs = np.array([[p[i, front[i, j], 0] if front[i, j] >= 0 else np.nan for j in range(2)] for i in range(S)])
+    center_ok = np.abs(xs - C.CENTER) >= params.center_margin
+    return dict(fast_k=fast_k, fast_v=fast_v, run_s=run_s, front=front, dist=dist, box=box,
+                in_box=in_box, center_ok=center_ok, x=xs, box_range=(lo, hi))
+
+
 def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debug: dict | None = None):
     """서브 후보 리스트. 각 후보: 시각, 서비스 코트(right/left), near 쪽이 서버일 확률 등.
 
@@ -435,7 +468,7 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             note(a, b, "A", f"정지 {t[b] - t[a]:.1f}초 (기준 {params.still_min}초 미만)")
     runs = [(a, b) for a, b in merged if t[b] - t[a] >= params.still_min]
     if debug is not None:
-        debug.update(p=p, v=v, still=still, known=known)
+        debug.update(p=p, v=v, still=still, known=known, live=_live_checks(p, v, known, still, t, far, near, params))
 
     vfast = np.nan_to_num(v, nan=0.0).max(1)
     fast = vfast > params.rally_speed
@@ -545,10 +578,29 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
 
 
 # ---------------------------------------------------------------- 3) 점수 상태머신
-def game_over(a: int, b: int, target: int) -> bool:
-    cap = 30 if target == 21 else 21 if target == 15 else target + 9
+# 게임 규칙. deuce=False면 target 점수를 먼저 내면 끝, True면 2점 차(최대 cap).
+# switch_at: 마지막 게임(단판이면 그 게임)에서 한쪽이 이 점수에 먼저 닿으면 코트 교대.
+RULES = {
+    21: dict(deuce=True, cap=30, games_to_win=2, switch_at=11),   # 21점 · 3판 2선승 · 3게임 11점 교대
+    15: dict(deuce=True, cap=21, games_to_win=2, switch_at=8),
+    25: dict(deuce=False, cap=25, games_to_win=1, switch_at=13),  # 25점 단판 · 듀스 없음 · 13점 교대
+}
+
+
+def rules_for(target: int, s: dict | None = None) -> dict:
+    r = dict(RULES.get(int(target), dict(deuce=True, cap=int(target) + 9, games_to_win=2, switch_at=(int(target) + 1) // 2)))
+    for k in r:   # 설정에서 바꿀 수 있게 (예: {"deuce": true})
+        if s and k in s:
+            r[k] = type(r[k])(s[k])
+    return r
+
+
+def game_over(a: int, b: int, target: int, rules: dict | None = None) -> bool:
+    r = rules or rules_for(target)
     hi, lo = max(a, b), min(a, b)
-    return hi >= cap or (hi >= target and hi - lo >= 2)
+    if not r["deuce"]:
+        return hi >= target
+    return hi >= r["cap"] or (hi >= target and hi - lo >= 2)
 
 
 class Match:
@@ -556,7 +608,8 @@ class Match:
 
     def __init__(self, s: dict, sides: dict):
         self.target = int(s.get("target", 21))
-        self.games_to_win = 2
+        self.rules = rules_for(self.target, s)
+        self.games_to_win = self.rules["games_to_win"]
         self.score = {"A": int(s.get("scoreA", 0)), "B": int(s.get("scoreB", 0))}
         self.game = int(s.get("game", 1))
         self.games = []  # 끝난 게임 [{A,B,winner}]
@@ -579,10 +632,11 @@ class Match:
         self.score[winner] += 1
         self.server = winner
         a, b = self.score["A"], self.score["B"]
-        # 마지막 게임 11점 코트 교대
-        if (self.game == 3 and not self.switched_mid and max(a, b) >= (11 if self.target == 21 else 8)):
+        # 마지막 게임(단판이면 그 게임) 중간 코트 교대: 21점 11점, 15점 8점, 25점 13점
+        last_game = 2 * self.games_to_win - 1
+        if self.game == last_game and not self.switched_mid and max(a, b) >= self.rules["switch_at"]:
             self._swap(); self.switched_mid = True
-        if game_over(a, b, self.target):
+        if game_over(a, b, self.target, self.rules):
             self.games.append({"A": a, "B": b, "winner": winner})
             wins = sum(g["winner"] == winner for g in self.games)
             if wins >= self.games_to_win:

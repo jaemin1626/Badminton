@@ -156,7 +156,7 @@ async function openVideo(vid, mode) {
     for (const o of c.officials || []) { S.people.push({ id, box: o.bbox, saved: true }); S.assign[id++] = "R"; }
     $("#nameA").value = c.teams["1"].name; $("#nameB").value = c.teams["2"].name;
     const m = c.match || {};
-    $("#mMode").value = m.mode || "doubles"; $("#mTarget").value = m.target || 21; $("#mFirst").value = m.first || "A";
+    $("#mMode").value = m.mode || "doubles"; $("#mTarget").value = m.target || 25; $("#mFirst").value = m.first || "A";
     $("#mGame").value = m.game || 1; $("#mScoreA").value = m.scoreA || 0; $("#mScoreB").value = m.scoreB || 0;
   }
   $("#sRange").max = S.meta.frames - 1;
@@ -683,17 +683,46 @@ function drawCourtMini(i) {
 }
 
 /* ---- 지금 위치 설명 ---- */
+// 샘플 i에서 서브 조건을 하나씩 검사한 결과: [{ok, label, why}], 처음 막힌 단계
+function liveChecks(i) {
+  const L = S.sv?.live, P = S.params, slots = S.tr.slots;
+  if (!L) return null;
+  const out = [], name = k => slots[k];
+  const fv = L.fast_v[i], fk = L.fast_k[i];
+  out.push(fv < 0 ? { st: "A", ok: false, label: "모두 정지", why: "선수 위치를 모름" }
+    : { st: "A", ok: fv < P.still_speed, label: "모두 정지", why: fv < P.still_speed ? `가장 빠른 ${name(fk)} ${fv.toFixed(2)} m/s` : `${name(fk)}이 ${fv.toFixed(2)} m/s (기준 ${P.still_speed} 미만)` });
+  const rs = L.run_s[i];
+  out.push({ st: "A", ok: rs >= P.still_min, label: "정지 지속", why: `${rs.toFixed(1)}초째 (기준 ${P.still_min}초)` });
+  const [ff, nf] = L.front[i], [df, dn] = L.dist[i], [lo, hi] = L.box_range;
+  out.push({ st: "B", ok: ff >= 0 && nf >= 0, label: "양쪽 앞사람", why: ff >= 0 && nf >= 0 ? `far ${name(ff)} · near ${name(nf)}` : `${ff < 0 ? "far" : "near"} 쪽 선수 위치를 모름` });
+  const inb = d => d != null && d >= lo && d <= hi;
+  for (const [side, k, d] of [["far", ff, df], ["near", nf, dn]])
+    if (k >= 0) out.push({ st: "B", ok: inb(d), label: `${side} 서비스 코트 깊이`, why: `${name(k)} 네트에서 ${d?.toFixed(2)} m (범위 ${lo}~${hi})` });
+  const [bf, bn] = L.box[i];
+  if (bf && bn) out.push({ st: "B", ok: bf === bn, label: "대각선", why: `far ${bf === "right" ? "오른쪽" : "왼쪽"} · near ${bn === "right" ? "오른쪽" : "왼쪽"}` });
+  const [xf, xn] = L.x[i];
+  if (xf != null && xn != null) {
+    const m = Math.min(Math.abs(xf - W_M / 2), Math.abs(xn - W_M / 2));
+    out.push({ st: "B", ok: m >= P.center_margin, label: "센터라인에서 떨어짐", why: `가까운 쪽 ${m.toFixed(2)} m (기준 ${P.center_margin})` });
+  }
+  const fail = out.find(c => !c.ok);
+  return { list: out, fail };
+}
+const LIVE_COL = { ok: "#3ecf8e", A: "#7d8a84", B: "#ff5d6c" };
+
 function drawNow(i, t) {
   const r = (S.sv?.runs || []).find(r => t >= r.t0 - .05 && t <= r.t1 + .05);
   const lastServe = [...(S.sv?.serves || [])].reverse().find(e => e.t <= t + .05);
+  const lc = liveChecks(i);
   let h = "";
-  if (r) h += `<b style="color:${STAGE_COL[r.stage]}">${STAGE_NAME[r.stage]}</b> ${fmt(r.t0)}–${fmt(r.t1)}<br>${r.reason}`;
-  else {
-    const sp = (S.sv?.speed?.[i] || []).filter(v => v != null), mx = sp.length ? Math.max(...sp) : null;
-    h += mx == null ? "속도 정보 없음" : mx < S.params.still_speed ? `모두 느림 (최대 ${mx.toFixed(2)} m/s)` : mx > S.params.rally_speed ? `<b>랠리</b> · 최대 ${mx.toFixed(2)} m/s` : `움직이는 중 · 최대 ${mx.toFixed(2)} m/s`;
+  if (lc) {
+    h += `<div class="lc-head">지금 서브 조건 ${lc.fail ? `<b style="color:${LIVE_COL[lc.fail.st]}">✗ ${lc.fail.label}에서 막힘</b>` : `<b style="color:${LIVE_COL.ok}">✓ A·B 통과</b>`}</div><ul class="lc">`;
+    h += lc.list.map(c => `<li class="${c.ok ? "ok" : "no"}"><i>${c.ok ? "✓" : "✗"}</i><span>${c.st} ${c.label}</span><small>${c.why}</small></li>`).join("");
+    h += `</ul><div class="lc-c">C 랠리 조건은 정지가 끝난 뒤 ${S.params.rally_window}초 안에 누군가 ${S.params.rally_speed} m/s 넘게 움직여야 해요</div>`;
   }
-  if (lastServe) h += `<br>현재 점수 <b>${lastServe.score.A} : ${lastServe.score.B}</b> · ${lastServe.game}게임 · 서버 ${lastServe.server}`;
-  $("#nowBox").innerHTML = h;
+  if (r) h += `<div class="lc-run">이 정지 구간 판정 · <b style="color:${STAGE_COL[r.stage]}">${STAGE_NAME[r.stage]}</b> ${fmt(r.t0)}–${fmt(r.t1)}<br>${r.reason}</div>`;
+  if (lastServe) h += `<div class="lc-score">현재 점수 <b>${lastServe.score.A} : ${lastServe.score.B}</b> · ${lastServe.game}게임 · 서버 ${lastServe.server}</div>`;
+  $("#nowBox").innerHTML = h || "판정 정보 없음";
 }
 
 /* ---- 재생 루프 ---- */
@@ -743,7 +772,7 @@ function drawTimeline(t) {
   // 상세 (창)
   const [c, w, h] = setupCanvas($("#tlCv")); c.clearRect(0, 0, w, h);
   const t0 = S.view.t0, t1 = t0 + S.view.span, X = s => PL + (w - PL) * (s - t0) / (t1 - t0);
-  const laneH = 9, lanes = tr.slots.length, top = 8 + lanes * (laneH + 3) + 6, bot = h - 20;
+  const laneH = 9, lanes = tr.slots.length + 1, top = 8 + lanes * (laneH + 3) + 6, bot = h - 20;
   const vmax = Math.max(4, S.params.rally_speed * 1.6), Y = v => bot - (bot - top) * Math.min(v, vmax) / vmax;
   const i0 = Math.max(0, sampleAt(t0) - 1), i1 = Math.min(tr.frames.length - 1, sampleAt(t1) + 1);
   // 정지 구간 띠
@@ -776,7 +805,7 @@ function drawTimeline(t) {
     }
     c.stroke();
     // 보임/가려짐/없음 칸
-    const ly = 8 + k * (laneH + 3);
+    const ly = 8 + (k + 1) * (laneH + 3);
     c.fillStyle = "#9aa7a1"; c.font = "10px ui-monospace,'Noto Sans KR',monospace"; c.fillText(s, 2, ly + 8);
     for (let i = i0; i < i1; i++) {
       const b = tr.box[i][k], have = b && b[0] != null, occ = tr.occ[i][k] === 1;
@@ -784,6 +813,15 @@ function drawTimeline(t) {
       c.fillRect(X(tOf(i)), ly, Math.max(1, X(tOf(i + 1)) - X(tOf(i)) + .5), laneH);
     }
   });
+  // 서브 조건 칸: 매 순간 처음 막힌 단계 (초록 = A·B 통과, 회색 = A 정지, 빨강 = B 대형)
+  if (S.sv.live) {
+    c.fillStyle = "#9aa7a1"; c.font = "10px ui-monospace,'Noto Sans KR',monospace"; c.fillText("조건", 2, 16);
+    for (let i = i0; i < i1; i++) {
+      const lc = liveChecks(i); if (!lc) break;
+      c.fillStyle = lc.fail ? LIVE_COL[lc.fail.st] : LIVE_COL.ok;
+      c.fillRect(X(tOf(i)), 8, Math.max(1, X(tOf(i + 1)) - X(tOf(i)) + .5), laneH);
+    }
+  }
   // 시간 눈금
   c.fillStyle = "#9aa7a1"; c.font = "10px ui-monospace,'Noto Sans KR',monospace";
   const stepT = [1, 2, 5, 10, 30, 60].find(s => (t1 - t0) / s <= 12) || 120;

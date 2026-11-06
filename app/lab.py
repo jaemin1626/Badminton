@@ -264,7 +264,7 @@ def lab_put_config(vid: str, body: LabConfig):
         teams[num] = {"name": t.name or f"팀 {key}", "bboxes": t.bboxes, "court_pos": pos, "side": side}
     if teams["1"]["side"] == teams["2"]["side"]:
         raise HTTPException(400, "두 팀이 네트의 같은 쪽에 있어요")
-    match = {"mode": "doubles", "first": "A", "scoreA": 0, "scoreB": 0, "target": 21, "game": 1}
+    match = {"mode": "doubles", "first": "A", "scoreA": 0, "scoreB": 0, "target": 25, "game": 1}
     match.update(body.match)
     cfg = {"fps": meta.get("fps"), "frame_size": [meta.get("width"), meta.get("height")],
            "ref_frame": body.ref_frame, "points": [p.model_dump() for p in body.points],
@@ -385,7 +385,14 @@ def lab_serves(vid: str, req: ServeReq):
     for r in runs:
         r.pop("i0", None); r.pop("i1", None)
     v = dbg.get("v")
-    return {"params": dataclasses.asdict(params), "ms": round((time.time() - t0) * 1000),
+    lv = dbg.get("live")
+    live = None
+    if lv:   # 샘플마다 서브 조건 검사값 (지금 왜 서브가 아닌지)
+        live = {"fast_k": lv["fast_k"].tolist(), "fast_v": np.round(lv["fast_v"], 2).tolist(),
+                "run_s": np.round(lv["run_s"], 2).tolist(), "front": lv["front"].tolist(),
+                "dist": _nan_list(lv["dist"], 2), "x": _nan_list(lv["x"], 2), "box": lv["box"],
+                "box_range": [round(float(x), 2) for x in lv["box_range"]]}
+    return {"params": dataclasses.asdict(params), "ms": round((time.time() - t0) * 1000), "live": live,
             "speed": _nan_list(v, 2) if v is not None else [],
             "still": dbg["still"].astype(int).tolist() if "still" in dbg else [],
             "runs": runs, "serves": scored, "summary": summary}

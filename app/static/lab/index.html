@@ -71,7 +71,7 @@
       <h2>경기</h2>
       <div class="grid2">
         <label>방식<select id="mMode"><option value="doubles">복식</option><option value="singles">단식</option></select></label>
-        <label>규칙<select id="mTarget"><option value="21">21점</option><option value="15">15점</option></select></label>
+        <label>규칙<select id="mTarget"><option value="25">25점 단판</option><option value="21">21점 3판</option><option value="15">15점 3판</option></select></label>
         <label>첫 서브<select id="mFirst"><option value="A">팀 A</option><option value="B">팀 B</option></select></label>
         <label>게임<select id="mGame"><option>1</option><option>2</option><option>3</option></select></label>
         <label>시작 A<input type="number" id="mScoreA" min="0" max="29" value="0"></label>
@@ -126,7 +126,7 @@
   <section class="tl">
     <canvas id="ovCv" class="ov"></canvas>
     <canvas id="tlCv" class="detail"></canvas>
-    <div class="tlhint">휠: 확대/축소 · 드래그: 이동 · 클릭: 그 시점으로 · 실선=속도(m/s) · 회색 띠=정지 · 위쪽 칸=선수가 보임/가려짐/없음</div>
+    <div class="tlhint">휠: 확대/축소 · 드래그: 이동 · 클릭: 그 시점으로 · 실선=속도(m/s) · 회색 띠=정지 · 맨 위 &quot;조건&quot; 칸=그 순간 서브 조건 (초록 통과 · 회색 A 정지에서 막힘 · 빨강 B 대형에서 막힘) · 그 아래=선수가 보임/가려짐/없음</div>
   </section>
 
   <aside class="events">

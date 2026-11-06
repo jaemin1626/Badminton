@@ -600,7 +600,7 @@ function renderPanel() {
       <div class="field"><label>시작 점수</label><div class="score-in">${sb("A", "scoreA")}<span class="vs">VS</span>${sb("B", "scoreB")}</div></div>
       <div class="field"><label>시작 게임</label>${seg("game", [[1, "1게임"], [2, "2게임"], [3, "3게임"]])}</div>
       <div class="field"><label>우리 팀 (스코어보드 아랫줄)</label>${seg("ours", [["A", T.A.name], ["B", T.B.name]])}</div>
-      <div class="field"><label>게임 규칙</label>${seg("target", [[21, "21점 · 듀스 최대 30"], [15, "15점"]])}</div>
+      <div class="field"><label>게임 규칙</label>${seg("target", [[25, "25점 단판"], [21, "21점 · 듀스 최대 30"], [15, "15점"]])}</div>
       <div class="toggle-row">스코어보드 미리보기<button class="switch ${f.scoreboard ? "on" : ""}" id="boardSw" role="switch" aria-checked="${f.scoreboard}" aria-label="스코어보드 미리보기"></button></div>
       <button class="cta" id="next">분석 시작</button>`;
     $$(".seg", P).forEach(s => $$("button", s).forEach(b => b.onclick = () => {
