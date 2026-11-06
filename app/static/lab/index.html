@@ -40,13 +40,17 @@
   </section>
   <aside class="side">
     <section class="box">
-      <h2>코트</h2>
-      <p class="hint">복식 바깥 라인 꼭짓점 4개를 끌어서 맞추세요. 화면 밖에 있으면 <b>화면 밖까지</b>를 켜고 라인 방향으로 끌어내면 돼요.</p>
-      <ol class="corners" id="cornerList"></ol>
+      <h2>코트 <span class="tag" id="fitTag">점 0개</span></h2>
+      <p class="hint">① 도면에서 영상에 <b>잘 보이는 교차점</b>을 고르고 ② 영상에서 그 위치를 클릭하세요. 4개 이상, 서로 다른 줄의 점을 넓게 퍼뜨릴수록 정확해요.
+        왼쪽·오른쪽은 <b>카메라에서 볼 때</b> 기준이에요.</p>
+      <div class="diag-wrap"><svg id="diag" aria-label="코트 도면에서 점 고르기"></svg></div>
+      <p class="hint small" id="pickMsg">도면에서 점을 고르세요</p>
+      <ol class="pts" id="ptList"></ol>
       <div class="row">
         <label class="sw"><input type="checkbox" id="wideChk"> 화면 밖까지</label>
         <label class="sw"><input type="checkbox" id="linesChk" checked> 라인 미리보기</label>
       </div>
+      <p class="hint small">찍은 점은 끌어서 옮기거나, 선택한 뒤 방향키(Shift+방향키는 10px)로 다듬을 수 있어요.</p>
     </section>
     <section class="box">
       <h2>사람 지정 <span class="tag" id="detFrameTag"></span></h2>

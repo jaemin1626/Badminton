@@ -25,7 +25,7 @@ const PARAM_DOC = {
 const S = {
   vid: null, info: null, meta: null, mode: "setup",
   // 설정
-  frame: 0, corners: null, wide: false, lines: true, drag: -1, people: [], assign: {}, role: "A", detFrame: -1,
+  frame: 0, points: [], pick: null, selPt: -1, wide: false, lines: true, drag: -1, people: [], assign: {}, role: "A", detFrame: -1,
   // 확인
   tr: null, kps: null, kshape: null, sv: null, params: null, defaults: null, cur: 0, filter: "all", selRun: null,
   view: { t0: 0, span: 40 }, jobTimer: null,
@@ -66,7 +66,30 @@ function homography(src, dst) {
   return [...solve(A, b), 1];
 }
 const COURT = [[0, 0], [W_M, 0], [W_M, L_M], [0, L_M]];
-const map = (H, [X, Y]) => { const d = H[6] * X + H[7] * Y + H[8]; return [(H[0] * X + H[1] * Y + H[2]) / d, (H[3] * X + H[4] * Y + H[5]) / d]; };
+// 카메라 뒤쪽(d<=0)으로 넘어가는 점은 null
+const map = (H, [X, Y]) => { const d = H[6] * X + H[7] * Y + H[8]; if (d <= 1e-9) return null; return [(H[0] * X + H[1] * Y + H[2]) / d, (H[3] * X + H[4] * Y + H[5]) / d]; };
+// 코트(m) → 픽셀 호모그래피를 점 4개 이상으로 최소제곱 (픽셀은 1/1000로 줄여서 풀고 되돌린다)
+function fitH(pts) {
+  if (pts.length < 4) return null;
+  const k = 1000, A = [], b = [];
+  for (const { court: [X, Y], px: [x0, y0] } of pts) {
+    const x = x0 / k, y = y0 / k;
+    A.push([X, Y, 1, 0, 0, 0, -x * X, -x * Y]); b.push(x); A.push([0, 0, 0, X, Y, 1, -y * X, -y * Y]); b.push(y);
+  }
+  const AtA = Array.from({ length: 8 }, (_, i) => Array.from({ length: 8 }, (_, j) => A.reduce((s, r) => s + r[i] * r[j], 0)));
+  const Atb = Array.from({ length: 8 }, (_, i) => A.reduce((s, r, n) => s + r[i] * b[n], 0));
+  const h = solve(AtA, Atb);
+  if (h.some(v => !isFinite(v))) return null;
+  return [h[0] * k, h[1] * k, h[2] * k, h[3] * k, h[4] * k, h[5] * k, h[6], h[7], 1];
+}
+// 고를 수 있는 코트 점: 라인 교차점 + 네트 기둥 바닥. 왼쪽/오른쪽은 카메라에서 볼 때
+const XS = [[0, "왼쪽 복식"], [0.46, "왼쪽 단식"], [W_M / 2, "센터"], [W_M - 0.46, "오른쪽 단식"], [W_M, "오른쪽 복식"]];
+const YS = [[0, "먼 쪽 엔드"], [LONG_DBL, "먼 쪽 롱서비스"], [NET - SHORT, "먼 쪽 숏서비스"], [NET + SHORT, "가까운 쪽 숏서비스"], [L_M - LONG_DBL, "가까운 쪽 롱서비스"], [L_M, "가까운 쪽 엔드"]];
+const CATALOG = [];
+for (const [y, yn] of YS) for (const [x, xn] of XS) CATALOG.push({ c: [x, y], name: `${yn} × ${xn}` });
+CATALOG.push({ c: [0, NET], name: "왼쪽 네트 기둥 바닥" }, { c: [W_M, NET], name: "오른쪽 네트 기둥 바닥" });
+const sameC = (a, b) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+const cName = c => CATALOG.find(p => sameC(p.c, c))?.name || `(${c[0]}, ${c[1]})`;
 function courtLines() {
   const s = 0.46, ss = SHORT, ls = LONG_DBL;
   return [[[0, 0], [W_M, 0]], [[0, L_M], [W_M, L_M]], [[0, 0], [0, L_M]], [[W_M, 0], [W_M, L_M]], [[s, 0], [s, L_M]], [[W_M - s, 0], [W_M - s, L_M]],
@@ -76,11 +99,16 @@ function courtLines() {
 // 긴 선을 잘게 나눠 그린다 (화면 밖 꼭짓점 때문에 원근이 크게 걸려도 모양 유지)
 function drawCourtLines(g, H, cls, sw) {
   for (const [a, b] of courtLines()) {
-    const pts = []; for (let i = 0; i <= 24; i++) { const s = i / 24; pts.push(map(H, [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s])); }
-    el("polyline", { points: pts.map(p => p.join(",")).join(" "), class: cls, "stroke-width": sw }, g);
+    let seg = [];
+    const flush = () => { if (seg.length > 1) el("polyline", { points: seg.map(p => p.join(",")).join(" "), class: cls, "stroke-width": sw }, g); seg = []; };
+    for (let i = 0; i <= 40; i++) {
+      const s = i / 40, q = map(H, [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s]);
+      if (!q || Math.abs(q[0]) > 2e4 || Math.abs(q[1]) > 2e4) flush(); else seg.push(q);
+    }
+    flush();
   }
   const n1 = map(H, [0, NET]), n2 = map(H, [W_M, NET]);
-  el("line", { x1: n1[0], y1: n1[1], x2: n2[0], y2: n2[1], class: "net", "stroke-width": sw * 1.4 }, g);
+  if (n1 && n2) el("line", { x1: n1[0], y1: n1[1], x2: n2[0], y2: n2[1], class: "net", "stroke-width": sw * 1.4 }, g);
 }
 function iou(a, b) {
   const x1 = Math.max(a[0], b[0]), y1 = Math.max(a[1], b[1]), x2 = Math.min(a[2], b[2]), y2 = Math.min(a[3], b[3]);
@@ -126,8 +154,10 @@ async function openVideo(vid, mode) {
   const saved = JSON.parse(localStorage.getItem("lab:params") || "null");
   S.params = { ...S.defaults, ...(saved || {}) };
   const c = S.info.config, W = S.meta.width, H = S.meta.height;
-  S.corners = c?.court_corners_px?.map(p => [...p]) || [[W * .3, H * .4], [W * .7, H * .4], [W * .9, H * .92], [W * .1, H * .92]];
-  S.wide = S.corners.some(([x, y]) => x < 0 || y < 0 || x > W || y > H);
+  S.points = c?.points ? c.points.map(p => ({ court: [...p.court], px: [...p.px] }))
+    : c?.court_corners_px ? c.court_corners_px.map((p, i) => ({ court: [...COURT[i]], px: [...p] })) : [];
+  S.pick = null; S.selPt = -1;
+  S.wide = S.points.some(({ px: [x, y] }) => x < 0 || y < 0 || x > W || y > H);
   S.frame = c?.ref_frame ?? Math.round(S.meta.frames * .1);
   // 저장된 박스를 '지정됨' 상태로 보여 준다 (다시 검출하면 겹치는 박스로 이어 붙음)
   S.people = []; S.assign = {}; S.detFrame = c ? c.ref_frame : -1;
@@ -188,11 +218,21 @@ function loadFrame(f) {
 }
 function svgPoint(svg, e) { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); }
 
+function curH() { return fitH(S.points); }
+function ptErrors(H) { return S.points.map(p => { const q = H && map(H, p.court); return q ? Math.hypot(q[0] - p.px[0], q[1] - p.px[1]) : null; }); }
+function mirrored(H) {
+  if (!H || S.points.length < 4) return false;
+  const c = [S.points.reduce((s, p) => s + p.court[0], 0) / S.points.length, S.points.reduce((s, p) => s + p.court[1], 0) / S.points.length];
+  const o = map(H, c), ex = map(H, [c[0] + .01, c[1]]), ey = map(H, [c[0], c[1] + .01]);
+  if (!o || !ex || !ey) return false;
+  return (ex[0] - o[0]) * (ey[1] - o[1]) - (ex[1] - o[1]) * (ey[0] - o[0]) < 0;
+}
+
 function drawSetup() {
   const g = $("#sOver"); g.innerHTML = ""; const u = U();
-  const H = homography(COURT, S.corners);
-  el("polygon", { points: S.corners.map(c => c.join(",")).join(" "), class: "court-fill", "stroke-width": 2 * u }, g);
-  if (S.lines) drawCourtLines(g, H, "cl", 2 * u);
+  $("#sStage").classList.toggle("picking", S.pick !== null);
+  const H = curH();
+  if (H && S.lines) drawCourtLines(g, H, "cl", 2 * u);
   // 사람 박스 (설정 프레임에서 찾은 것만 클릭 가능)
   const here = S.detFrame === S.frame;
   for (const p of S.people) {
@@ -203,18 +243,18 @@ function drawSetup() {
     el("rect", { x: x1, y: y1, width: x2 - x1, height: y2 - y1, rx: 6 * u, "stroke-width": (r ? 4 : 2) * u, opacity: here ? 1 : .55 }, b);
     const label = r ? ({ A: $("#nameA").value || "팀 A", B: $("#nameB").value || "팀 B", R: "심판" })[r] : `#${p.id}`;
     const tx = el("text", { x: x1, y: y1 - 8 * u, "font-size": 20 * u }, b); tx.textContent = label;
-    if (here) b.addEventListener("click", () => togglePerson(p));
+    if (here) b.addEventListener("click", e => { if (S.pick === null) { e.stopPropagation(); togglePerson(p); } });
   }
-  // 꼭짓점 핸들
-  S.corners.forEach((c, i) => {
-    const h = el("g", { class: "handle", transform: `translate(${c[0]},${c[1]})`, tabindex: 0 }, g);
-    el("circle", { r: 18 * u, "stroke-width": 3 * u }, h);
-    const t = el("text", { "font-size": 20 * u }, h); t.textContent = i + 1;
-    h.addEventListener("pointerdown", e => { S.drag = i; $("#sSvg").setPointerCapture(e.pointerId); e.preventDefault(); });
-    h.addEventListener("keydown", e => {
-      const d = e.shiftKey ? 10 : 1; const k = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[e.key];
-      if (!k) return; e.preventDefault(); S.corners[i][0] += k[0]; S.corners[i][1] += k[1]; drawSetup(); renderCorners(); $$(".handle")[i]?.focus();
-    });
+  // 찍은 코트 점: 찍은 위치(분홍)와 계산된 위치를 선으로 이어 오차를 보여 준다
+  const err = ptErrors(H);
+  S.points.forEach((p, i) => {
+    const m = el("g", { class: "ptm" + (i === S.selPt ? " sel" : ""), tabindex: 0 }, g);
+    const q = H && map(H, p.court);
+    if (q) el("line", { x1: p.px[0], y1: p.px[1], x2: q[0], y2: q[1], "stroke-width": 2 * u }, m);
+    el("circle", { cx: p.px[0], cy: p.px[1], r: 9 * u, "stroke-width": 3 * u, style: "cursor:grab" }, m);
+    const t = el("text", { x: p.px[0] + 12 * u, y: p.px[1] - 10 * u, "font-size": 18 * u }, m);
+    t.textContent = `${i + 1}${err[i] != null ? ` · ${err[i].toFixed(1)}px` : ""}`;
+    m.addEventListener("pointerdown", e => { e.stopPropagation(); S.drag = i; S.selPt = i; $("#sSvg").setPointerCapture(e.pointerId); renderPoints(); });
   });
 }
 function togglePerson(p) {
@@ -227,15 +267,47 @@ function togglePerson(p) {
   }
   drawSetup(); renderSetupPanel();
 }
-function renderCorners() {
-  const names = ["위-왼쪽", "위-오른쪽", "아래-오른쪽", "아래-왼쪽"], W = S.meta.width, H = S.meta.height;
-  $("#cornerList").innerHTML = S.corners.map(([x, y], i) => {
-    const out = x < 0 || y < 0 || x > W || y > H;
-    return `<li class="${out ? "out" : ""}"><span>${i + 1} ${names[i]}</span><span>${Math.round(x)}, ${Math.round(y)}</span></li>`;
-  }).join("");
+function buildDiagram() {
+  const svg = $("#diag"), m = .9;
+  svg.setAttribute("viewBox", `${-m} ${-m - .5} ${W_M + 2 * m} ${L_M + 2 * m + 1}`);
+  svg.innerHTML = "";
+  el("rect", { x: 0, y: 0, width: W_M, height: L_M, fill: "#c9a674" }, svg);
+  for (const [a, b] of courtLines()) el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: "ln" }, svg);
+  el("line", { x1: -.4, y1: NET, x2: W_M + .4, y2: NET, class: "net" }, svg);
+  const t1 = el("text", { x: W_M / 2, y: -.45, class: "side-lbl" }, svg); t1.textContent = "먼 쪽 (네트 너머)";
+  const t2 = el("text", { x: W_M / 2, y: L_M + .75, class: "side-lbl" }, svg); t2.textContent = "카메라 쪽";
+  CATALOG.forEach((p, i) => {
+    const done = S.points.some(q => sameC(q.court, p.c));
+    const g = el("g", { class: "cp" + (done ? " done" : "") + (S.pick === i ? " pick" : ""), tabindex: 0, role: "button", "aria-label": p.name }, svg);
+    el("circle", { cx: p.c[0], cy: p.c[1], r: .2 }, g);
+    const tt = el("title", {}, g); tt.textContent = p.name + (done ? " (찍음 · 다시 찍으면 옮겨져요)" : "");
+    const choose = () => { S.pick = S.pick === i ? null : i; S.selPt = -1; renderPoints(); drawSetup(); };
+    g.addEventListener("click", choose);
+    g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } });
+  });
+}
+function renderPoints() {
+  buildDiagram();
+  const H = curH(), err = ptErrors(H), n = S.points.length;
+  const okErr = err.filter(e => e != null), mean = okErr.length ? okErr.reduce((a, b) => a + b, 0) / okErr.length : null;
+  $("#fitTag").textContent = n < 4 ? `점 ${n}개 · ${4 - n}개 더` : `점 ${n}개 · 평균 오차 ${mean?.toFixed(1)}px`;
+  $("#pickMsg").innerHTML = S.pick !== null ? `<b style="color:#ff4fd8">${CATALOG[S.pick].name}</b> · 영상에서 이 위치를 클릭하세요 (Esc 취소)`
+    : n < 4 ? "도면에서 영상에 보이는 점을 고르세요" : "점을 더 찍으면 오차가 평균화돼요. 오차가 큰 점은 다시 찍거나 지우세요";
+  const worst = Math.max(0, ...okErr);
+  $("#ptList").innerHTML = S.points.map((p, i) => `<li class="${i === S.selPt ? "sel" : ""}" data-i="${i}">
+    <span>${i + 1}</span><span class="nm">${cName(p.court)}</span>
+    <span class="e ${err[i] != null && err[i] > 8 && err[i] === worst ? "bad" : ""}">${err[i] != null ? err[i].toFixed(1) + "px" : "-"}</span>
+    <button data-del="${i}" title="이 점 지우기" aria-label="${i + 1}번 점 지우기">×</button></li>`).join("")
+    + (mirrored(H) ? `<li class="warn-line">좌우가 뒤집힌 것 같아요. 왼쪽/오른쪽을 카메라에서 볼 때 기준으로 찍었는지 확인하세요</li>` : "");
+  $$("#ptList li[data-i]").forEach(li => li.onclick = e => {
+    const d = e.target.dataset.del;
+    if (d !== undefined) { S.points.splice(+d, 1); S.selPt = -1; }
+    else S.selPt = +li.dataset.i;
+    renderPoints(); drawSetup();
+  });
 }
 function renderSetupPanel() {
-  renderCorners();
+  renderPoints();
   const per = $("#mMode").value === "doubles" ? 2 : 1, cnt = t => Object.values(S.assign).filter(v => v === t).length;
   $("#cntA").textContent = `${cnt("A")}/${per}`; $("#cntB").textContent = `${cnt("B")}/${per}`; $("#cntR").textContent = cnt("R");
   $$(".role").forEach(b => b.classList.toggle("on", b.dataset.r === S.role));
@@ -244,10 +316,29 @@ function renderSetupPanel() {
 
 function bindSetup() {
   const svg = $("#sSvg");
+  // 도면에서 점을 고른 상태면 영상 클릭 = 그 점 찍기
+  svg.addEventListener("pointerdown", e => {
+    if (S.pick === null) return;
+    const p = svgPoint(svg, e), c = CATALOG[S.pick].c, px = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+    const i = S.points.findIndex(q => sameC(q.court, c));
+    if (i >= 0) S.points[i].px = px; else S.points.push({ court: [...c], px });
+    S.selPt = i >= 0 ? i : S.points.length - 1; S.pick = null;
+    renderPoints(); drawSetup();
+  });
   svg.addEventListener("pointermove", e => {
-    if (S.drag < 0) return; const p = svgPoint(svg, e), q = pad();
-    S.corners[S.drag] = [clamp(Math.round(p.x), -q.x, S.meta.width + q.x), clamp(Math.round(p.y), -q.y, S.meta.height + q.y)];
-    drawSetup(); renderCorners();
+    if (S.drag < 0) return; const p = svgPoint(svg, e);
+    S.points[S.drag].px = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+    drawSetup(); renderPoints();
+  });
+  document.addEventListener("keydown", e => {
+    if (S.mode !== "setup" || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+    if (e.key === "Escape") { S.pick = null; renderPoints(); drawSetup(); return; }
+    if (S.selPt < 0) return;
+    const d = e.shiftKey ? 10 : 1, k = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[e.key];
+    if (e.key === "Delete" || e.key === "Backspace") { S.points.splice(S.selPt, 1); S.selPt = -1; }
+    else if (k) { S.points[S.selPt].px[0] += k[0]; S.points[S.selPt].px[1] += k[1]; }
+    else return;
+    e.preventDefault(); drawSetup(); renderPoints();
   });
   const end = () => { S.drag = -1; };
   svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
@@ -266,7 +357,7 @@ function bindSetup() {
 async function detect() {
   const b = $("#detBtn"); b.disabled = true; b.textContent = "찾는 중";
   try {
-    const r = await api(`/api/videos/${S.vid}/detect`, { method: "POST", json: { frame: S.frame, corners: S.corners } });
+    const r = await api(`/api/lab/${S.vid}/detect`, { method: "POST", json: { frame: S.frame, points: S.points.length >= 4 ? S.points : [] } });
     // 이전에 지정한 박스와 많이 겹치는 새 박스에 역할을 이어 붙인다
     const old = S.people, oldA = S.assign; S.assign = {};
     for (const p of r.people) {
@@ -285,16 +376,17 @@ async function saveConfig(run) {
   const by = t => S.people.filter(p => S.assign[p.id] === t).map(p => p.box);
   if (by("A").length !== per || by("B").length !== per) { toast(`팀마다 ${per}명씩 지정해 주세요`, true); return; }
   if (S.detFrame < 0) { toast("먼저 사람을 찾아 지정해 주세요", true); return; }
+  if (S.points.length < 4) { toast("코트 점을 4개 이상 찍어 주세요", true); return; }
   const body = {
-    ref_frame: S.detFrame, corners: S.corners,
+    ref_frame: S.detFrame, points: S.points,
     teams: { A: { name: $("#nameA").value, bboxes: by("A") }, B: { name: $("#nameB").value, bboxes: by("B") } },
     officials: by("R"),
     match: { mode: $("#mMode").value, target: +$("#mTarget").value, first: $("#mFirst").value, game: +$("#mGame").value,
       scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value },
   };
   try {
-    await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });
-    S.info.seeded = false;
+    const cfg = await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });
+    S.info.seeded = false; S.cfg = cfg; S.tr = null;
     $("#setupMsg").textContent = `저장했어요 · 기준 프레임 #${S.detFrame} · 심판 ${body.officials.length}명`;
     if (run) { const j = await api(`/api/lab/${S.vid}/track`, { method: "POST" }); watchJob(j); toast("추적을 시작했어요"); }
     else toast("저장했어요");
@@ -345,7 +437,8 @@ async function enterView() {
     S.tr = tr; S.cfg = cfg.config;
     S.kshape = kb.headers.get("X-Shape").split(",").map(Number);
     S.kps = new Int16Array(await kb.arrayBuffer());
-    S.H = S.cfg ? homography(COURT, S.cfg.court_corners_px) : null;
+    S.H = S.cfg?.h_court2px ? S.cfg.h_court2px.flat() : S.cfg?.court_corners_px ? homography(COURT, S.cfg.court_corners_px) : null;
+    S.Hinv = S.cfg?.homography ? S.cfg.homography.flat() : null;
     buildCourtMini(); buildParams();
   }
   if (!S.sv) await recalc();
@@ -421,9 +514,9 @@ function drawCourtMini(i) {
     el("circle", { cx: p[0], cy: p[1], r: .28, fill: occ ? "none" : SLOT_HEX[s], stroke: occ ? SLOT_HEX[s] : "#000", "stroke-width": occ ? .08 : .04, "stroke-dasharray": occ ? ".12 .08" : "none" }, g);
   });
   // 심판은 박스 발 위치를 코트 좌표로
-  if (S.cfg && S.H) {
-    const Hinv = homography(S.cfg.court_corners_px, COURT);
-    (tr.off_box[i] || []).forEach(b => { if (!b || b[0] == null) return; const p = map(Hinv, [(b[0] + b[2]) / 2, b[3]]); el("rect", { x: p[0] - .22, y: p[1] - .22, width: .44, height: .44, fill: "#c5ccc8" }, g); });
+  if (S.Hinv) {
+    const Hinv = S.Hinv;
+    (tr.off_box[i] || []).forEach(b => { if (!b || b[0] == null) return; const p = map(Hinv, [(b[0] + b[2]) / 2, b[3]]); if (!p) return; el("rect", { x: p[0] - .22, y: p[1] - .22, width: .44, height: .44, fill: "#c5ccc8" }, g); });
   }
 }
 

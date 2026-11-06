@@ -5,7 +5,8 @@
 
   GET  /lab                          실험 페이지
   GET  /api/lab/{vid}                영상 정보 + 실험 설정 + 추적 결과 유무
-  PUT  /api/lab/{vid}/config         코트 꼭짓점 · 선수 4명 · 심판 · 경기 설정 저장
+  PUT  /api/lab/{vid}/config         코트 점(교차점 4개 이상) · 선수 4명 · 심판 · 경기 설정 저장
+  POST /api/lab/{vid}/detect         설정 프레임 사람 검출 (코트 점으로 코트 위치 계산)
   POST /api/lab/{vid}/track          추적 실행 (작업 ID 반환, /api/jobs/{id}로 진행 확인)
   GET  /api/lab/{vid}/tracks         추적 결과 (위치·박스·가려짐·심판 박스)
   GET  /api/lab/{vid}/kps            관절 (int16 바이너리: S×N×17×3, 신뢰도는 ×1000)
@@ -16,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import time
 
+import cv2
 import numpy as np
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -23,7 +25,8 @@ from pydantic import BaseModel, Field
 
 from . import analysis as A
 from . import court as C
-from .main import GPU_POOL, JOBS, STATIC, Job, models, read_json, source_path, submit, vdir, write_json
+from .main import (GPU_POOL, JOBS, STATIC, Job, _detect, models, read_frame, read_json, source_path, submit, vdir,
+                   write_json)
 
 router = APIRouter()
 
@@ -53,7 +56,8 @@ def lab_info(vid: str):
     if cfg is None:  # 처음이면 운영 설정의 코트·선수를 가져와 시작점으로 쓴다 (저장은 안 함)
         op = read_json(d / "match.json")
         if op:
-            cfg = {"ref_frame": op["ref_frame"], "court_corners_px": op["court_corners_px"],
+            pts = [{"court": c, "px": p} for c, p in zip(C.COURT.tolist(), op["court_corners_px"])]
+            cfg = {"ref_frame": op["ref_frame"], "points": pts,
                    "teams": op["teams"], "officials": op.get("officials", []), "match": op.get("match", {})}
             seeded = True
     jid = meta.get("jobs", {}).get("lab_track")
@@ -67,9 +71,35 @@ class TeamIn(BaseModel):
     bboxes: list[list[float]] = Field(default_factory=list)
 
 
+class CourtPoint(BaseModel):
+    court: list[float]    # 코트 좌표 (m)
+    px: list[float]       # 영상 픽셀
+
+
+def fit_points(points: list[CourtPoint]) -> dict:
+    """코트 교차점 ↔ 픽셀 대응(4개 이상)으로 호모그래피를 구한다. 점별 오차(px)와 좌우 뒤집힘 여부도 돌려준다."""
+    if len(points) < 4:
+        raise HTTPException(400, "코트 점이 4개 이상 필요해요")
+    cm = np.float64([p.court for p in points]); px = np.float64([p.px for p in points])
+    if np.linalg.matrix_rank(np.c_[cm, np.ones(len(cm))]) < 3:
+        raise HTTPException(400, "점들이 한 줄 위에 있어요. 다른 줄의 점을 섞어 주세요")
+    Hc, _ = cv2.findHomography(cm, px, 0)   # 코트(m) → 픽셀, 최소제곱
+    if Hc is None:
+        raise HTTPException(400, "점 배치로 코트를 계산할 수 없어요")
+    proj = cv2.perspectiveTransform(cm.reshape(-1, 1, 2), Hc).reshape(-1, 2)
+    err = np.linalg.norm(proj - px, axis=1)
+    # 좌우 뒤집힘: 코트에서 x(왼→오), y(먼→가까운)가 화면에서도 같은 방향 손잡이인지 (야코비안 부호)
+    c0 = cm.mean(0)
+    f = lambda q: cv2.perspectiveTransform(np.float64([[q]]), Hc)[0, 0]
+    jx, jy = f(c0 + [0.01, 0]) - f(c0), f(c0 + [0, 0.01]) - f(c0)
+    mirrored = bool(jx[0] * jy[1] - jx[1] * jy[0] < 0)
+    return {"h_court2px": Hc / Hc[2, 2], "homography": np.linalg.inv(Hc) / np.linalg.inv(Hc)[2, 2],
+            "errors": err.round(1).tolist(), "mean_err": round(float(err.mean()), 2), "mirrored": mirrored}
+
+
 class LabConfig(BaseModel):
     ref_frame: int
-    corners: list[list[float]]
+    points: list[CourtPoint]
     teams: dict[str, TeamIn]                      # "A" / "B"
     officials: list[list[float]] = Field(default_factory=list)
     match: dict = Field(default_factory=dict)
@@ -78,10 +108,9 @@ class LabConfig(BaseModel):
 @router.put("/api/lab/{vid}/config")
 def lab_put_config(vid: str, body: LabConfig):
     d = vdir(vid)
-    if len(body.corners) != 4:
-        raise HTTPException(400, "코트 꼭짓점 4개가 필요해요")
     meta = read_json(d / "meta.json", {})
-    H = C.homography(body.corners)
+    fitres = fit_points(body.points)
+    H = fitres["homography"]
     teams = {}
     for key, num in (("A", "1"), ("B", "2")):
         t = body.teams.get(key, TeamIn())
@@ -94,12 +123,26 @@ def lab_put_config(vid: str, body: LabConfig):
     match = {"mode": "doubles", "first": "A", "scoreA": 0, "scoreB": 0, "target": 21, "game": 1}
     match.update(body.match)
     cfg = {"fps": meta.get("fps"), "frame_size": [meta.get("width"), meta.get("height")],
-           "ref_frame": body.ref_frame, "court_corners_px": body.corners, "corner_order": C.CORNER_ORDER,
-           "homography": H.tolist(), "teams": teams, "match": match,
+           "ref_frame": body.ref_frame, "points": [p.model_dump() for p in body.points],
+           "point_errors": fitres["errors"], "mirrored": fitres["mirrored"],
+           "homography": H.tolist(), "h_court2px": fitres["h_court2px"].tolist(), "teams": teams, "match": match,
            "officials": [{"bbox": b, "court_pos": _foot_court(H, b)} for b in body.officials if len(b) >= 4],
            "saved": time.time()}
     write_json(ldir(vid) / "config.json", cfg)
     return cfg
+
+
+class LabDetect(BaseModel):
+    frame: int
+    points: list[CourtPoint] = Field(default_factory=list)
+
+
+@router.post("/api/lab/{vid}/detect")
+def lab_detect(vid: str, req: LabDetect):
+    """설정 프레임에서 사람 검출. 코트 점이 4개 이상이면 코트 위치도 계산한다."""
+    img = read_frame(vdir(vid), req.frame)
+    H = fit_points(req.points)["homography"] if len(req.points) >= 4 else None
+    return {"frame": req.frame, "people": _detect(img, H)}
 
 
 @router.post("/api/lab/{vid}/track")

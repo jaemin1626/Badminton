@@ -140,3 +140,27 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .evhead{flex-wrap:wrap}
 .evhead h2{margin:0;white-space:nowrap}
 .seg button{white-space:nowrap}
+/* 코트 점 고르기 */
+.diag-wrap{display:flex;justify-content:center;background:#2a2219;border-radius:10px;padding:8px}
+#diag{width:200px;height:auto;display:block}
+#diag .ln{stroke:#fff;stroke-width:.05}
+#diag .net{stroke:#ff4fd8;stroke-width:.08}
+#diag .cp{cursor:pointer}
+#diag .cp circle{fill:#1c1611;stroke:#f4e04d;stroke-width:.06}
+#diag .cp.done circle{fill:#f4e04d}
+#diag .cp.pick circle{fill:#ff4fd8;stroke:#fff;stroke-width:.08}
+#diag .cp:hover circle{stroke:#fff;stroke-width:.1}
+#diag .side-lbl{fill:#d9b98a;font:600 .42px "Noto Sans KR",sans-serif;text-anchor:middle}
+.pts{list-style:none;padding:0;margin:8px 0 0;font:12px var(--mono);max-height:180px;overflow:auto}
+.pts li{display:flex;gap:6px;align-items:center;background:var(--panel2);border-radius:6px;padding:3px 6px;margin-bottom:3px;cursor:pointer}
+.pts li.sel{outline:1px solid #ff4fd8}
+.pts li .nm{flex:1;font-family:"Noto Sans KR",sans-serif}
+.pts li .e{color:var(--muted)} .pts li .e.bad{color:var(--rejB);font-weight:700}
+.pts li button{border:0;background:none;color:var(--muted);cursor:pointer;font-size:14px}
+.warn-line{color:var(--rejB);font-size:12px;margin:6px 0 0}
+.ptm circle{fill:#ff4fd8;stroke:#fff}
+.ptm.sel circle{fill:#fff;stroke:#ff4fd8}
+.ptm line{stroke:#ffffffcc}
+.ptm text{fill:#fff;font:700 20px "Noto Sans KR",sans-serif;paint-order:stroke;stroke:#000;stroke-width:5px;pointer-events:none}
+.picking .pb{pointer-events:none}
+.picking{cursor:crosshair}
