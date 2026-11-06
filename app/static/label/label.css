@@ -67,3 +67,7 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .marks .win.auto small{opacity:.6}
 .tally{margin:8px 0 0;font-size:13px}
 .tally .tA{color:#5aa9ff} .tally .tB{color:#ff7a59} .tally .bad{color:var(--bad,#ff5d6c);font-size:12px}
+.teams .team{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:8px;border-left:4px solid var(--line);margin-bottom:6px;background:#ffffff08}
+.teams .team.A{border-left-color:#5aa9ff}.teams .team.B{border-left-color:#ff7a59}
+.teams .tn{display:flex;flex-direction:column;gap:2px}.teams .tn small{color:var(--muted);font-size:11px}
+.teams .faces{display:flex;gap:4px}.teams .faces canvas{width:42px;height:63px;border-radius:5px}

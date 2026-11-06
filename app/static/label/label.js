@@ -37,6 +37,34 @@ function runningScore() {
 }
 const v = () => $("#vid");
 
+// 어느 팀이 누구인지: 실험 페이지 설정 프레임에서 고른 선수 모습 + 처음 선 코트
+const SIDE_KO = { near: "처음 아래 코트 (카메라 쪽)", far: "처음 위 코트 (네트 너머)" };
+function renderTeams(vid, c) {
+  const list = $("#teamList"), note = $("#teamNote");
+  if (!c?.teams) {
+    list.innerHTML = `<p class="hint small">아직 팀을 안 정했어요. <a href="/lab#${vid}">실험 페이지 설정</a>에서 선수 박스를 눌러 팀 A·팀 B를 정해 주세요.</p>`;
+    note.textContent = ""; return;
+  }
+  list.innerHTML = [["1", "A", "A"], ["2", "B", "D"]].map(([no, k, key]) => `
+    <div class="team ${k}"><div class="tn"><span><kbd>${key}</kbd> <b>${S.team[k]}</b></span><small>${SIDE_KO[c.teams[no].side] || ""}${c.match?.first === k ? " · 첫 서브" : ""}</small></div>
+      <div class="faces">${(c.teams[no].bboxes || []).map((_, j) => `<canvas data-t="${no}" data-j="${j}" width="56" height="84"></canvas>`).join("")}</div></div>`).join("");
+  const tgt = +(c.match?.target || 21);
+  const sw = tgt === 25 ? 13 : tgt === 15 ? 8 : 11;
+  note.innerHTML = `${tgt}점 ${tgt === 25 ? "단판 · " + sw + "점에서" : "· 마지막 게임 " + sw + "점에서"} 코트를 바꿔요. 바꾼 뒤에도 같은 선수가 같은 팀이에요. 팀이 틀렸으면 <a href="/lab#${vid}">실험 페이지 설정</a>에서 고쳐요.`;
+  if (c.ref_frame == null) return;
+  const img = new Image();
+  img.onload = () => {
+    const sx = img.naturalWidth / (c.frame_size?.[0] || img.naturalWidth);
+    $$("#teamList canvas").forEach(cv => {
+      const [x1, y1, x2, y2] = c.teams[cv.dataset.t].bboxes[+cv.dataset.j].map(q => q * sx);
+      const w = x2 - x1, h = y2 - y1, s = Math.min(cv.width / w, cv.height / h);
+      const g = cv.getContext("2d"); g.fillStyle = "#0004"; g.fillRect(0, 0, cv.width, cv.height);
+      g.drawImage(img, x1, y1, w, h, (cv.width - w * s) / 2, (cv.height - h * s) / 2, w * s, h * s);
+    });
+  };
+  img.src = `/api/videos/${vid}/frames/${c.ref_frame}`;
+}
+
 async function api(url, opt = {}) {
   const o = { method: opt.method || "GET", headers: {} };
   if (opt.json !== undefined) { o.body = JSON.stringify(opt.json); o.headers["Content-Type"] = "application/json"; }
@@ -81,7 +109,8 @@ async function openVideo(vid) {
   try {
     const c = (await api(`/api/lab/${vid}`)).config;
     if (c?.teams) S.team = { A: c.teams["1"]?.name || "1팀", B: c.teams["2"]?.name || "2팀" };
-  } catch { }
+    renderTeams(vid, c);
+  } catch { renderTeams(vid, null); }
   $("#winLegend").innerHTML = `<kbd>A</kbd> ${S.team.A} 득점 · <kbd>D</kbd> ${S.team.B} 득점`;
   $("#finA").value = S.final?.A ?? ""; $("#finB").value = S.final?.B ?? "";
   if (tr.from_name) { S.dirty = true; toast(`같은 이름 영상(${tr.video_name || ""})의 기록을 불러왔어요`); }
