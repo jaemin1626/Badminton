@@ -34,6 +34,16 @@ STATIC = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="Smash Score", version="0.1")
 
+
+@app.middleware("http")
+async def no_stale_pages(request: Request, call_next):
+    """화면 파일(html·js·css)은 매번 최신인지 확인하게 한다 (고친 뒤 예전 화면이 보이는 문제 방지)."""
+    resp = await call_next(request)
+    path = request.url.path
+    if path in ("/", "/lab") or path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
 # ---------------------------------------------------------------- 저장소
 ID_RE = re.compile(r"^[a-z0-9]{6,32}$")
 
