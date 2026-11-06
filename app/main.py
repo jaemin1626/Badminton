@@ -231,6 +231,8 @@ async def upload(file: UploadFile = File(...)):
 def list_videos():
     out = []
     for d in sorted(DATA.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not d.is_dir():  # data/videos 에 영상 파일을 직접 넣어 둔 경우 등
+            continue
         meta = read_json(d / "meta.json")
         if meta:
             meta["has_result"] = (d / "result.json").exists()
@@ -400,6 +402,7 @@ class ConfigIn(BaseModel):
     ref_frame: int
     corners: list[list[float]]
     teams: dict[str, TeamIn]      # "A" / "B"
+    officials: list[list[float]] = Field(default_factory=list)   # 심판·선심 박스 (선수 후보에서 제외)
     match: dict = Field(default_factory=dict)
 
 
@@ -428,6 +431,8 @@ def put_config(vid: str, body: ConfigIn):
         "court_corners_px": body.corners, "corner_order": C.CORNER_ORDER,
         "homography": H.tolist(),
         "teams": teams, "match": match,
+        "officials": [{"bbox": b, "court_pos": C.to_court(H, [[(b[0] + b[2]) / 2, b[3]]])[0].round(3).tolist()}
+                      for b in body.officials if len(b) >= 4],
     }
     write_json(d / "match.json", cfg)
     return cfg
@@ -707,3 +712,9 @@ def download(vid: str, name: str):
     meta = read_json(d / "meta.json", {})
     stem = Path(meta.get("name", vid)).stem
     return FileResponse(d / name, media_type=allowed[name], filename=f"{stem}_{name}")
+
+
+# ---------------------------------------------------------------- 실험 페이지 (/lab)
+from .lab import router as lab_router  # noqa: E402  (main의 함수들을 쓰므로 마지막에 불러온다)
+
+app.include_router(lab_router)

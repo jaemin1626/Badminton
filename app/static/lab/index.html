@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smash Lab · 추적 · 서브 판정 실험</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/lab/lab.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/lab">Smash <b>Lab</b></a>
+  <select id="vidSel" aria-label="영상 선택"></select>
+  <label class="btn up" title="mp4 · mov · mkv">영상 올리기<input type="file" id="upFile" accept="video/*" hidden></label>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-mode="setup" id="tabSetup">1 · 설정</button>
+    <button role="tab" data-mode="view" id="tabView">2 · 추적 · 서브 확인</button>
+  </nav>
+  <div class="spacer"></div>
+  <span class="job" id="jobBox"></span>
+  <a class="link" href="/" title="운영 화면으로">운영 화면</a>
+</header>
+
+<!-- ============ 1. 설정 ============ -->
+<main id="setup" class="setup hidden">
+  <section class="stagewrap">
+    <div class="stage" id="sStage">
+      <svg id="sSvg"><g id="sScene"><image id="sImg" preserveAspectRatio="none"/></g><g id="sOver"></g></svg>
+    </div>
+    <div class="scrub">
+      <button class="b" data-d="-30" title="1초 뒤로">«</button>
+      <button class="b" data-d="-1" title="이전 프레임">‹</button>
+      <input type="range" id="sRange" min="0" value="0" aria-label="프레임">
+      <button class="b" data-d="1" title="다음 프레임">›</button>
+      <button class="b" data-d="30" title="1초 앞으로">»</button>
+      <span class="num" id="sNum"></span>
+    </div>
+  </section>
+  <aside class="side">
+    <section class="box">
+      <h2>코트</h2>
+      <p class="hint">복식 바깥 라인 꼭짓점 4개를 끌어서 맞추세요. 화면 밖에 있으면 <b>화면 밖까지</b>를 켜고 라인 방향으로 끌어내면 돼요.</p>
+      <ol class="corners" id="cornerList"></ol>
+      <div class="row">
+        <label class="sw"><input type="checkbox" id="wideChk"> 화면 밖까지</label>
+        <label class="sw"><input type="checkbox" id="linesChk" checked> 라인 미리보기</label>
+      </div>
+    </section>
+    <section class="box">
+      <h2>사람 지정 <span class="tag" id="detFrameTag"></span></h2>
+      <p class="hint">이 프레임에서 사람을 찾은 뒤 역할을 고르고 박스를 클릭하세요. 여기서 고른 프레임이 추적 시작점이 돼요.</p>
+      <button class="btn" id="detBtn">이 프레임에서 사람 찾기</button>
+      <div class="roles" id="roles">
+        <button data-r="A" class="role A">팀 A <i id="cntA">0/2</i></button>
+        <button data-r="B" class="role B">팀 B <i id="cntB">0/2</i></button>
+        <button data-r="R" class="role R">심판 <i id="cntR">0</i></button>
+      </div>
+      <div class="names"><input id="nameA" maxlength="12" placeholder="팀 A 이름"><input id="nameB" maxlength="12" placeholder="팀 B 이름"></div>
+    </section>
+    <section class="box">
+      <h2>경기</h2>
+      <div class="grid2">
+        <label>방식<select id="mMode"><option value="doubles">복식</option><option value="singles">단식</option></select></label>
+        <label>규칙<select id="mTarget"><option value="21">21점</option><option value="15">15점</option></select></label>
+        <label>첫 서브<select id="mFirst"><option value="A">팀 A</option><option value="B">팀 B</option></select></label>
+        <label>게임<select id="mGame"><option>1</option><option>2</option><option>3</option></select></label>
+        <label>시작 A<input type="number" id="mScoreA" min="0" max="29" value="0"></label>
+        <label>시작 B<input type="number" id="mScoreB" min="0" max="29" value="0"></label>
+      </div>
+    </section>
+    <div class="actions">
+      <button class="btn" id="saveBtn">저장</button>
+      <button class="btn primary" id="runBtn">저장하고 추적 실행</button>
+    </div>
+    <p class="hint small" id="setupMsg"></p>
+  </aside>
+</main>
+
+<!-- ============ 2. 추적 · 서브 확인 ============ -->
+<main id="view" class="view hidden">
+  <section class="player">
+    <div class="vwrap" id="vWrap">
+      <video id="vid" playsinline preload="auto" muted></video>
+      <svg id="vSvg"></svg>
+      <div class="vinfo" id="vInfo"></div>
+    </div>
+    <div class="vbar">
+      <button class="b" id="playBtn" title="재생/정지 (Space)">▶</button>
+      <button class="b" data-j="-5" title="5초 뒤로 (←)">−5s</button>
+      <button class="b" data-fr="-1" title="이전 샘플 (,)">‹</button>
+      <button class="b" data-fr="1" title="다음 샘플 (.)">›</button>
+      <button class="b" data-j="5" title="5초 앞으로 (→)">+5s</button>
+      <select id="rate" aria-label="재생 속도"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+      <span class="num" id="vNum"></span>
+      <div class="spacer"></div>
+      <label class="sw"><input type="checkbox" id="oBox" checked> 박스</label>
+      <label class="sw"><input type="checkbox" id="oPose" checked> 관절</label>
+      <label class="sw"><input type="checkbox" id="oLines"> 코트</label>
+      <label class="sw"><input type="checkbox" id="oOff" checked> 심판</label>
+    </div>
+  </section>
+
+  <aside class="mini">
+    <svg id="court"></svg>
+    <div class="legend" id="legend"></div>
+    <div class="now" id="nowBox"></div>
+  </aside>
+
+  <section class="tl">
+    <canvas id="ovCv" class="ov"></canvas>
+    <canvas id="tlCv" class="detail"></canvas>
+    <div class="tlhint">휠: 확대/축소 · 드래그: 이동 · 클릭: 그 시점으로 · 실선=속도(m/s) · 회색 띠=정지 · 위쪽 칸=선수가 보임/가려짐/없음</div>
+  </section>
+
+  <aside class="events">
+    <div class="evhead">
+      <h2>정지 구간 <span class="tag" id="evCount"></span></h2>
+      <div class="seg" id="evFilter"><button data-f="all" class="on">전체</button><button data-f="OK">서브</button><button data-f="X">탈락</button></div>
+    </div>
+    <ol id="evList"></ol>
+  </aside>
+
+  <aside class="params">
+    <h2>기준값 <span class="tag" id="calcTag"></span></h2>
+    <div id="paramList"></div>
+    <div class="row"><button class="btn" id="resetParams">기본값</button><button class="btn" id="rerunTrack">추적 다시 실행</button></div>
+  </aside>
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="/static/lab/lab.js"></script>
+</body>
+</html>
