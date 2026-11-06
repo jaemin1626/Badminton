@@ -855,5 +855,16 @@ def score_events(events: list, setup: dict, sides: dict):
         ev.update(server=team, auto=(None if ev.get("override") else team), conf=c,
                   score=dict(m.score), game=m.game, games=list(m.games), side=m.side[team], sides=dict(m.side))
         out.append(ev)
+    # ---- 랠리별 득점 팀: 랠리 포인트라 다음 서브를 넣은 팀이 그 랠리를 이긴 팀
+    # won = 득점 팀, won_conf = 그 판단의 신뢰도(다음 서브의 서버 판단 신뢰도), won_at = 판단 근거가 된 다음 서브 시각,
+    # score_after = 그 랠리 뒤 점수. 마지막 랠리는 다음 서브가 없어 won=None.
+    live = [e for e in out if not e.get("removed")]
+    for e, nx in zip(live, live[1:] + [None]):
+        if e.get("kind", "serve") == "point":
+            e.update(won=e["server"], won_conf=1.0, won_at=e["t"], score_after=dict(e["score"]))
+        elif nx is None:
+            e.update(won=None, won_conf=None, won_at=None, score_after=None)
+        else:
+            e.update(won=nx["server"], won_conf=nx["conf"], won_at=nx["t"], score_after=dict(nx["score"]))
     summary = {"score": dict(m.score), "game": m.game, "games": m.games, "over": m.over}
     return out, summary

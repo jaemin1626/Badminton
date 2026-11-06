@@ -88,6 +88,9 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .vwrap video{display:block;width:100%;height:auto}
 .vwrap svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .vinfo{position:absolute;left:10px;top:10px;font:12px var(--mono);background:#000a;border-radius:6px;padding:4px 8px;pointer-events:none}
+.vrally{position:absolute;left:50%;top:10px;transform:translateX(-50%);font:14px "Noto Sans KR",sans-serif;background:#000b;border-radius:6px;padding:5px 12px;pointer-events:none;white-space:nowrap}
+.vrally b.wA{color:#5aa9ff}.vrally b.wB{color:#ff7a59}
+.vrally.hidden{display:none}
 .vbar{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}
 .vbar select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;height:30px}
 .mini{grid-area:mini;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px}

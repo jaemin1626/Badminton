@@ -717,6 +717,18 @@ function liveChecks(i) {
 }
 const LIVE_COL = { ok: "#3ecf8e", A: "#7d8a84", B: "#ff5d6c" };
 
+// 팀 이름 (경기 설정의 1팀 = A, 2팀 = B)
+const teamName = k => k === "A" ? ($("#nameA")?.value || "1팀") : k === "B" ? ($("#nameB")?.value || "2팀") : "?";
+// 지금 시각의 랠리: 그 랠리 서브 · 득점 판정
+function rallyAt(t) {
+  const sv = S.sv?.serves || [];
+  let k = -1; sv.forEach((e, j) => { if (e.t <= t + .05 && !e.removed) k = j; });
+  return k < 0 ? null : { n: sv.slice(0, k + 1).filter(e => !e.removed).length, e: sv[k] };
+}
+function wonText(e) {
+  if (!e.won) return "득점 팀 판정 못 함 (다음 서브 없음)";
+  return `${teamName(e.won)} 득점 → ${e.score_after.A}:${e.score_after.B}${e.won_conf != null && e.won_conf < .75 ? ` (불확실 ${Math.round(e.won_conf * 100)}%)` : ""}`;
+}
 function drawNow(i, t) {
   const r = (S.sv?.runs || []).find(r => t >= r.t0 - .05 && t <= r.t1 + .05);
   const lastServe = [...(S.sv?.serves || [])].reverse().find(e => e.t <= t + .05);
@@ -728,7 +740,9 @@ function drawNow(i, t) {
     h += `</ul><div class="lc-c">C 랠리 조건은 정지가 끝난 뒤 ${S.params.rally_window}초 안에 누군가 ${S.params.rally_speed} m/s 넘게 움직여야 해요</div>`;
   }
   if (r) h += `<div class="lc-run">이 정지 구간 판정 · <b style="color:${STAGE_COL[r.stage]}">${STAGE_NAME[r.stage]}</b> ${fmt(r.t0)}–${fmt(r.t1)}<br>${r.reason}</div>`;
-  if (lastServe) h += `<div class="lc-score">현재 점수 <b>${lastServe.score.A} : ${lastServe.score.B}</b> · ${lastServe.game}게임 · 서버 ${lastServe.server}</div>`;
+  if (lastServe) h += `<div class="lc-score">현재 점수 <b>${lastServe.score.A} : ${lastServe.score.B}</b> · ${lastServe.game}게임 · 서버 ${teamName(lastServe.server)}</div>`;
+  const ra = rallyAt(t);
+  if (ra) h += `<div class="lc-score">${ra.n}번 랠리 판정 · <b>${wonText(ra.e)}</b>${ra.e.won_at ? `<br><small>근거: ${fmt(ra.e.won_at)} 다음 서브를 ${teamName(ra.e.won)}이 넣음</small>` : ""}</div>`;
   $("#nowBox").innerHTML = h || "판정 정보 없음";
 }
 
@@ -743,6 +757,8 @@ function loop() {
       S.cur = i; S.dirty = false;
       drawVideoOverlay(i); drawCourtMini(i); drawNow(i, t);
       $("#vInfo").textContent = `샘플 ${i} · 프레임 ${S.tr.frames[i]}`;
+      const ra = rallyAt(t), vr = $("#vRally");
+      if (vr) { vr.classList.toggle("hidden", !ra); if (ra) vr.innerHTML = `${ra.n}번 랠리 · ${teamName(ra.e.server)} 서브 ${ra.e.score.A}:${ra.e.score.B} · <b class="w${ra.e.won || ""}">${wonText(ra.e)}</b>`; }
     }
     $("#vNum").textContent = `${fmt(t)} / ${fmt(S.meta.duration)}`;
     const sk = $("#seek"); if (!S.seeking) { sk.max = S.meta.duration; sk.value = t; }
@@ -806,7 +822,7 @@ function drawTimeline(t) {
     if (e.t < t0 || e.t > t1) continue; const x = X(e.t);
     c.strokeStyle = "#3ecf8e"; c.lineWidth = 2; c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke();
     c.fillStyle = "#3ecf8e"; c.font = "bold 12px ui-monospace,'Noto Sans KR',monospace";
-    c.fillText(`${e.server} 서브 ${e.score.A}:${e.score.B}`, x + 4, bot - 6);
+    c.fillText(`${e.server} 서브 ${e.score.A}:${e.score.B}${e.won ? ` → ${e.won} 득점` : ""}`, x + 4, bot - 6);
   }
   // 기준선
   const hline = (v, col, txt) => { c.strokeStyle = col; c.setLineDash([5, 4]); c.lineWidth = 1; c.beginPath(); c.moveTo(PL, Y(v)); c.lineTo(w, Y(v)); c.stroke(); c.setLineDash([]); c.fillStyle = col; c.font = "10px ui-monospace,'Noto Sans KR',monospace"; c.fillText(txt, 2, Y(v) + 3); };
@@ -881,7 +897,7 @@ function renderEvents() {
     const cues = r.cues ? `p_near ${r.p_near} · ${r.box || "-"} · view ${r.view} · 자세 far ${r.cues.pose_far} / near ${r.cues.pose_near} · 손목 ${r.cues.onset || "-"} · 대형 ${r.cues.formation ? `${r.cues.formation.far}/${r.cues.formation.near}` : "-"}` : "";
     return `<li class="${r.stage} ${r === S.selRun ? "cur" : ""}" data-i="${idx}">
       <span class="t">${fmt(r.t0)}–${fmt(r.t1)} (${(r.t1 - r.t0).toFixed(1)}s)</span><span class="st" style="color:${STAGE_COL[r.stage]}">${STAGE_NAME[r.stage]}</span>
-      <span class="r">${e ? `<b>${e.server} 서브 → ${e.score.A}:${e.score.B}</b> · 신뢰도 ${e.conf}${e.flags?.length ? " · " + e.flags.join(", ") : ""}` : r.reason}</span>
+      <span class="r">${e ? `<b>${teamName(e.server)} 서브 ${e.score.A}:${e.score.B} · ${wonText(e)}</b> · 신뢰도 ${e.conf}${e.flags?.length ? " · " + e.flags.join(", ") : ""}` : r.reason}</span>
       ${cues ? `<span class="cues">${cues}</span>` : ""}</li>`;
   }).join("") || `<li>해당하는 구간이 없어요</li>`;
   $$("#evList li[data-i]").forEach(li => li.onclick = () => selectRun(runs[+li.dataset.i], true));
