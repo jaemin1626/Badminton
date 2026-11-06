@@ -25,7 +25,7 @@ const PARAM_DOC = {
 const S = {
   vid: null, info: null, meta: null, mode: "setup",
   // 설정
-  frame: 0, points: [], clines: [], pick: null, sel: null, fit: null, wide: false, lines: true, drag: null, people: [], assign: {}, role: "A", detFrame: -1,
+  frame: 0, points: [], clines: [], inner: false, pick: null, sel: null, fit: null, wide: false, lines: true, drag: null, people: [], assign: {}, role: "A", detFrame: -1,
   // 확인
   tr: null, kps: null, kshape: null, sv: null, params: null, defaults: null, cur: 0, filter: "all", selRun: null,
   view: { t0: 0, span: 40 }, jobTimer: null,
@@ -74,6 +74,8 @@ const YS = [[0, "먼 쪽 엔드"], [LONG_DBL, "먼 쪽 롱서비스"], [NET - SH
 const CATALOG = [];
 for (const [y, yn] of YS) for (const [x, xn] of XS) CATALOG.push({ c: [x, y], name: `${yn} × ${xn}` });
 CATALOG.push({ c: [0, NET], name: "왼쪽 네트 기둥 바닥" }, { c: [W_M, NET], name: "오른쪽 네트 기둥 바닥" });
+// 기본 도면에는 바깥 사각형(꼭짓점 4개)과 네트 기둥만 보인다
+for (const p of CATALOG) p.outer = (p.c[0] === 0 || p.c[0] === W_M) && (p.c[1] === 0 || p.c[1] === L_M || p.c[1] === NET);
 const sameC = (a, b) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
 const cName = c => CATALOG.find(p => sameC(p.c, c))?.name || `(${c[0]}, ${c[1]})`;
 function courtLines() {
@@ -214,6 +216,7 @@ const LINE_CATALOG = [
   { l: [[0, L_M - LONG_DBL], [W_M, L_M - LONG_DBL]], name: "가까운 쪽 롱서비스 라인" }, { l: [[0, L_M], [W_M, L_M]], name: "가까운 쪽 엔드라인" },
   { l: [[W_M / 2, 0], [W_M / 2, NET - SHORT]], name: "먼 쪽 센터라인" }, { l: [[W_M / 2, NET + SHORT], [W_M / 2, L_M]], name: "가까운 쪽 센터라인" },
 ];
+for (const c of LINE_CATALOG) { const [[x1, y1], [x2, y2]] = c.l; c.outer = (x1 === x2 && (x1 === 0 || x1 === W_M)) || (y1 === y2 && (y1 === 0 || y1 === L_M)); }
 const sameL = (a, b) => sameC(a[0], b[0]) && sameC(a[1], b[1]);
 const lName = l => LINE_CATALOG.find(c => sameL(c.l, l))?.name || "라인";
 const eqCount = () => 2 * S.points.length + 2 * S.clines.filter(l => l.px.length >= 2).length;
@@ -309,6 +312,9 @@ function buildDiagram() {
   const t2 = el("text", { x: W_M / 2, y: L_M + .75, class: "side-lbl" }, svg); t2.textContent = "카메라 쪽";
   // 라인 (클릭하면 라인 찍기)
   LINE_CATALOG.forEach((c, i) => {
+    if (!c.outer && !S.inner && !S.clines.some(l => sameL(l.line, c.l))) {  // 안쪽 라인: 선만 흐리게
+      el("line", { x1: c.l[0][0], y1: c.l[0][1], x2: c.l[1][0], y2: c.l[1][1], class: "ln dim" }, svg); return;
+    }
     const done = S.clines.some(l => sameL(l.line, c.l) && l.px.length >= 2);
     const pick = S.pick?.kind === "l" && S.pick.i === i;
     const g = el("g", { class: "cl-d" + (done ? " done" : "") + (pick ? " pick" : ""), tabindex: 0, role: "button", "aria-label": c.name }, svg);
@@ -327,6 +333,7 @@ function buildDiagram() {
   // 교차점
   CATALOG.forEach((p, i) => {
     const done = S.points.some(q => sameC(q.court, p.c));
+    if (!p.outer && !S.inner && !done) return;
     const pick = S.pick?.kind === "p" && S.pick.i === i;
     const g = el("g", { class: "cp" + (done ? " done" : "") + (pick ? " pick" : ""), tabindex: 0, role: "button", "aria-label": p.name }, svg);
     el("circle", { cx: p.c[0], cy: p.c[1], r: .2 }, g);
@@ -345,7 +352,7 @@ function renderPoints() {
   else if (S.pick?.kind === "l") {
     const ln = S.clines.find(l => sameL(l.line, LINE_CATALOG[S.pick.i].l));
     msg = `<b style="color:#4fe3ff">${LINE_CATALOG[S.pick.i].name}</b> · 영상에서 이 라인 위를 클릭하세요. 지금 ${ln?.px.length || 0}개 · 2개 이상, 멀리 떨어뜨려서 (다 찍었으면 Esc)`;
-  } else if (eq < 8) msg = "교차점(점)은 1개에 식 2개, 라인은 1개에 식 2개예요. 합쳐서 8개 이상 필요해요. 끝이 잘린 곳은 라인으로 찍으세요";
+  } else if (eq < 8) msg = "네트 기둥 바닥 2개(●)와 바깥 라인 4개(◆)를 찍으면 충분해요. 점·라인 하나가 식 2개, 8개 이상 필요해요";
   else if (f?.error) msg = `<span style="color:var(--rejB)">${f.error}</span>`;
   else if (f && f.spare < 2) msg = `<span style="color:var(--near1)">검산 여유가 ${f.spare}이에요. 점이나 라인을 더 찍어야 잘못 찍은 걸 오차로 알아챌 수 있어요</span>`;
   else msg = "오차가 큰 점·라인은 다시 찍거나 지우세요. 먼 쪽(네트 너머) 점이 하나라도 있으면 먼 쪽 정확도가 크게 좋아져요";
@@ -422,6 +429,7 @@ function bindSetup() {
   $$(".scrub .b").forEach(b => b.onclick = () => loadFrame(S.frame + +b.dataset.d));
   $("#wideChk").onchange = e => { S.wide = e.target.checked; buildStage(); };
   $("#linesChk").onchange = e => { S.lines = e.target.checked; drawSetup(); };
+  $("#innerChk").onchange = e => { S.inner = e.target.checked; renderPoints(); };
   $$(".role").forEach(b => b.onclick = () => { S.role = b.dataset.r; renderSetupPanel(); });
   ["nameA", "nameB"].forEach(id => $("#" + id).oninput = drawSetup);
   $("#mMode").onchange = renderSetupPanel;

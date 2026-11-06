@@ -43,8 +43,8 @@
       <h2>코트 <span class="tag" id="fitTag">점 0개</span></h2>
       <p class="hint">도면에서 고르고 영상에서 클릭하세요. 왼쪽·오른쪽은 <b>카메라에서 볼 때</b> 기준이에요.</p>
       <ul class="legend-pick">
-        <li><i class="lg-p"></i><b>● 교차점</b> · 영상에서 그 위치를 한 번 클릭</li>
-        <li><i class="lg-l"></i><b>◆ 라인</b> · 끝이 잘려 교차점이 안 보일 때. 그 라인 위 아무 곳이나 2번 이상 클릭하고 Esc</li>
+        <li><b>● 점</b> · 코트 꼭짓점, 네트 기둥 바닥. 영상에서 그 위치를 한 번 클릭</li>
+        <li><b>◆ 라인</b> · 바깥 라인. 꼭짓점이 잘려도 라인 위 아무 곳이나 2번 이상 클릭하고 Esc</li>
       </ul>
       <div class="diag-wrap"><svg id="diag" aria-label="코트 도면에서 점 고르기"></svg></div>
       <p class="hint small" id="pickMsg">도면에서 점을 고르세요</p>
@@ -52,6 +52,7 @@
       <div class="row">
         <label class="sw"><input type="checkbox" id="wideChk"> 화면 밖까지</label>
         <label class="sw"><input type="checkbox" id="linesChk" checked> 라인 미리보기</label>
+        <label class="sw" title="바깥 라인이 안 보이는 영상이면 켜세요"><input type="checkbox" id="innerChk"> 안쪽 라인·교차점도</label>
       </div>
       <p class="hint small">찍은 점은 끌어서 옮기거나, 선택한 뒤 방향키(Shift+방향키는 10px)로 다듬을 수 있어요.</p>
     </section>

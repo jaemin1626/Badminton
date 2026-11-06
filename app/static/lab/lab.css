@@ -179,3 +179,4 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 #diag .cl-d.pick .dm{fill:#4fe3ff;stroke:#fff;stroke-width:.1}
 .legend-pick{list-style:none;padding:0;margin:0 0 10px;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
 .legend-pick b{color:var(--text);font-weight:600}
+#diag .ln.dim{stroke:#ffffff55;stroke-width:.04}
