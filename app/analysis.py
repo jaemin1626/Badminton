@@ -173,26 +173,24 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     def run(order):
         last = {s: (default[s], ref) for s in slots}         # 마지막 위치(추정 포함), 샘플
         seen = {s: (ref, default[s], init_box[s]) if s in init_box else None for s in slots}
-        olast = [(C.to_court(H, [[(o["bbox"][0] + o["bbox"][2]) / 2, o["bbox"][3]]])[0], np.array(o["bbox"], float))
-                 for o in officials]
         for si in order:
             d, cxy = dets[si]
             used = set()
-            # (a) 심판: 마지막 위치 근처(1.2 m) 또는 박스가 겹치는 사람
-            for k, (op, ob) in enumerate(olast):
+            # (a) 심판: 지정한 자리 주변(off_radius)에서만 찾는다. 기준 자리는 옮기지 않는다
+            #     (마지막 위치를 따라가게 하면 옆을 지나간 선수에게 심판이 옮겨 가 버린다)
+            for k, (fp, ob) in enumerate(zip(off_fixed, (np.array(o["bbox"], float) for o in officials))):
                 best, bc = None, 1e9
                 for j in range(len(d)):
                     if j in used:
                         continue
-                    dd = float(np.linalg.norm(cxy[j] - op)); ov = _iou(ob, d[j])
-                    if dd < 1.2 or ov > 0.3:
+                    dd = float(np.linalg.norm(cxy[j] - fp)); ov = _iou(ob, d[j])
+                    if dd < params.off_radius or ov > 0.4:
                         c = dd - 2 * ov
                         if c < bc:
                             best, bc = j, c
                 if best is not None:
-                    used.add(best); olast[k] = (cxy[best], d[best, :4].copy()); off_box[si, k] = d[best, :4]
-            near_off = lambda j: (any(np.linalg.norm(cxy[j] - op) < 0.6 for op, _ in olast)
-                                  or any(np.linalg.norm(cxy[j] - fp) < params.off_radius for fp in off_fixed))
+                    used.add(best); off_box[si, k] = d[best, :4]
+            near_off = lambda j: any(np.linalg.norm(cxy[j] - fp) < params.off_radius for fp in off_fixed)
             # (b) 설정 프레임: 지정한 박스와 가장 많이 겹치는 검출을 그대로 쓴다
             if si == ref:
                 for s, ib in init_box.items():
