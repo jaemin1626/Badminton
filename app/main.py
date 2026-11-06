@@ -477,7 +477,9 @@ class TeamIn(BaseModel):
 
 class ConfigIn(BaseModel):
     ref_frame: int
-    corners: list[list[float]]
+    corners: list[list[float]] = Field(default_factory=list)   # 예전 방식 (꼭짓점 4개)
+    points: list[dict] = Field(default_factory=list)            # 코트 점 [{court:[x,y] m, px:[x,y]}]
+    lines: list[dict] = Field(default_factory=list)             # 코트 라인 [{line:[[x,y],[x,y]] m, px:[[x,y],...]}]
     teams: dict[str, TeamIn]      # "A" / "B"
     officials: list[list[float]] = Field(default_factory=list)   # 심판·선심 박스 (선수 후보에서 제외)
     match: dict = Field(default_factory=dict)
@@ -487,9 +489,19 @@ class ConfigIn(BaseModel):
 def put_config(vid: str, body: ConfigIn):
     d = vdir(vid)
     meta = read_json(d / "meta.json", {})
-    if len(body.corners) != 4:
-        raise HTTPException(400, "코트 꼭짓점 4개가 필요해요")
-    H = C.homography(body.corners)
+    fit = None
+    if body.points or body.lines:   # 점·라인으로 맞춘 코트 (꼭짓점이 화면 밖이어도 됨)
+        from app.lab import fit_court, CourtPoint, CourtLine
+        try:
+            fit = fit_court([CourtPoint(**p) for p in body.points], [CourtLine(**l) for l in body.lines if len(l.get("px", [])) >= 2])
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"코트를 맞출 수 없어요: {e}")
+        H = np.asarray(fit["homography"], np.float64)
+        body.corners = C.to_px(H, C.COURT).round(1).tolist()
+    elif len(body.corners) == 4:
+        H = C.homography(body.corners)
+    else:
+        raise HTTPException(400, "코트 점·라인이 필요해요")
     teams = {}
     for key, num in (("A", "1"), ("B", "2")):
         t = body.teams.get(key, TeamIn())
@@ -507,6 +519,8 @@ def put_config(vid: str, body: ConfigIn):
         "ref_frame": body.ref_frame,
         "court_corners_px": body.corners, "corner_order": C.CORNER_ORDER,
         "homography": H.tolist(),
+        **({"points": body.points, "lines": body.lines, "h_court2px": np.asarray(fit["h_court2px"]).tolist(),
+            "point_errors": fit["errors"], "line_errors": fit["line_errors"], "mirrored": fit["mirrored"]} if fit else {}),
         "teams": teams, "match": match,
         "officials": [{"bbox": b, "court_pos": C.to_court(H, [[(b[0] + b[2]) / 2, b[3]]])[0].round(3).tolist()}
                       for b in body.officials if len(b) >= 4],

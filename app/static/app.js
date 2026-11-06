@@ -6,7 +6,7 @@ const STEPS = ["영상 업로드", "프레임 선택", "코트 지정", "선수 
 const HINTS = [
   "mp4 · mov 지원",
   "←/→ 1프레임 · Shift+←/→ 1초 이동",
-  "꼭짓점을 드래그하세요 · 드래그 중 돋보기 표시",
+  "도면에서 점·라인을 고르고 영상에서 클릭 · Esc 그만 찍기 · 방향키 미세 조정",
   "팀을 고르고 선수 박스를 클릭 · 다시 클릭하면 해제",
   "왼쪽 위 스코어보드 미리보기 · 결과 영상에도 그대로 들어가요",
   "분석은 서버 GPU에서 진행돼요",
@@ -14,12 +14,12 @@ const HINTS = [
 ];
 const W_M = 6.10, L_M = 13.40, NET = L_M / 2;
 const NS = "http://www.w3.org/2000/svg";
-const CORNER_NAMES = ["위-왼쪽", "위-오른쪽", "아래-오른쪽", "아래-왼쪽"];
 const SKELETON = [[5, 7], [7, 9], [6, 8], [8, 10], [5, 6], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16]];
 
 const S = {
   step: 0, vid: null, meta: null, frame: 0,
-  corners: null, showLines: true, dragIdx: -1,
+  corners: null, showLines: true,
+  cpts: [], clines: [], pick: null, sel: null, drag: null, fit: null, wide: false, inner: false,
   people: [], detFrame: -1, detecting: false, assign: {}, activeTeam: "A", showPose: true,
   teams: { A: { name: "팀 A" }, B: { name: "팀 B" } },
   fmt: { mode: "doubles", first: "A", scoreA: 0, scoreB: 0, target: 21, ours: "A", scoreboard: true, game: 1 },
@@ -86,10 +86,132 @@ function convex(q) { // 꼭짓점 4개가 볼록 사각형인지
   return true;
 }
 
+/* ---------------- 코트 지정: 교차점·네트 기둥(점) + 라인(보이는 곳 아무 데나) → 호모그래피 ----------------
+   꼭짓점이 화면 밖이어도 된다. 서버가 최소제곱으로 맞추고 점·라인별 오차(px)를 돌려준다. */
+const SHORT = 1.98, LONG_DBL = 0.76;
+const XS = [[0, "왼쪽 복식"], [0.46, "왼쪽 단식"], [W_M / 2, "센터"], [W_M - 0.46, "오른쪽 단식"], [W_M, "오른쪽 복식"]];
+const YS = [[0, "먼 쪽 엔드"], [LONG_DBL, "먼 쪽 롱서비스"], [NET - SHORT, "먼 쪽 숏서비스"], [NET + SHORT, "가까운 쪽 숏서비스"], [L_M - LONG_DBL, "가까운 쪽 롱서비스"], [L_M, "가까운 쪽 엔드"]];
+const CATALOG = [];
+for (const [y, yn] of YS) for (const [x, xn] of XS) CATALOG.push({ c: [x, y], name: `${yn} × ${xn}` });
+CATALOG.push({ c: [0, NET], name: "왼쪽 네트 기둥 바닥" }, { c: [W_M, NET], name: "오른쪽 네트 기둥 바닥" });
+for (const q of CATALOG) q.outer = (q.c[0] === 0 || q.c[0] === W_M) && (q.c[1] === 0 || q.c[1] === L_M || q.c[1] === NET);
+const LINE_CATALOG = [
+  { l: [[0, 0], [0, L_M]], name: "왼쪽 복식 사이드라인" }, { l: [[0.46, 0], [0.46, L_M]], name: "왼쪽 단식 사이드라인" },
+  { l: [[W_M - 0.46, 0], [W_M - 0.46, L_M]], name: "오른쪽 단식 사이드라인" }, { l: [[W_M, 0], [W_M, L_M]], name: "오른쪽 복식 사이드라인" },
+  { l: [[0, 0], [W_M, 0]], name: "먼 쪽 엔드라인" }, { l: [[0, LONG_DBL], [W_M, LONG_DBL]], name: "먼 쪽 롱서비스 라인" },
+  { l: [[0, NET - SHORT], [W_M, NET - SHORT]], name: "먼 쪽 숏서비스 라인" }, { l: [[0, NET + SHORT], [W_M, NET + SHORT]], name: "가까운 쪽 숏서비스 라인" },
+  { l: [[0, L_M - LONG_DBL], [W_M, L_M - LONG_DBL]], name: "가까운 쪽 롱서비스 라인" }, { l: [[0, L_M], [W_M, L_M]], name: "가까운 쪽 엔드라인" },
+  { l: [[W_M / 2, 0], [W_M / 2, NET - SHORT]], name: "먼 쪽 센터라인" }, { l: [[W_M / 2, NET + SHORT], [W_M / 2, L_M]], name: "가까운 쪽 센터라인" },
+];
+for (const c of LINE_CATALOG) { const [[x1, y1], [x2, y2]] = c.l; c.outer = (x1 === x2 && (x1 === 0 || x1 === W_M)) || (y1 === y2 && (y1 === 0 || y1 === L_M)); }
+const sameC = (a, b) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+const sameL = (a, b) => sameC(a[0], b[0]) && sameC(a[1], b[1]);
+const cName = c => CATALOG.find(q => sameC(q.c, c))?.name || "점";
+const lName = l => LINE_CATALOG.find(c => sameL(c.l, l))?.name || "라인";
+const goodLines = () => S.clines.filter(l => l.px.length >= 2);
+const eqCount = () => 2 * S.cpts.length + 2 * goodLines().length;
+// 카메라 뒤로 넘어가는 점은 null
+const mapS = (H, [X, Y]) => { const d = H[6] * X + H[7] * Y + H[8]; if (d <= 1e-9) return null; return [(H[0] * X + H[1] * Y + H[2]) / d, (H[3] * X + H[4] * Y + H[5]) / d]; };
+const curH = () => S.fit && !S.fit.error ? S.fit.H : null;
+function courtOk() {
+  const f = S.fit;
+  return !!(f && !f.error && eqCount() >= 8 && f.mean_err <= 12 && S.corners && convex(S.corners));
+}
+let fitSeq = 0, fitTimer;
+function refit(now = false) {
+  clearTimeout(fitTimer);
+  const run = async () => {
+    const seq = ++fitSeq;
+    if (eqCount() < 8) { S.fit = null; afterFit(); return; }
+    try {
+      const r = await api("/api/court/fit", { method: "POST", json: { points: S.cpts, lines: goodLines() } });
+      if (seq !== fitSeq) return;
+      S.fit = { ...r, H: r.h_court2px.flat() };
+      const cs = COURT.map(c => mapS(S.fit.H, c));
+      if (cs.every(Boolean)) S.corners = cs.map(q => [Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10]);
+    } catch (e) { if (seq !== fitSeq) return; S.fit = { error: e.message }; }
+    afterFit();
+  };
+  if (now) run(); else fitTimer = setTimeout(run, 60);
+}
+function afterFit() { if (S.step === 2 || S.step === 3) drawOverlay(); if (S.step === 2) renderPanel(); saveLocal(); }
+function placeCourt(px) {
+  if (S.pick.kind === "p") {
+    const c = CATALOG[S.pick.i].c, i = S.cpts.findIndex(q => sameC(q.court, c));
+    if (i >= 0) S.cpts[i].px = px; else S.cpts.push({ court: [...c], px });
+    S.sel = { kind: "p", i: i >= 0 ? i : S.cpts.length - 1 }; S.pick = null;
+  } else {
+    const c = LINE_CATALOG[S.pick.i].l;
+    let i = S.clines.findIndex(l => sameL(l.line, c));
+    if (i < 0) { S.clines.push({ line: c.map(q => [...q]), px: [] }); i = S.clines.length - 1; }
+    S.clines[i].px.push(px); S.sel = { kind: "l", i, j: S.clines[i].px.length - 1 };
+  }
+  drawOverlay(); renderPanel(); refit();
+}
+function selRef() { return !S.sel ? null : S.sel.kind === "p" ? S.cpts[S.sel.i]?.px : S.clines[S.sel.i]?.px[S.sel.j]; }
+function delSel() {
+  if (!S.sel) return;
+  if (S.sel.kind === "p") S.cpts.splice(S.sel.i, 1);
+  else { const l = S.clines[S.sel.i]; l.px.splice(S.sel.j, 1); if (!l.px.length) S.clines.splice(S.sel.i, 1); }
+  S.sel = null; drawOverlay(); renderPanel(); refit(true);
+}
+// 긴 선을 잘게 나눠 그린다 (화면 밖 꼭짓점 때문에 원근이 크게 걸려도 모양 유지)
+function segLine(g, H, [a, b], attrs) {
+  let seg = [];
+  const flush = () => { if (seg.length > 1) el("polyline", { points: seg.map(q => q.join(",")).join(" "), fill: "none", ...attrs }, g); seg = []; };
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40, q = mapS(H, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    if (!q || Math.abs(q[0]) > 2e4 || Math.abs(q[1]) > 2e4) flush(); else seg.push(q);
+  }
+  flush();
+}
+// 오른쪽 패널의 코트 도면: 점·라인을 눌러 고른다 (위 = 네트 너머, 아래 = 카메라 쪽)
+function courtDiagram() {
+  const m = .9, done = c => S.cpts.some(q => sameC(q.court, c)), ldone = l => goodLines().some(x => sameL(x.line, l));
+  let h = `<svg class="diag" id="diag" viewBox="${-m} ${-m - .2} ${W_M + 2 * m} ${L_M + 2 * m + .4}" role="group" aria-label="코트 도면">
+    <rect x="0" y="0" width="${W_M}" height="${L_M}" class="d-court"/>
+    <text x="${W_M / 2}" y="-.35" class="d-side">네트 너머</text><text x="${W_M / 2}" y="${L_M + .75}" class="d-side">카메라 쪽</text>`;
+  LINE_CATALOG.forEach((c, i) => {
+    const [[x1, y1], [x2, y2]] = c.l, show = c.outer || S.inner || S.clines.some(l => sameL(l.line, c.l));
+    if (!show) { h += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="d-ln dim"/>`; return; }
+    const pick = S.pick?.kind === "l" && S.pick.i === i;
+    h += `<g class="d-l ${ldone(c.l) ? "done" : ""} ${pick ? "pick" : ""}" data-l="${i}" tabindex="0" role="button" aria-label="${c.name}"><title>${c.name} · 영상에서 이 라인 위를 2곳 이상 클릭</title>
+      <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="hit"/><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="vis"/></g>`;
+  });
+  h += `<line x1="-.45" y1="${NET}" x2="${W_M + .45}" y2="${NET}" class="d-net"/>`;
+  CATALOG.forEach((q, i) => {
+    if (!q.outer && !S.inner && !done(q.c)) return;
+    const pick = S.pick?.kind === "p" && S.pick.i === i;
+    h += `<g class="d-p ${done(q.c) ? "done" : ""} ${pick ? "pick" : ""}" data-p="${i}" tabindex="0" role="button" aria-label="${q.name}"><title>${q.name}</title><circle cx="${q.c[0]}" cy="${q.c[1]}" r="${q.outer ? .32 : .24}"/></g>`;
+  });
+  return h + "</svg>";
+}
+function bindDiagram() {
+  const choose = (kind, i) => { S.pick = S.pick?.kind === kind && S.pick.i === i ? null : { kind, i }; S.sel = null; drawOverlay(); renderPanel(); };
+  $$("#diag [data-p]").forEach(g => { g.onclick = () => choose("p", +g.dataset.p); g.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("p", +g.dataset.p); } }; });
+  $$("#diag [data-l]").forEach(g => { g.onclick = () => choose("l", +g.dataset.l); g.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("l", +g.dataset.l); } }; });
+}
+function stagePad() { return S.step === 2 && S.wide ? { x: Math.round(S.meta.width * .25), y: Math.round(S.meta.height * .45) } : { x: 0, y: 0 }; }
+function applyView() {
+  if (!svg) return;
+  const W = S.meta.width, H = S.meta.height, p = stagePad();
+  svg.setAttribute("viewBox", `${-p.x} ${-p.y} ${W + 2 * p.x} ${H + 2 * p.y}`);
+  $("#stage").style.aspectRatio = `${W + 2 * p.x}/${H + 2 * p.y}`;
+}
+async function loadLabCourt() {
+  try {
+    const c = (await api(`/api/lab/${S.vid}`)).config;
+    if (!c?.points?.length && !c?.lines?.length) { toast("실험 페이지에 저장된 코트 설정이 없어요", true); return; }
+    S.cpts = (c.points || []).map(q => ({ court: [...q.court], px: [...q.px] })); S.clines = (c.lines || []).map(l => ({ line: l.line.map(q => [...q]), px: l.px.map(q => [...q]) }));
+    S.pick = null; S.sel = null; toast(`실험 페이지 코트 설정을 불러왔어요 (점 ${S.cpts.length} · 라인 ${S.clines.length})`);
+    refit(true);
+  } catch (e) { toast(e.message, true); }
+}
+
 /* ---------------- 상태 저장 (새로고침해도 이어서) ---------------- */
 function saveLocal() {
   if (!S.vid) return;
-  const keep = { frame: S.frame, corners: S.corners, assign: S.assign, people: S.people, detFrame: S.detFrame, teams: S.teams, fmt: S.fmt, showLines: S.showLines, showPose: S.showPose };
+  const keep = { frame: S.frame, corners: S.corners, cpts: S.cpts, clines: S.clines, wide: S.wide, inner: S.inner, assign: S.assign, people: S.people, detFrame: S.detFrame, teams: S.teams, fmt: S.fmt, showLines: S.showLines, showPose: S.showPose };
   localStorage.setItem("ss:" + S.vid, JSON.stringify(keep));
 }
 function loadLocal(vid) { try { return JSON.parse(localStorage.getItem("ss:" + vid) || "null"); } catch { return null; } }
@@ -237,7 +359,8 @@ function upload(f) {
 async function openVideo(id, step) {
   try {
     const meta = await api(`/api/videos/${id}`);
-    Object.assign(S, { vid: id, meta, suggest: null, result: null, people: [], detFrame: -1, assign: {}, job: null, renderJob: null, selEvent: null });
+    Object.assign(S, { vid: id, meta, suggest: null, result: null, people: [], detFrame: -1, assign: {}, job: null, renderJob: null, selEvent: null,
+      cpts: [], clines: [], pick: null, sel: null, drag: null, fit: null });
     S.config = meta.config || null;
     const loc = loadLocal(id);
     const W = meta.width, H = meta.height;
@@ -246,14 +369,21 @@ async function openVideo(id, step) {
     if (S.config) { // 서버에 저장된 설정 우선
       const c = S.config;
       S.corners = c.court_corners_px; S.frame = c.ref_frame;
+      if (c.points?.length || c.lines?.length) { S.cpts = c.points || []; S.clines = c.lines || []; }
+      else if (c.court_corners_px) S.cpts = COURT.map((cc, i) => ({ court: [...cc], px: c.court_corners_px[i] }));   // 예전 꼭짓점 설정
       S.teams = { A: { name: c.teams["1"].name }, B: { name: c.teams["2"].name } };
       S.fmt = { ...S.fmt, ...c.match };
     }
     if (loc) {
-      S.frame = loc.frame ?? S.frame; S.corners = loc.corners || S.corners; S.assign = loc.assign || {}; S.people = loc.people || [];
+      S.frame = loc.frame ?? S.frame; S.corners = loc.corners || S.corners;
+      if (loc.cpts) { S.cpts = loc.cpts; S.clines = loc.clines || []; }
+      else if (loc.corners && !S.cpts.length) S.cpts = COURT.map((cc, i) => ({ court: [...cc], px: loc.corners[i] }));   // 예전 꼭짓점 작업 이어받기
+      S.wide = !!loc.wide; S.inner = !!loc.inner;
+      S.assign = loc.assign || {}; S.people = loc.people || [];
       S.detFrame = loc.detFrame ?? -1; S.teams = loc.teams || S.teams; S.fmt = { ...S.fmt, ...(loc.fmt || {}) };
       S.showLines = loc.showLines ?? true; S.showPose = loc.showPose ?? true;
     }
+    refit(true);
     if (meta.has_result) { try { S.result = await api(`/api/videos/${id}/result`); } catch { } }
     const aj = meta.active_jobs?.analyze; if (aj && ["queued", "running"].includes(aj.state)) S.job = aj;
     const rj = meta.active_jobs?.render; if (rj && ["queued", "running"].includes(rj.state)) S.renderJob = rj;
@@ -299,6 +429,7 @@ function renderStage(v) {
     <aside><div class="card panel" id="panel"></div></aside>
   </main>`;
   svg = $("#svg"); imgEl = $("#frameImg");
+  applyView();
   bindStage();
   loadFrame(S.frame);
   if (S.step === 1) loadSuggest();
@@ -336,13 +467,22 @@ function bindStage() {
     $("#prev10").onclick = () => { loadFrame(S.frame - fps); frameChanged(); };
     $("#next10").onclick = () => { loadFrame(S.frame + fps); frameChanged(); };
   }
-  svg.addEventListener("pointermove", e => {
-    if (S.dragIdx < 0) return;
-    const p = svgPoint(e);
-    S.corners[S.dragIdx] = [clamp(Math.round(p.x), 0, S.meta.width), clamp(Math.round(p.y), 0, S.meta.height)];
-    drawOverlay(); showLoupe(S.corners[S.dragIdx]); updateCornerList();
+  const rpx = p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+  svg.addEventListener("pointerdown", e => {   // 도면에서 고른 상태면 영상 클릭 = 찍기 (점은 한 번, 라인은 Esc까지 계속)
+    if (S.step !== 2 || !S.pick) return;
+    placeCourt(rpx(svgPoint(e)));
   });
-  const end = () => { if (S.dragIdx < 0) return; S.dragIdx = -1; $("#loupe").classList.add("hidden"); drawOverlay(); renderPanel(); saveLocal(); };
+  svg.addEventListener("pointermove", e => {
+    if (S.step !== 2) return;
+    const p = svgPoint(e);
+    if (S.drag) {
+      const px = rpx(p);
+      if (S.drag.kind === "p") S.cpts[S.drag.i].px = px; else S.clines[S.drag.i].px[S.drag.j] = px;
+      drawOverlay(); showLoupe(px); refit();
+    } else if (S.pick) showLoupe([p.x, p.y]);
+  });
+  svg.addEventListener("pointerleave", () => { if (!S.drag) $("#loupe").classList.add("hidden"); });
+  const end = () => { if (!S.drag) return; S.drag = null; $("#loupe").classList.add("hidden"); drawOverlay(); renderPanel(); saveLocal(); };
   svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
 }
 function svgPoint(evt) { const p = svg.createSVGPoint(); p.x = evt.clientX; p.y = evt.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); }
@@ -365,28 +505,14 @@ function drawOverlay() {
   const g = $("#overlay"); if (!g) return; g.innerHTML = "";
   const u = U();
   const stat = el("g", { id: "overlayStatic" }, g);
-  if (S.step === 2 || S.step === 3) {
+  if (S.step === 2) { drawCourtStep(g, stat, u); return; }
+  if (S.step === 3) {
     const ok = convex(S.corners);
-    if (S.step === 2) el("polygon", { points: pts(S.corners), class: "court-fill", "stroke-width": 3 * u, style: ok ? "" : "stroke:var(--bad)" }, stat);
-    if (ok && (S.showLines || S.step === 3)) {
+    if (ok) {
       const H = homography(COURT, S.corners);
       for (const [a, b] of courtLines()) { const [p, q] = [map(H, a), map(H, b)]; el("line", { x1: p[0], y1: p[1], x2: q[0], y2: q[1], class: "preview-line", "stroke-width": (S.step === 3 ? 1.4 : 2.2) * u, opacity: S.step === 3 ? .45 : .95 }, stat); }
       const n1 = map(H, [0, NET]), n2 = map(H, [W_M, NET]); el("line", { x1: n1[0], y1: n1[1], x2: n2[0], y2: n2[1], class: "net-line", "stroke-width": 3 * u }, stat);
     }
-  }
-  if (S.step === 2) {
-    S.corners.forEach((c, i) => {
-      const h = el("g", { class: "handle" + (S.dragIdx === i ? " drag" : ""), transform: `translate(${c[0]},${c[1]})`, tabindex: 0, role: "button", "aria-label": `${CORNER_NAMES[i]} 꼭짓점` }, g);
-      el("circle", { r: 20 * u, class: "ring", "stroke-width": 3 * u }, h); el("circle", { r: 13 * u, class: "core" }, h);
-      const t = el("text", { "font-size": 18 * u }, h); t.textContent = i + 1;
-      h.addEventListener("pointerdown", e => { S.dragIdx = i; svg.setPointerCapture(e.pointerId); showLoupe(c); drawOverlay(); updateCornerList(); });
-      h.addEventListener("keydown", e => { // 키보드로 미세 조정
-        const d = e.shiftKey ? 10 : 1; let [x, y] = S.corners[i];
-        if (e.key === "ArrowLeft") x -= d; else if (e.key === "ArrowRight") x += d; else if (e.key === "ArrowUp") y -= d; else if (e.key === "ArrowDown") y += d; else return;
-        e.preventDefault(); e.stopPropagation(); S.corners[i] = [x, y]; drawOverlay(); updateCornerList(); saveLocal();
-        $$(".handle")[i]?.focus();
-      });
-    });
   }
   if (S.step === 3) drawPeople(g);
   if (S.step === 4 && S.fmt.scoreboard) {
@@ -394,6 +520,41 @@ function drawOverlay() {
   }
 }
 
+// 코트 단계: 맞춘 코트 라인 + 찍은 점(연두 원 · 계산 위치까지 오차 선) + 라인 위 점(하늘색 네모)
+function drawCourtStep(g, stat, u) {
+  const H = curH(), W = S.meta.width, Hh = S.meta.height;
+  if (S.wide) el("rect", { x: 0, y: 0, width: W, height: Hh, class: "frame-edge", "stroke-width": 3 * u }, stat);
+  if (H && S.showLines) {
+    for (const ln of courtLines()) segLine(stat, H, ln, { class: "preview-line", "stroke-width": 2.2 * u });
+    segLine(stat, H, [[0, NET], [W_M, NET]], { class: "net-line", "stroke-width": 3 * u });
+  }
+  const gl = goodLines();
+  S.clines.forEach((ln, li) => {
+    const on = (S.pick?.kind === "l" && sameL(LINE_CATALOG[S.pick.i].l, ln.line)) || (S.sel?.kind === "l" && S.sel.i === li);
+    if (H) segLine(g, H, ln.line, { class: "cl-fit" + (on ? " on" : ""), "stroke-width": (on ? 5 : 3) * u });
+    ln.px.forEach((q, j) => {
+      const m = el("g", { class: "lpm" + (S.sel?.kind === "l" && S.sel.i === li && S.sel.j === j ? " sel" : "") }, g);
+      el("rect", { x: q[0] - 9 * u, y: q[1] - 9 * u, width: 18 * u, height: 18 * u, rx: 3 * u, "stroke-width": 3 * u }, m);
+      m.addEventListener("pointerdown", e => { e.stopPropagation(); S.drag = { kind: "l", i: li, j }; S.sel = { kind: "l", i: li, j }; svg.setPointerCapture(e.pointerId); showLoupe(q); drawOverlay(); renderPanel(); });
+    });
+    const q = ln.px[ln.px.length - 1];
+    if (q) {
+      const er = S.fit?.line_errors?.[gl.indexOf(ln)];
+      const t = el("text", { x: q[0] + 14 * u, y: q[1] + 26 * u, "font-size": 20 * u, class: "lbl-l" }, g);
+      t.textContent = `L${li + 1}${er != null ? ` · ${er.toFixed(1)}px` : ln.px.length < 2 ? " · 1곳 더" : ""}`;
+    }
+  });
+  S.cpts.forEach((p, i) => {
+    const m = el("g", { class: "ptm" + (S.sel?.kind === "p" && S.sel.i === i ? " sel" : "") }, g);
+    const q = H && mapS(H, p.court);
+    if (q) el("line", { x1: p.px[0], y1: p.px[1], x2: q[0], y2: q[1], "stroke-width": 2 * u }, m);
+    el("circle", { cx: p.px[0], cy: p.px[1], r: 11 * u, "stroke-width": 3 * u }, m);
+    const er = S.fit?.errors?.[i];
+    const t = el("text", { x: p.px[0] + 15 * u, y: p.px[1] - 12 * u, "font-size": 20 * u }, m); t.textContent = `${i + 1}${er != null ? ` · ${er.toFixed(1)}px` : ""}`;
+    m.addEventListener("pointerdown", e => { e.stopPropagation(); S.drag = { kind: "p", i }; S.sel = { kind: "p", i }; svg.setPointerCapture(e.pointerId); showLoupe(p.px); drawOverlay(); renderPanel(); });
+  });
+  $("#stage")?.classList.toggle("picking", !!S.pick);
+}
 function drawPeople(g) {
   const u = U();
   S.people.forEach(p => {
@@ -408,7 +569,7 @@ function drawPeople(g) {
       }
       p.kps.forEach((k, i) => { if (k[2] >= .3 && i >= 5) el("circle", { cx: k[0], cy: k[1], r: 3 * u, fill: "#fff" }, b); });
     }
-    const label = t ? `${S.teams[t].name} · #${p.id}` : `#${p.id}${p.in_play === false ? " 코트 밖" : ""}`;
+    const label = t === "R" ? `심판 · #${p.id}` : t ? `${S.teams[t].name} · #${p.id}` : `#${p.id}${p.in_play === false ? " 코트 밖" : ""}`;
     const fs = 15 * u, tw = (label.length * 8.6 + 18) * u;
     const tg = el("g", { class: "tag", transform: `translate(${x1},${Math.max(0, y1 - 28 * u)})` }, b);
     el("rect", { width: tw, height: 24 * u, rx: 7 * u, fill: t ? `var(--team${t})` : "#000000aa" }, tg);
@@ -502,7 +663,8 @@ function autoAssign(quiet = false) {
   const far = inPlay.filter(p => p.side === "far").sort((a, b) => centered(a) - centered(b) || b.conf - a.conf).slice(0, per);
   const near = inPlay.filter(p => p.side === "near").sort((a, b) => centered(a) - centered(b) || b.conf - a.conf).slice(0, per);
   if (far.length < per || near.length < per) { if (!quiet) toast("코트 양쪽에서 선수를 다 찾지 못했어요. 직접 골라 주세요"); return; }
-  S.assign = {}; far.forEach(p => S.assign[p.id] = "A"); near.forEach(p => S.assign[p.id] = "B");
+  for (const k in S.assign) if (S.assign[k] !== "R") delete S.assign[k];   // 심판 지정은 그대로
+  far.forEach(p => S.assign[p.id] = "A"); near.forEach(p => S.assign[p.id] = "B");
   if (!quiet) toast("위쪽 선수를 팀 A, 아래쪽 선수를 팀 B로 배정했어요");
   drawOverlay(); renderPanel(); saveLocal();
 }
@@ -510,8 +672,8 @@ function togglePlayer(p) {
   const cur = S.assign[p.id];
   if (cur === S.activeTeam) delete S.assign[p.id];
   else {
-    const max = S.fmt.mode === "doubles" ? 2 : 1;
-    if (Object.values(S.assign).filter(t => t === S.activeTeam).length >= max) { toast(`${S.teams[S.activeTeam].name}은 최대 ${max}명이에요`); return; }
+    const max = S.activeTeam === "R" ? 6 : S.fmt.mode === "doubles" ? 2 : 1;
+    if (Object.values(S.assign).filter(t => t === S.activeTeam).length >= max) { toast(`${S.activeTeam === "R" ? "심판" : S.teams[S.activeTeam].name}은 최대 ${max}명이에요`); return; }
     S.assign[p.id] = S.activeTeam;
   }
   drawOverlay(); renderPanel(); saveLocal();
@@ -530,16 +692,13 @@ function playerChecks() {
 }
 
 /* ---------------- 패널 ---------------- */
-function updateCornerList() {
-  $$(".corners li").forEach((li, i) => { li.querySelector(".xy").textContent = `${Math.round(S.corners[i][0])}, ${Math.round(S.corners[i][1])}`; li.classList.toggle("hot", S.dragIdx === i); });
-}
 function renderPanel() {
   const P = $("#panel"), chip = $("#modeChip"); if (!P) return;
   if (S.step === 1) {
     chip.innerHTML = '<span class="dot" style="background:var(--accent)"></span>프레임 선택';
     P.innerHTML = `<h2>프레임 선택</h2><p class="desc">코트 라인이 잘 보이고 선수 ${S.fmt.mode === "doubles" ? 4 : 2}명이 모두 코트 안에 서 있는 장면을 골라 주세요. 서브 직전 장면이 가장 좋아요.</p>
       <ul class="checks">
-        <li class="ok"><i>✓</i>코트 네 귀퉁이가 화면 안에 보여요</li>
+        <li class="ok"><i>✓</i>네트 기둥과 코트 라인이 잘 보여요 (귀퉁이는 화면 밖이어도 돼요)</li>
         <li class="ok"><i>✓</i>선수끼리 겹치지 않아요</li>
         <li class="ok"><i>✓</i>아래 추천 프레임은 사람 수로 골랐어요</li>
       </ul>
@@ -547,20 +706,55 @@ function renderPanel() {
     $("#next").onclick = () => { S.people = []; S.detFrame = -1; go(2); };
   }
   else if (S.step === 2) {
-    const ok = convex(S.corners);
-    chip.innerHTML = '<span class="dot" style="background:var(--accent)"></span>코트 지정 모드';
-    P.innerHTML = `<h2>코트 지정</h2><p class="desc">복식 바깥 라인의 꼭짓점 4개를 드래그해 맞춰 주세요. 형광 라인이 실제 코트 라인과 겹치면 정확하게 맞춘 거예요.</p>
-      <ul class="corners">${S.corners.map((c, i) => `<li><span class="n">${i + 1}</span>${CORNER_NAMES[i]}<span class="xy">${Math.round(c[0])}, ${Math.round(c[1])}</span></li>`).join("")}</ul>
+    const f = S.fit, eq = eqCount(), ok = courtOk(), gl = goodLines();
+    chip.innerHTML = `<span class="dot" style="background:${S.pick ? (S.pick.kind === "p" ? "var(--accent)" : "#4fe3ff") : "var(--accent)"}"></span>${S.pick ? "영상에서 찍는 중" : "코트 지정 모드"}`;
+    const msg = S.pick?.kind === "p" ? `<b>${CATALOG[S.pick.i].name}</b> · 영상에서 이 자리를 클릭하세요 <kbd>Esc</kbd> 취소`
+      : S.pick?.kind === "l" ? `<b>${LINE_CATALOG[S.pick.i].name}</b> · 영상에서 이 라인 위를 클릭하세요. 서로 멀리 2곳 이상 · 다 찍었으면 <kbd>Esc</kbd>`
+      : eq < 8 ? "네트 기둥 바닥 2개와 보이는 바깥 라인 4개면 충분해요. 꼭짓점은 화면 밖이어도 괜찮아요"
+      : f?.error ? `<span class="bad-t">${esc(f.error)}</span>`
+      : f && f.spare < 2 ? "점이나 라인을 하나 더 찍으면 잘못 찍은 걸 오차로 알아챌 수 있어요"
+      : "오차가 큰 점·라인은 끌어서 옮기거나 지우세요";
+    const errCls = e => e != null && e > 8 ? "bad-t" : "";
+    const items = S.cpts.map((q, i) => { const e = f?.errors?.[i]; return `<li class="${S.sel?.kind === "p" && S.sel.i === i ? "hot" : ""}" data-k="p" data-i="${i}"><span class="n">${i + 1}</span><span class="nm">${esc(cName(q.court))}</span><span class="xy ${errCls(e)}">${e != null ? e.toFixed(1) + "px" : "–"}</span><button class="x" data-del="1" aria-label="${i + 1}번 점 지우기">×</button></li>`; }).join("")
+      + S.clines.map((l, i) => { const e = f?.line_errors?.[gl.indexOf(l)]; return `<li class="ln ${S.sel?.kind === "l" && S.sel.i === i ? "hot" : ""}" data-k="l" data-i="${i}"><span class="n">L${i + 1}</span><span class="nm">${esc(lName(l.line))} · ${l.px.length}곳</span><span class="xy ${errCls(e)}">${e != null ? e.toFixed(1) + "px" : l.px.length < 2 ? "1곳 더" : "–"}</span><button class="x" data-del="1" aria-label="L${i + 1} 지우기">×</button></li>`; }).join("");
+    const big = f && !f.error ? f.mean_err.toFixed(1) : "–";
+    P.innerHTML = `<h2>코트 지정</h2><p class="desc">도면에서 점이나 라인을 고른 뒤, 영상에서 그 자리를 클릭하세요. 형광 라인이 실제 코트 라인에 겹치면 맞은 거예요.</p>
+      <div class="court-pick">${courtDiagram()}
+        <div class="fit-stat"><span class="lbl">평균 오차</span><b class="display ${f && !f.error && f.mean_err > 8 ? "warn" : ""}">${big}<small>px</small></b>
+          <span class="lbl">식 ${eq} / 8${f && !f.error ? ` · 여유 ${f.spare}` : ""}</span>
+          <span class="legend"><i class="lp"></i>점 · 한 번 클릭</span><span class="legend"><i class="ll"></i>라인 · 2곳 이상</span></div></div>
+      <p class="pick-msg">${msg}</p>
+      ${items ? `<ul class="corners cp-list">${items}</ul>` : ""}
+      <div class="toggle-row">안쪽 점·라인도 고르기<button class="switch ${S.inner ? "on" : ""}" id="innerSw" role="switch" aria-checked="${S.inner}" aria-label="안쪽 점·라인도 고르기"></button></div>
+      <div class="toggle-row">화면 밖까지 넓게 보기<button class="switch ${S.wide ? "on" : ""}" id="wideSw" role="switch" aria-checked="${S.wide}" aria-label="화면 밖까지 넓게 보기"></button></div>
       <div class="toggle-row">코트 라인 미리보기<button class="switch ${S.showLines ? "on" : ""}" id="lineSw" role="switch" aria-checked="${S.showLines}" aria-label="코트 라인 미리보기"></button></div>
-      <p class="desc" style="margin:12px 0 0;font-size:12px">꼭짓점을 클릭한 뒤 방향키로 1px씩, <kbd>Shift</kbd>와 함께 10px씩 옮길 수 있어요.</p>
-      ${ok ? "" : `<ul class="checks"><li class="bad"><i>!</i>꼭짓점이 꼬였어요. 1→2→3→4 순서로 시계 방향이어야 해요</li></ul>`}
+      <div class="btn-row"><button class="icon-btn sm" id="labCourt" title="같은 영상의 실험 페이지 코트 설정(점·라인)을 가져와요">실험 페이지 코트 불러오기</button><button class="icon-btn sm" id="clearCourt">모두 지우기</button></div>
+      <ul class="checks" style="margin-top:12px">
+        <li class="${eq >= 8 ? "ok" : "bad"}"><i>${eq >= 8 ? "✓" : "!"}</i>점·라인 충분 (식 8개 이상)</li>
+        <li class="${f && !f.error && f.mean_err <= 8 ? "ok" : "bad"}"><i>${f && !f.error && f.mean_err <= 8 ? "✓" : "!"}</i>평균 오차 8px 이하</li>
+        <li class="${f && !f.error && !f.mirrored ? "ok" : "bad"}"><i>${f && !f.error && !f.mirrored ? "✓" : "!"}</i>${f?.mirrored ? "좌우가 뒤집힌 것 같아요 (왼쪽·오른쪽은 카메라에서 볼 때)" : "좌우 방향 맞음"}</li>
+      </ul>
       <button class="cta" id="next" ${ok ? "" : "disabled"}>다음 · 선수 선택</button>`;
+    bindDiagram();
+    $$(".cp-list li", P).forEach(li => li.onclick = e => {
+      const k = li.dataset.k, i = +li.dataset.i;
+      if (e.target.dataset.del) { (k === "p" ? S.cpts : S.clines).splice(i, 1); S.sel = null; drawOverlay(); renderPanel(); refit(true); return; }
+      if (k === "l") { S.pick = { kind: "l", i: LINE_CATALOG.findIndex(c => sameL(c.l, S.clines[i].line)) }; S.sel = { kind: "l", i, j: S.clines[i].px.length - 1 }; }
+      else { S.sel = { kind: "p", i }; S.pick = null; }
+      drawOverlay(); renderPanel();
+    });
+    $("#innerSw").onclick = () => { S.inner = !S.inner; renderPanel(); saveLocal(); };
+    $("#wideSw").onclick = () => { S.wide = !S.wide; applyView(); drawOverlay(); renderPanel(); saveLocal(); };
     $("#lineSw").onclick = () => { S.showLines = !S.showLines; drawOverlay(); renderPanel(); saveLocal(); };
-    $("#next").onclick = () => { S.detFrame = -1; go(3); };
+    $("#labCourt").onclick = loadLabCourt;
+    $("#clearCourt").onclick = () => { if (!S.cpts.length && !S.clines.length) return; if (!confirm("찍은 점·라인을 모두 지울까요?")) return; S.cpts = []; S.clines = []; S.sel = null; S.pick = null; S.fit = null; drawOverlay(); renderPanel(); saveLocal(); };
+    $("#next").onclick = () => { S.pick = null; S.detFrame = -1; go(3); };
   }
   else if (S.step === 3) {
-    chip.innerHTML = `<span class="dot" style="background:var(--team${S.activeTeam})"></span>${esc(S.teams[S.activeTeam].name)} 선택 중`;
+    const actName = S.activeTeam === "R" ? "심판" : S.teams[S.activeTeam].name;
+    chip.innerHTML = `<span class="dot" style="background:var(--team${S.activeTeam})"></span>${esc(actName)} 선택 중`;
     const c = playerChecks();
+    const nR = Object.values(S.assign).filter(t => t === "R").length;
     const mem = t => {
       const ids = Object.keys(S.assign).filter(k => S.assign[k] === t);
       let h = ids.map(i => `<span class="member ${t}">선수 #${i}</span>`).join("");
@@ -570,6 +764,7 @@ function renderPanel() {
       <div class="team-tabs">
         <button class="team-tab A ${S.activeTeam === "A" ? "on" : ""}" data-t="A"><div class="t" style="color:var(--teamA)">Team A</div><div class="c">${c.cA}/${c.max}명</div></button>
         <button class="team-tab B ${S.activeTeam === "B" ? "on" : ""}" data-t="B"><div class="t" style="color:var(--teamB)">Team B</div><div class="c">${c.cB}/${c.max}명</div></button>
+        <button class="team-tab R ${S.activeTeam === "R" ? "on" : ""}" data-t="R" title="코트 옆 심판·선심. 지정하면 추적이 선수로 잡지 않아요"><div class="t" style="color:var(--teamR)">심판</div><div class="c">${nR}명</div></button>
       </div>
       <div class="team-card A"><input value="${esc(S.teams.A.name)}" data-n="A" maxlength="12" aria-label="팀 A 이름"><div class="members">${mem("A")}</div></div>
       <div class="team-card B"><input value="${esc(S.teams.B.name)}" data-n="B" maxlength="12" aria-label="팀 B 이름"><div class="members">${mem("B")}</div></div>
@@ -582,9 +777,9 @@ function renderPanel() {
       </ul>
       <button class="cta" id="next" ${c.okCount && c.okSide ? "" : "disabled"}>다음 · 경기 설정</button>`;
     $$(".team-tab", P).forEach(b => b.onclick = () => { S.activeTeam = b.dataset.t; renderPanel(); });
-    $$("input[data-n]", P).forEach(i => i.oninput = () => { S.teams[i.dataset.n].name = i.value.trim() || ("팀 " + i.dataset.n); drawOverlay(); saveLocal(); chip.innerHTML = `<span class="dot" style="background:var(--team${S.activeTeam})"></span>${esc(S.teams[S.activeTeam].name)} 선택 중`; });
+    $$("input[data-n]", P).forEach(i => i.oninput = () => { S.teams[i.dataset.n].name = i.value.trim() || ("팀 " + i.dataset.n); drawOverlay(); saveLocal(); chip.innerHTML = `<span class="dot" style="background:var(--team${S.activeTeam})"></span>${esc(S.activeTeam === "R" ? "심판" : S.teams[S.activeTeam].name)} 선택 중`; });
     $("#autoBtn").onclick = () => autoAssign(false);
-    $("#swapBtn").onclick = () => { for (const k in S.assign) S.assign[k] = S.assign[k] === "A" ? "B" : "A"; drawOverlay(); renderPanel(); saveLocal(); };
+    $("#swapBtn").onclick = () => { for (const k in S.assign) if (S.assign[k] !== "R") S.assign[k] = S.assign[k] === "A" ? "B" : "A"; drawOverlay(); renderPanel(); saveLocal(); };
     $("#redetBtn").onclick = runDetect;
     $("#poseSw").onclick = () => { S.showPose = !S.showPose; drawOverlay(); renderPanel(); saveLocal(); };
     $("#next").onclick = () => go(4);
@@ -621,8 +816,9 @@ async function startAnalyze() {
     const box = id => S.people.find(p => String(p.id) === String(id))?.box;
     const teams = {};
     for (const t of ["A", "B"]) teams[t] = { name: S.teams[t].name, bboxes: Object.keys(S.assign).filter(k => S.assign[k] === t).map(box).filter(Boolean) };
+    const officials = Object.keys(S.assign).filter(k => S.assign[k] === "R").map(box).filter(Boolean);
     const { scoreboard, ...match } = S.fmt;
-    S.config = await api(`/api/videos/${S.vid}/config`, { method: "PUT", json: { ref_frame: S.detFrame >= 0 ? S.detFrame : S.frame, corners: S.corners, teams, match: { ...match, scoreboard } } });
+    S.config = await api(`/api/videos/${S.vid}/config`, { method: "PUT", json: { ref_frame: S.detFrame >= 0 ? S.detFrame : S.frame, corners: S.corners, points: S.cpts, lines: goodLines(), teams, officials, match: { ...match, scoreboard } } });
     S.job = await api(`/api/videos/${S.vid}/analyze`, { method: "POST" });
     go(5);
   } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "분석 시작"; }
@@ -963,6 +1159,13 @@ function pollRender() {
 /* ---------------- 키보드 ---------------- */
 document.addEventListener("keydown", e => {
   if (e.target.matches("input:not([type=range]), textarea") || e.target.closest(".handle")) return;
+  if (S.step === 2) {
+    if (e.key === "Escape" && (S.pick || S.sel)) { S.pick = null; S.sel = null; $("#loupe")?.classList.add("hidden"); drawOverlay(); renderPanel(); return; }
+    const ref = selRef();
+    if (ref && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); delSel(); return; }
+    const d = e.shiftKey ? 10 : 1, k = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[e.key];
+    if (ref && k && e.target.type !== "range") { e.preventDefault(); ref[0] += k[0]; ref[1] += k[1]; showLoupe(ref); drawOverlay(); refit(); return; }
+  }
   if (S.step >= 1 && S.step <= 3 && $("#frameRange")) {
     const d = e.shiftKey ? Math.round(S.meta.fps) : 1;
     if (e.key === "ArrowLeft") { e.preventDefault(); loadFrame(S.frame - d); frameChanged(); }

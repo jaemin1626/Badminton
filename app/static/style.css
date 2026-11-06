@@ -127,7 +127,7 @@ aside{display:flex;flex-direction:column;gap:14px;min-width:0}
 .btn-row{display:flex;gap:8px;margin-top:12px}
 .btn-row .icon-btn{flex:1;justify-content:center}
 
-.team-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.team-tabs{display:grid;grid-template-columns:1fr 1fr .8fr;gap:8px;margin-bottom:12px}
 .team-tab{border:2px solid var(--line);background:var(--bg2);border-radius:12px;padding:10px 12px;cursor:pointer;text-align:left;transition:.2s var(--ease)}
 .team-tab .t{font-family:"Barlow Condensed","Noto Sans KR",sans-serif;font-size:21px;font-weight:700}
 .team-tab .c{color:var(--muted);font-size:12px}
@@ -350,3 +350,59 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .pp-quick .icon-btn{flex:1;justify-content:center}
 .pub .cta{margin-top:14px}
 .pub-dl{width:100%;justify-content:center;margin-top:8px;text-decoration:none}
+
+/* ---------------- 코트 지정 (점·라인) ---------------- */
+.court-pick{display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;margin:0 0 10px}
+.diag{width:150px;height:auto;display:block;overflow:visible}
+.diag .d-court{fill:var(--court);rx:.08}
+.diag .d-side{font:600 .42px "Noto Sans KR",sans-serif;fill:var(--muted);text-anchor:middle}
+.diag .d-net{stroke:#fff;stroke-width:.09;stroke-dasharray:.18 .14}
+.diag .d-ln.dim{stroke:#ffffff40;stroke-width:.05}
+.diag .d-l{cursor:pointer}
+.diag .d-l .hit{stroke:transparent;stroke-width:.55}
+.diag .d-l .vis{stroke:#ffffffcc;stroke-width:.09;transition:stroke .15s}
+.diag .d-l:hover .vis,.diag .d-l:focus-visible .vis{stroke:#4fe3ff;stroke-width:.16}
+.diag .d-l.done .vis{stroke:#4fe3ff;stroke-width:.16}
+.diag .d-l.pick .vis{stroke:#4fe3ff;stroke-width:.26;animation:blink .9s ease-in-out infinite}
+.diag .d-p{cursor:pointer}
+.diag .d-p circle{fill:var(--panel);stroke:var(--accent);stroke-width:.09;transition:.15s}
+.diag .d-p:hover circle,.diag .d-p:focus-visible circle{fill:color-mix(in srgb,var(--accent) 55%,var(--panel))}
+.diag .d-p.done circle{fill:var(--accent)}
+.diag .d-p.pick circle{fill:var(--accent);stroke:#fff;stroke-width:.14;animation:blink .9s ease-in-out infinite}
+.diag :focus-visible{outline:none}
+@keyframes blink{50%{opacity:.35}}
+.fit-stat{display:flex;flex-direction:column;gap:4px;min-width:0}
+.fit-stat .lbl{font-size:12px;color:var(--muted)}
+.fit-stat b.display{font-size:52px;line-height:.95;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums}
+.fit-stat b.display small{font-size:18px;font-weight:600;color:var(--muted);margin-left:3px}
+.fit-stat b.display.warn{color:var(--warn)}
+.fit-stat .legend{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.fit-stat .legend i{width:12px;height:12px;flex:0 0 12px}
+.fit-stat .legend i.lp{border-radius:50%;background:var(--accent)}
+.fit-stat .legend i.ll{border-radius:3px;background:#4fe3ff}
+.pick-msg{margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--bg2);font-size:13px;line-height:1.55;color:var(--muted)}
+.pick-msg b{color:var(--ink)}
+.bad-t{color:var(--warn)!important}
+.cp-list{max-height:230px;overflow:auto}
+.cp-list li{cursor:pointer;padding:7px 8px 7px 10px}
+.cp-list li .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.cp-list li .xy{margin-left:0}
+.cp-list li.ln .n{background:#4fe3ff;color:#06222a;font-size:10px}
+.cp-list li .x{border:0;background:transparent;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:0 4px;border-radius:6px}
+.cp-list li .x:hover{color:var(--bad)}
+.stage.picking svg.scene{cursor:crosshair}
+.frame-edge{fill:none;stroke:#ffffff55;stroke-dasharray:10 8}
+.cl-fit{stroke:#4fe3ffaa;fill:none}
+.cl-fit.on{stroke:#4fe3ff}
+.lpm rect{fill:#4fe3ff33;stroke:#4fe3ff;cursor:grab}
+.lpm.sel rect{fill:#4fe3ff;stroke:#fff}
+.lbl-l{fill:#4fe3ff;font:700 1em "Barlow Condensed","Noto Sans KR",sans-serif;paint-order:stroke;stroke:#000a;stroke-width:4px}
+.ptm circle{fill:color-mix(in srgb,var(--accent) 30%,transparent);stroke:var(--accent);cursor:grab}
+.ptm.sel circle{fill:var(--accent);stroke:#fff}
+.ptm line{stroke:#ff5d9e}
+.ptm text{fill:var(--accent);font-family:"Barlow Condensed","Noto Sans KR",sans-serif;font-weight:700;paint-order:stroke;stroke:#000a;stroke-width:4px}
+
+/* 심판 */
+:root{--teamR:#c9d1cc}
+.team-tab.R.on{border-color:var(--teamR);background:color-mix(in srgb,var(--teamR) 14%,var(--panel))}
+.pbox.R rect.frame{stroke:var(--teamR);stroke-dasharray:10 6;fill:color-mix(in srgb,var(--teamR) 12%,transparent)}

@@ -235,6 +235,7 @@ class FitReq(BaseModel):
 
 
 @router.post("/api/lab/fit-court")
+@router.post("/api/court/fit")   # 운영 페이지 코트 지정도 같은 계산
 def lab_fit_court(req: FitReq):
     """설정 화면에서 점·라인을 찍을 때마다 호출: 호모그래피와 점·라인별 오차."""
     r = fit_court(req.points, req.lines)
