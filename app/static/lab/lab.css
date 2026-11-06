@@ -191,3 +191,10 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .presets .nm{flex:1;display:flex;flex-direction:column;min-width:0}
 .presets .nm small{color:var(--muted);font-size:11px}
 .presets .b{height:26px;padding:0 8px;font-size:12px}
+
+/* 같은 이름 설정 안내 */
+.ask{background:var(--panel);color:var(--text);border:1px solid var(--wood);border-radius:14px;padding:20px 22px;max-width:440px}
+.ask::backdrop{background:#000a}
+.ask p{color:var(--muted);font-size:14px;line-height:1.6}
+.ask p b{color:var(--text)}
+.ask .actions{margin-top:14px}

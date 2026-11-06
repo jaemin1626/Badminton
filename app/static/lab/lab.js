@@ -168,6 +168,23 @@ async function openVideo(vid, mode) {
   if (applyDraft(c)) { toast("저장하지 않은 작업을 이어서 불러왔어요. 저장 버튼을 눌러야 설정 파일에 들어가요"); if (S.mode === "setup") { buildStage(); loadFrame(S.frame); renderSetupPanel(); refit(true); } }
   else if (S.info.seeded) toast("운영 화면 설정을 시작점으로 불러왔어요. 저장해야 실험용으로 쓰여요");
   renderPresets();
+  if (S.info.same_name) askSameName(S.info.same_name);
+}
+function askSameName(p) {
+  const when = p.saved ? new Date(p.saved * 1000).toLocaleString("ko-KR") : "";
+  $("#askBody").innerHTML = `<b>data/configs/${p.name}.json</b><br>${when}${p.video ? ` · ${p.video}에서 저장` : ""}<br>
+    코트 점 ${p.points}개 · 라인 ${p.lines}개 · 심판 ${p.officials}명 · 기준 프레임 #${p.ref_frame}<br><br>이 설정을 사용하시겠습니까?`;
+  const dlg = $("#askDlg");
+  $("#askYes").onclick = async () => {
+    dlg.close();
+    try {
+      await api(`/api/lab/${S.vid}/presets/${encodeURIComponent(p.name)}/load`, { method: "POST" });
+      localStorage.removeItem(draftKey()); toast(`'${p.name}' 설정을 불러왔어요`);
+      await openVideo(S.vid, "setup");
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#askNo").onclick = () => dlg.close();
+  dlg.showModal();
 }
 
 function setMode(m) {
@@ -518,12 +535,12 @@ function applyDraft(c) {
 function renderPresets() {
   const cur = S.info?.config?.name;
   $("#curName").textContent = cur ? `지금: ${cur}` : "이름 없음";
-  if (cur && !$("#presetName").value) $("#presetName").value = cur;
+  if (!$("#presetName").value || $("#presetName").dataset.vid !== S.vid) { $("#presetName").value = cur || S.info?.stem || ""; $("#presetName").dataset.vid = S.vid; }
   const when = t => t ? new Date(t * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
   $("#presetList").innerHTML = (S.info?.presets || []).map(p => `<li class="${p.name === cur ? "cur" : ""}">
-    <span class="nm"><b>${p.name}</b><small>${when(p.saved)} · 점 ${p.points} · 라인 ${p.lines} · 심판 ${p.officials} · #${p.ref_frame}</small></span>
+    <span class="nm"><b>${p.name}</b><small>${when(p.saved)}${p.video ? ` · ${p.video}` : ""} · 점 ${p.points} · 라인 ${p.lines} · 심판 ${p.officials} · #${p.ref_frame}</small></span>
     <button class="b" data-load="${p.name}">불러오기</button><button class="b" data-del="${p.name}" title="삭제" aria-label="${p.name} 삭제">×</button></li>`).join("")
-    || `<li class="empty">아직 보관한 설정이 없어요</li>`;
+    || `<li class="empty">아직 저장한 설정 파일이 없어요</li>`;
   $$("#presetList [data-load]").forEach(b => b.onclick = async () => {
     try {
       await api(`/api/lab/${S.vid}/presets/${encodeURIComponent(b.dataset.load)}/load`, { method: "POST" });

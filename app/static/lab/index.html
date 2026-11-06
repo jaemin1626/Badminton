@@ -84,10 +84,10 @@
     </div>
     <p class="hint small" id="setupMsg"></p>
     <section class="box">
-      <h2>설정 보관함 <span class="tag" id="curName">이름 없음</span></h2>
-      <p class="hint">저장한 설정에 이름을 붙여 두면 나중에 불러와 같은 조건으로 다시 실험할 수 있어요.
-        찍는 중인 작업은 브라우저에 자동으로 임시 저장돼요.</p>
-      <div class="row preset-new"><input id="presetName" maxlength="40" placeholder="예: 기본 코트 v1"><button class="btn" id="presetSave">저장하고 이름 붙이기</button></div>
+      <h2>설정 파일 <span class="tag" id="curName">이름 없음</span></h2>
+      <p class="hint">코트·선수·심판·경기 설정을 <b>data/configs/&lt;이름&gt;.json</b>으로 저장해요. 이름은 영상 이름이 기본이라,
+        같은 이름의 영상을 다시 올리면 이 설정을 쓸지 물어봐요. 찍는 중인 작업은 브라우저에 자동으로 임시 저장돼요.</p>
+      <div class="row preset-new"><input id="presetName" maxlength="40" placeholder="설정 이름"><button class="btn primary" id="presetSave">코트·선수 설정 저장</button></div>
       <ol class="presets" id="presetList"></ol>
     </section>
   </aside>
@@ -144,6 +144,11 @@
   </aside>
 </main>
 
+<dialog id="askDlg" class="ask">
+  <h2>같은 이름의 설정 파일이 있어요</h2>
+  <p id="askBody"></p>
+  <div class="actions"><button class="btn" id="askNo">새로 지정할게요</button><button class="btn primary" id="askYes">이 설정 사용하기</button></div>
+</dialog>
 <div class="toast" id="toast"></div>
 <script src="/static/lab/lab.js"></script>
 </body>
