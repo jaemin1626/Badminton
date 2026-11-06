@@ -282,12 +282,25 @@ def register_local_files():
             d = DATA / vid
             d.mkdir()
             dst = d / f"source{f.suffix.lower()}"
-            if not dst.exists():
-                dst.symlink_to(Path("..") / f.name)
             try:
+                if not dst.exists():
+                    _link_source(f, dst)
                 _register(vid, d, dst, f.name, local=str(f))
             except Exception:  # noqa: BLE001  (못 여는 파일은 건너뛴다)
                 traceback.print_exc()
+                shutil.rmtree(d, ignore_errors=True)
+
+
+def _link_source(src: Path, dst: Path):
+    """원본을 가리키는 링크. Windows는 심볼릭 링크에 관리자 권한(또는 개발자 모드)이 필요하므로
+    하드 링크(같은 드라이브, 권한 불필요)로, 그것도 안 되면 복사로 대신한다."""
+    try:
+        dst.symlink_to(Path("..") / src.name)
+    except OSError:
+        try:
+            dst.hardlink_to(src)
+        except OSError:
+            shutil.copy2(src, dst)
 
 
 @app.get("/api/videos")
