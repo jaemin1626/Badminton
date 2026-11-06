@@ -738,6 +738,7 @@ function loop() {
       $("#vInfo").textContent = `샘플 ${i} · 프레임 ${S.tr.frames[i]}`;
     }
     $("#vNum").textContent = `${fmt(t)} / ${fmt(S.meta.duration)}`;
+    const sk = $("#seek"); if (!S.seeking) { sk.max = S.meta.duration; sk.value = t; }
     // 재생 중이면 타임라인 창이 따라가게
     const v = S.view; if (!vid().paused && (t > v.t0 + v.span * .85 || t < v.t0)) v.t0 = Math.max(0, t - v.span * .15);
     drawTimeline(t);
@@ -904,6 +905,18 @@ function bindView() {
   $$("[data-j]").forEach(b => b.onclick = () => seek(v.currentTime + +b.dataset.j));
   $$("[data-fr]").forEach(b => b.onclick = () => { v.pause(); const i = clamp(S.cur + +b.dataset.fr, 0, S.tr.frames.length - 1); seek(tOf(i) + .001); });
   $("#rate").onchange = e => v.playbackRate = +e.target.value;
+  // 재생 위치 바: 끄는 동안 바로 그 시점을 보여 준다
+  const sk = $("#seek");
+  sk.addEventListener("input", () => { S.seeking = true; $("#seekNum").textContent = fmt(+sk.value); seek(+sk.value); S.view.t0 = Math.max(0, +sk.value - S.view.span * .3); });
+  sk.addEventListener("change", () => { S.seeking = false; $("#seekNum").textContent = ""; });
+  // 시간 직접 입력: 4:30, 270, 1:02:05
+  $("#goTime").addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    const parts = e.target.value.trim().split(":").map(Number);
+    if (!parts.length || parts.some(isNaN)) { toast("4:30 처럼 분:초로 적어 주세요", true); return; }
+    const sec = parts.reduce((a, b) => a * 60 + b, 0);
+    seek(sec); S.view.t0 = Math.max(0, sec - S.view.span * .3); e.target.blur();
+  });
   ["oBox", "oPose", "oLines", "oOff"].forEach(id => $("#" + id).onchange = () => S.dirty = true);
   $$("#evFilter button").forEach(b => b.onclick = () => { S.filter = b.dataset.f; $$("#evFilter button").forEach(x => x.classList.toggle("on", x === b)); renderEvents(); });
   $("#resetParams").onclick = () => { S.params = { ...S.defaults }; buildParams(); recalc(); };

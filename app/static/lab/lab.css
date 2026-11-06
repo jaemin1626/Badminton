@@ -210,3 +210,8 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .lc li small{color:var(--muted);font:11px var(--mono);text-align:right}
 .lc-c,.lc-run,.lc-score{font-size:11px;color:var(--muted);margin-top:6px;border-top:1px solid var(--line);padding-top:5px}
 .lc-run b,.lc-score b{color:var(--text)}
+
+/* 재생 위치 바 */
+.seekrow{display:flex;align-items:center;gap:10px;margin-top:8px}
+.seekrow input{flex:1;accent-color:var(--wood);height:18px;cursor:pointer}
+.gotime{width:70px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;height:30px;padding:0 8px;font:13px var(--mono)}

@@ -41,6 +41,14 @@ class Params:
     occ_max: float = 3.0          # s, '가려짐'(다른 사람 뒤에 숨음)으로 볼 최대 시간
     occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
     occ_reappear: float = 1.0     # m, 다시 나온 위치가 이보다 멀면 가려진 동안 움직인 것 → 추정 취소
+    # 추적 후보: 발이 코트 안(약간의 여유)인 사람만
+    court_side: float = 0.5       # m, 사이드라인 밖 허용
+    court_end: float = 1.0        # m, 엔드라인 뒤 허용
+    edge_px: int = 4              # 박스가 화면 가장자리에서 이만큼 안이면 '잘림' → 발 위치를 모르니 후보 제외
+    max_speed: float = 7.0        # m/s, 한 샘플 사이 이동 한계 = max_speed × 지난 시간 + gate_noise
+    gate_noise: float = 0.8       # m, 발 위치 오차 여유
+    gate_max: float = 4.0         # m, 오래 놓쳐도 한 번에 이보다 멀리 건너뛰지 않음 (2초 넘게 놓치면 다시 찾기)
+    off_radius: float = 1.0       # m, 지정한 심판 자리 주변은 항상 선수 후보에서 제외
 
 
 def slots_for(mode: str):
@@ -48,12 +56,6 @@ def slots_for(mode: str):
 
 
 # ---------------------------------------------------------------- 1) 추적
-def _core_penalty(xy) -> float:
-    x, y = xy
-    inside = -0.6 <= x <= C.W + 0.6 and -1.2 <= y <= C.L + 1.2
-    return 0.0 if inside else 2.5
-
-
 def _iou(a, b) -> float:
     iw = min(a[2], b[2]) - max(a[0], b[0]); ih = min(a[3], b[3]) - max(a[1], b[1])
     if iw <= 0 or ih <= 0:
@@ -126,6 +128,7 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
 
     # ---- 1) 검출 패스
     dets, frames = [], []
+    fw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)); fh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     for imgs, idx in _read_samples(cap, total, step, params.batch, stop):
         for d in det(imgs, conf=params.det_conf, iou=params.det_iou):
             if len(d):
@@ -155,6 +158,18 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     gap_n = max(1, int(round(2.0 * fps / step)))
 
     # ---- 2) 매칭: ref에서 앞으로, ref-1에서 뒤로
+    dt_s = step / fps
+    off_fixed = [np.array(o["court_pos"], float) if o.get("court_pos") else
+                 C.to_court(H, [[(o["bbox"][0] + o["bbox"][2]) / 2, o["bbox"][3]]])[0] for o in officials]
+
+    def in_court(xy) -> bool:
+        x, y = xy
+        return -params.court_side <= x <= C.W + params.court_side and -params.court_end <= y <= C.L + params.court_end
+
+    def cut(b) -> bool:   # 화면 가장자리에서 잘린 박스: 발 위치를 알 수 없다
+        e = params.edge_px
+        return b[0] <= e or b[2] >= fw - e or b[3] >= fh - e
+
     def run(order):
         last = {s: (default[s], ref) for s in slots}         # 마지막 위치(추정 포함), 샘플
         seen = {s: (ref, default[s], init_box[s]) if s in init_box else None for s in slots}
@@ -176,7 +191,8 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                             best, bc = j, c
                 if best is not None:
                     used.add(best); olast[k] = (cxy[best], d[best, :4].copy()); off_box[si, k] = d[best, :4]
-            near_off = lambda j: any(np.linalg.norm(cxy[j] - op) < 0.6 for op, _ in olast)
+            near_off = lambda j: (any(np.linalg.norm(cxy[j] - op) < 0.6 for op, _ in olast)
+                                  or any(np.linalg.norm(cxy[j] - fp) < params.off_radius for fp in off_fixed))
             # (b) 설정 프레임: 지정한 박스와 가장 많이 겹치는 검출을 그대로 쓴다
             if si == ref:
                 for s, ib in init_box.items():
@@ -188,8 +204,9 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
             # (c) 나머지 슬롯: 쪽마다 헝가리안
             for side in ("far", "near"):
                 ss = [s for s in slots if s.startswith(side) and np.isnan(box[si, slots.index(s), 0])]
-                cand = [j for j in range(len(d)) if j not in used and not near_off(j)
-                        and C.in_play(cxy[j]) and C.side_of(cxy[j][1]) == side]
+                # 후보: 발이 코트 안(여유 포함)이고, 화면에서 잘리지 않았고, 심판 자리가 아닌 사람
+                cand = [j for j in range(len(d)) if j not in used and not near_off(j) and not cut(d[j])
+                        and in_court(cxy[j]) and C.side_of(cxy[j][1]) == side]
                 if not ss or not cand:
                     continue
                 cost = np.zeros((len(ss), len(cand)))
@@ -197,12 +214,17 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                     lp, ls = last[s]
                     recent = abs(si - ls) <= gap_n
                     ref_p = lp if recent else default[s]
+                    # 지난 시간 동안 사람이 갈 수 있는 거리 안에서만 잇는다 (2초 넘게 놓쳤으면 코트 안 누구든 다시 찾기)
+                    gate = min(params.max_speed * dt_s * max(1, abs(si - ls)) + params.gate_noise, params.gate_max)
                     for b, j in enumerate(cand):
                         dd = float(np.linalg.norm(cxy[j] - ref_p))
-                        cost[a, b] = (dd if recent else 0.4 * dd) + _core_penalty(cxy[j]) + (1 - d[j, 4])
+                        if recent and dd > gate:
+                            cost[a, b] = 1e6
+                        else:
+                            cost[a, b] = (dd if recent else 0.4 * dd) + (1 - d[j, 4])
                 r, c = linear_sum_assignment(cost)
                 for a, b in zip(r, c):
-                    if cost[a, b] > 5.0:
+                    if cost[a, b] >= 1e6:
                         continue
                     j = cand[b]; k = slots.index(ss[a]); used.add(j)
                     box[si, k] = d[j, :4]; conf[si, k] = d[j, 4]; pos[si, k] = cxy[j]
