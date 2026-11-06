@@ -30,14 +30,16 @@ class Params:
     det_iou: float = 0.65         # 사람 NMS. 서브 때 앞뒤로 겹쳐 선 팀원이 지워지지 않게 0.5보다 높게
     batch: int = 8
     still_speed: float = 0.55     # m/s, 이보다 느리면 정지
-    still_min: float = 0.6        # s, 4명 정지가 이만큼 지속되면 서브 후보
-    merge_gap: float = 0.35       # s, 짧은 끊김은 하나의 정지 구간으로
+    still_min: float = 0.3        # s, 정지가 이만큼 지속되면 서브 후보 (실제 서브 41개 기준 0.3~0.5초짜리가 많았다)
+    merge_gap: float = 0.5        # s, 짧은 끊김은 하나의 정지 구간으로
     rally_speed: float = 1.6      # m/s, 서브 사이에 랠리(빠른 움직임)가 있었는지
     min_serve_gap: float = 3.5    # s, 서브 이벤트 최소 간격
     rally_window: float = 2.5     # s, 정지가 끝나고 이 안에 랠리가 시작돼야 서브
     box_front: float = 0.7        # m, 서비스 코트 앞쪽 여유 (숏 서비스 라인보다 네트 쪽으로)
     box_back: float = 0.4         # m, 서비스 코트 뒤쪽 여유 (복식 롱 서비스 라인보다 뒤로)
     center_margin: float = 0.25   # m, 센터라인에서 이보다 가까우면 좌우 판정 보류
+    require_diagonal: float = 0.0  # 1이면 서버·리시버가 대각선이어야 서브로 인정 (match.mp4에서 진짜 서브 9개를 버려서 기본은 끔)
+    serve_lag: float = 1.4        # s, 서브 시각 = 정지가 끝난 때 − serve_lag (실제 서브는 정지 끝보다 평균 1.4초 앞)
     smooth: float = 0.45          # s, 위치 평활 창
     occ_max: float = 3.0          # s, '가려짐'(다른 사람 뒤에 숨음)으로 볼 최대 시간
     occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
@@ -564,7 +566,7 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
                     or not (-0.4 <= mp[k][0] <= C.W + 0.4)):
                 ok = False; reasons.append(f"{slots[k]} 서비스 코트 밖 (네트에서 {d:.2f} m)")
         bf, bn = C.service_box("far", mp[fi]), C.service_box("near", mp[ni])
-        if bf != bn:
+        if bf != bn and params.require_diagonal >= 0.5:
             ok = False; reasons.append("대각선 아님")
         for k in (fi, ni):
             if abs(mp[k][0] - C.CENTER) < params.center_margin:
@@ -593,8 +595,9 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         logit = (sn - sf) + onset + formation
         p_near = 1 / (1 + math.exp(-logit))
         cands.append(dict(
-            i0=int(a), i1=int(b), t_still=float(t[a]), t=float(t[b]),
-            frame=int(tr["frames"][b]), frame_still=int(tr["frames"][a]),
+            # 서브 시각: 정지가 끝난 때보다 serve_lag 앞 (단, 정지 시작보다 앞으로는 가지 않음)
+            i0=int(a), i1=int(b), t_still=float(t[a]), t=float(max(t[a], t[b] - params.serve_lag)), t_end=float(t[b]),
+            frame=int(round(max(t[a], t[b] - params.serve_lag) * float(tr["fps"]))), frame_still=int(tr["frames"][a]),
             box=bf, p_near=round(p_near, 3), view=view,
             seen={"visible": [slots[k] for k in vis], "hidden": [slots[k] for k in hid]},
             front={"far": slots[fi], "near": slots[ni]},
@@ -616,8 +619,8 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
                      **{k: prev[k] for k in ("box", "p_near", "view", "cues", "front")})
                 out[-1] = c
                 continue
-            if c["t_still"] - prev["t"] < params.min_serve_gap:
-                note(c["i0"], c["i1"], "C", f"직전 서브와 {c['t_still'] - prev['t']:.1f}초 (기준 {params.min_serve_gap}초) → 랠리 중 멈춤",
+            if c["t_still"] - prev["t_end"] < params.min_serve_gap:
+                note(c["i0"], c["i1"], "C", f"직전 서브와 {c['t_still'] - prev['t_end']:.1f}초 (기준 {params.min_serve_gap}초) → 랠리 중 멈춤",
                      **{k: c[k] for k in ("box", "p_near", "view", "cues", "front")})
                 continue
         out.append(c)
