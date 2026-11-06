@@ -370,6 +370,37 @@ def lab_kps(vid: str):
 
 class ServeReq(BaseModel):
     params: dict = Field(default_factory=dict)
+    use_truth: bool = True   # 정답 득점 팀을 고정값으로 넣어 점수를 바로잡을지 (채점은 항상 넣기 전 결과로)
+
+
+def apply_truth_winners(serves: list, truth_data: dict | None, near: float = 3.0) -> list:
+    """정답의 랠리별 득점 팀을 알고리즘 서브에 고정값으로 넣은 사본.
+
+    정답 j번 랠리를 w가 이겼으면 → 정답 j+1번 서브에 해당하는 판정 서브의 서버를 w로 고정(override).
+    마지막 랠리는 다음 서브가 없으니 그 판정 서브에 last_won=w.
+    정답 서브와 판정 서브는 가까운 것끼리(near 초 안) 짝짓는다 — 채점보다 느슨하게 (조금 늦게 잡은 서브도 고치게).
+    """
+    out = [dict(e) for e in serves]
+    marks = sorted([m for m in (truth_data or {}).get("marks", []) if m.get("src") != "auto" or m.get("ok")], key=lambda m: m["t"])
+    if not marks or not out:
+        return out
+    order = sorted(range(len(out)), key=lambda i: out[i]["t"])
+    cand = sorted((abs(out[i]["t"] - m["t"]), j, i) for j, m in enumerate(marks) for i in order if abs(out[i]["t"] - m["t"]) <= near)
+    t2p: dict = {}
+    used: set = set()
+    for _, j, i in cand:
+        if j not in t2p and i not in used:
+            t2p[j] = i; used.add(i)
+    for j, m in enumerate(marks):
+        w = None if m.get("win_auto") else m.get("winner")
+        if w not in ("A", "B"):
+            continue
+        if j + 1 < len(marks):
+            if j + 1 in t2p:
+                out[t2p[j + 1]]["override"] = w
+        elif j in t2p:
+            out[t2p[j]]["last_won"] = w
+    return out
 
 
 # ---------------------------------------------------------------- 실행 기록
@@ -471,6 +502,15 @@ def lab_serves(vid: str, req: ServeReq):
         setup["nameA"], setup["nameB"] = cfg["teams"]["1"]["name"], cfg["teams"]["2"]["name"]
         sides = {"A": cfg["teams"]["1"]["side"], "B": cfg["teams"]["2"]["side"]}
         scored, summary = A.score_events(serves, setup, sides)
+    truth_data = read_json(ldir(vid) / "truth.json", {})
+    shown, shown_sum, fixed = scored, summary, 0
+    if cfg.get("teams") and req.use_truth:   # 정답 득점 팀으로 바로잡은 흐름 (화면용). 채점은 위 scored로
+        fx = apply_truth_winners(serves, truth_data)
+        fixed = sum(1 for e in fx if e.get("override") or e.get("last_won"))
+        if fixed:
+            shown, shown_sum = A.score_events(fx, setup, sides)
+            for e, r in zip(shown, scored):   # 비교용: 정답을 넣기 전 알고리즘 판단
+                e["won_raw"], e["server_raw"] = r.get("won"), r.get("server")
     runs = dbg.get("runs", [])
     for r in runs:
         r.pop("i0", None); r.pop("i1", None)
@@ -482,12 +522,11 @@ def lab_serves(vid: str, req: ServeReq):
                 "run_s": np.round(lv["run_s"], 2).tolist(), "front": lv["front"].tolist(),
                 "dist": _nan_list(lv["dist"], 2), "x": _nan_list(lv["x"], 2), "box": lv["box"],
                 "box_range": [round(float(x), 2) for x in lv["box_range"]]}
-    truth_data = read_json(ldir(vid) / "truth.json", {})
-    truth = truth_times(truth_data)
     return {"params": dataclasses.asdict(params), "ms": round((time.time() - t0) * 1000), "live": live,
             "speed": _nan_list(v, 2) if v is not None else [],
             "still": dbg["still"].astype(int).tolist() if "still" in dbg else [],
-            "runs": runs, "serves": scored, "summary": summary,
+            "runs": runs, "serves": shown, "summary": shown_sum, "fixed": fixed,
+            "raw_summary": summary if fixed else None,
             "eval": eval_serves(serves, scored, truth_data, cfg.get("match", {}).get("first", "A"), summary)}
 
 

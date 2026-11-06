@@ -613,7 +613,7 @@ async function enterView() {
     S.Hinv = S.cfg?.homography ? S.cfg.homography.flat() : null;
     buildCourtMini(); buildParams();
   }
-  if (!S.truthLoaded) { const tr = await api(`/api/lab/${S.vid}/truth`); S.truthMarks = tr.marks || []; S.truthFinal = tr.final || null; S.truth = S.truthMarks.map(m => m.t); S.truthLoaded = true; }
+  if (!S.truthLoaded) { const tr = await api(`/api/lab/${S.vid}/truth`); S.truthMarks = tr.marks || []; S.truthFinal = tr.final || null; S.truthFinalized = !!tr.finalized; S.truth = S.truthMarks.map(m => m.t); S.truthLoaded = true; }
   if (!S.sv) await recalc();
   loadRuns();
   loop();
@@ -717,6 +717,7 @@ function liveChecks(i) {
 }
 const LIVE_COL = { ok: "#3ecf8e", A: "#7d8a84", B: "#ff5d6c" };
 
+const TEAM_COL = { A: "#5aa9ff", B: "#ff7a59" };
 // 팀 이름 (경기 설정의 1팀 = A, 2팀 = B)
 const teamName = k => k === "A" ? ($("#nameA")?.value || "1팀") : k === "B" ? ($("#nameB")?.value || "2팀") : "?";
 // 지금 시각의 랠리: 그 랠리 서브 · 득점 판정
@@ -770,7 +771,9 @@ function loop() {
       drawVideoOverlay(i); drawCourtMini(i); drawNow(i, t);
       $("#vInfo").textContent = `샘플 ${i} · 프레임 ${S.tr.frames[i]}`;
       const ra = rallyAt(t), vr = $("#vRally");
-      if (vr) { vr.classList.toggle("hidden", !ra); if (ra) vr.innerHTML = `${ra.n}번 랠리 · <b class="w${ra.n > 1 ? ra.e.server : ""}">${serveText(ra.e, ra.n)}</b>${ra.e.won_at ? "" : ` · <small>${lastText(ra.e)}</small>`}`; }
+      if (vr) { vr.classList.toggle("hidden", !ra); if (ra) { const j = truthIdxNear(ra.e.t), tw = j >= 0 ? truthWin(S.truthMarks[j]) : null;
+        vr.innerHTML = `${ra.n}번 랠리 · <b class="w${ra.n > 1 ? ra.e.server : ""}">${serveText(ra.e, ra.n)}</b>${ra.e.won_at ? "" : ` · <small>${lastText(ra.e)}</small>`}`
+          + (tw ? ` · <small>이 랠리 정답: <b class="w${tw}">${teamName(tw)} 득점</b></small>` : ` · <small>A/B로 이 랠리 득점 팀 정답</small>`); } }
     }
     $("#vNum").textContent = `${fmt(t)} / ${fmt(S.meta.duration)}`;
     const sk = $("#seek"); if (!S.seeking) { sk.max = S.meta.duration; sk.value = t; }
@@ -828,6 +831,13 @@ function drawTimeline(t) {
     if (tt < t0 || tt > t1) continue; const x = X(tt);
     c.fillStyle = "#ffffff"; c.beginPath(); c.moveTo(x - 6, top - 2); c.lineTo(x + 6, top - 2); c.lineTo(x, top + 9); c.fill();
     c.strokeStyle = "#ffffff88"; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
+    const tw = truthWin(S.truthMarks?.[S.truth.indexOf(tt)]);
+    if (tw) { c.fillStyle = TEAM_COL[tw]; c.font = "bold 12px 'Noto Sans KR',sans-serif"; c.fillText(`정답 ${tw} 득점`, x + 8, top + 26); }
+  }
+  if (S.hoverT != null && S.hoverT >= t0 && S.hoverT <= t1) {
+    const x = X(S.hoverT); c.strokeStyle = "#ffe14d"; c.lineWidth = 3; c.beginPath(); c.moveTo(x, top - 4); c.lineTo(x, bot); c.stroke(); c.lineWidth = 1;
+    c.fillStyle = "#ffe14d"; c.font = "bold 12px 'Noto Sans KR',sans-serif";
+    const lbl = "A / B = 이 랠리 득점 팀", lw = c.measureText(lbl).width; c.fillText(lbl, Math.min(x + 6, w - lw - 4), top + 42);
   }
   // 서브 표시
   for (const e of S.sv.serves) {
@@ -881,13 +891,21 @@ function bindTimeline() {
   let drag = null;
   cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, t0: S.view.t0, moved: false }; cv.setPointerCapture(e.pointerId); });
   cv.addEventListener("pointermove", e => {
-    if (!drag) return; const dx = e.clientX - drag.x; if (Math.abs(dx) > 3) drag.moved = true;
+    if (!drag) {   // 서브 표시(정답 ▼ · 판정 초록 선)에 마우스를 대면 A/B로 득점 팀 정답
+      const r = cv.getBoundingClientRect(), px = S.view.span / Math.max(1, r.width - PL), t = tAt(e);
+      const cands = [...(S.truth || []), ...(S.sv?.serves || []).map(x => x.t)];
+      let best = null, bd = 10 * px;
+      for (const c of cands) { const d = Math.abs(c - t); if (d <= bd) { bd = d; best = c; } }
+      if (best !== S.hoverT) { S.hoverT = best; cv.style.cursor = best != null ? "pointer" : ""; }
+      return;
+    } const dx = e.clientX - drag.x; if (Math.abs(dx) > 3) drag.moved = true;
     const r = cv.getBoundingClientRect(); S.view.t0 = clamp(drag.t0 - dx / (r.width - PL) * S.view.span, 0, Math.max(0, S.meta.duration - S.view.span));
   });
   cv.addEventListener("pointerup", e => {
     if (drag && !drag.moved) { const t = tAt(e); const r = S.sv?.runs.find(r => t >= r.t0 && t <= r.t1); if (r) selectRun(r, false); seek(t); }
     drag = null;
   });
+  cv.addEventListener("pointerleave", () => { if (!drag) S.hoverT = null; });
   cv.addEventListener("wheel", e => {
     e.preventDefault(); const t = tAt(e), k = e.deltaY > 0 ? 1.25 : .8;
     const span = clamp(S.view.span * k, 4, S.meta.duration);
@@ -909,10 +927,21 @@ function renderEvents() {
     const cues = r.cues ? `p_near ${r.p_near} · ${r.box || "-"} · view ${r.view} · 자세 far ${r.cues.pose_far} / near ${r.cues.pose_near} · 손목 ${r.cues.onset || "-"} · 대형 ${r.cues.formation ? `${r.cues.formation.far}/${r.cues.formation.near}` : "-"}` : "";
     return `<li class="${r.stage} ${r === S.selRun ? "cur" : ""}" data-i="${idx}">
       <span class="t">${fmt(r.t0)}–${fmt(r.t1)} (${(r.t1 - r.t0).toFixed(1)}s)</span><span class="st" style="color:${STAGE_COL[r.stage]}">${STAGE_NAME[r.stage]}</span>
-      <span class="r">${e ? `<b>${serveText(e, S.sv.serves.filter(s => !s.removed && s.t <= e.t + 1e-6).length)}</b> · 신뢰도 ${e.conf}${e.flags?.length ? " · " + e.flags.join(", ") : ""}` : r.reason}</span>
+      <span class="r">${e ? `<b>${serveText(e, S.sv.serves.filter(s => !s.removed && s.t <= e.t + 1e-6).length)}</b>${truthCmp(e)} · 신뢰도 ${e.conf}${e.flags?.length ? " · " + e.flags.join(", ") : ""}` : r.reason}</span>
       ${cues ? `<span class="cues">${cues}</span>` : ""}</li>`;
   }).join("") || `<li>해당하는 구간이 없어요</li>`;
-  $$("#evList li[data-i]").forEach(li => li.onclick = () => selectRun(runs[+li.dataset.i], true));
+  $$("#evList li[data-i]").forEach(li => {
+    li.onclick = () => selectRun(runs[+li.dataset.i], true);
+    const r = runs[+li.dataset.i];
+    if (r.stage === "OK") { li.onmouseenter = () => { S.hoverT = r.t1; S.dirty = true; }; li.onmouseleave = () => { S.hoverT = null; S.dirty = true; }; li.title = "마우스를 대고 A / B = 이 서브로 시작한 랠리의 득점 팀 정답"; }
+  });
+}
+// 이 서브로 시작한 랠리: 정답 득점 팀과 알고리즘 득점 팀 비교
+function truthCmp(e) {
+  const j = truthIdxNear(e.t), tw = j >= 0 ? truthWin(S.truthMarks[j]) : null;
+  if (!tw) return "";
+  const aw = "won_raw" in e ? e.won_raw : e.won, ok = aw === tw;   // 알고리즘만의 판단과 비교
+  return ` · <span style="color:${TEAM_COL[tw]}">정답 ${teamName(tw)} 득점</span> <b style="color:${ok ? "var(--ok,#3ecf8e)" : "#ff5d6c"}">${ok ? "✓" : "✗ 알고리즘은 " + (aw ? teamName(aw) : "모름")}</b>`;
 }
 function selectRun(r, jump) {
   S.selRun = r;
@@ -922,14 +951,40 @@ function selectRun(r, jump) {
 
 /* ---- 정답 서브 · 채점 ---- */
 let truthT;
+function saveTruthSoon(ms = 600) {
+  clearTimeout(truthT);
+  truthT = setTimeout(async () => {
+    try { await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: S.truthMarks, final: S.truthFinal, finalized: S.truthFinalized } }); }
+    catch (e) { toast(e.message, true); }
+    recalc();
+  }, ms);
+}
+// 정답 서브 j에 가장 가까운 판정 서브 (2.5초 안)
+const truthIdxNear = (t, tol = 2.5) => {
+  let k = -1, best = tol;
+  (S.truthMarks || []).forEach((m, j) => { const d = Math.abs(m.t - t); if (d <= best) { best = d; k = j; } });
+  return k;
+};
+const truthWin = m => m && !m.win_auto && (m.winner === "A" || m.winner === "B") ? m.winner : null;
+// 랠리 득점 팀 정답: 마우스를 댄 서브(타임라인 ▼·초록 선, 목록 줄) 또는 지금 보고 있는 랠리에 A/B
+function setTruthWinner(w) {
+  const ms = S.truthMarks || [];
+  if (!ms.length) { toast("정답 서브가 없어요. 정답 입력 페이지나 S로 먼저 서브를 표시하세요", true); return; }
+  let j = S.hoverT != null ? truthIdxNear(S.hoverT) : -1;
+  if (j < 0 && S.hoverT == null) { const t = vid().currentTime; ms.forEach((m, k) => { if (m.t <= t + .05) j = k; }); }
+  if (j < 0) { toast("이 서브 근처(2.5초 안)에 정답 서브가 없어요. S로 먼저 표시하세요", true); return; }
+  const m = ms[j];
+  if (truthWin(m) === w) { delete m.winner; delete m.win_auto; toast(`${j + 1}번 랠리 득점 정답을 지웠어요`); }
+  else { m.winner = w; delete m.win_auto; toast(`${j + 1}번 랠리 (${fmt(m.t)} 서브) → ${teamName(w)} 득점`); }
+  S.dirty = true; renderEvents(); saveTruthSoon(300);
+}
 function toggleMark() {
   const t = vid().currentTime, ms = S.truthMarks || (S.truthMarks = []), i = ms.findIndex(m => Math.abs(m.t - t) < 1.0);
   if (i >= 0) { ms.splice(i, 1); toast(`${fmt(t)} 정답 표시를 지웠어요`); }
   else { ms.push({ t: Math.round(t * 100) / 100 }); ms.sort((a, b) => a.t - b.t); toast(`${fmt(t)} 정답 서브 (${ms.length}개)`); }
   S.truth = ms.map(m => m.t);
   $("#truthNum").textContent = `정답 ${S.truth.length}개`;
-  clearTimeout(truthT);
-  truthT = setTimeout(async () => { await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: ms, final: S.truthFinal } }); recalc(); }, 600);
+  saveTruthSoon();
 }
 // 정답에 서버 위치가 있으면: 서버 쪽(위/아래 코트) · 좌우 맞힌 수
 // 정답에 랠리별 득점 팀이 있으면: 서버 팀 · 득점 팀 · 최종 점수
@@ -1009,8 +1064,9 @@ async function recalc() {
   Object.assign(S.params, p); localStorage.setItem("lab:params", JSON.stringify(S.params));
   $("#calcTag").textContent = "계산 중";
   try {
-    S.sv = await api(`/api/lab/${S.vid}/serves`, { method: "POST", json: { params: S.params } });
-    $("#calcTag").textContent = `${S.sv.serves.length}개 서브 · ${S.sv.ms}ms`;
+    S.sv = await api(`/api/lab/${S.vid}/serves`, { method: "POST", json: { params: S.params, use_truth: $("#useTruth")?.checked ?? true } });
+    const rs = S.sv.raw_summary?.score;
+    $("#calcTag").textContent = `${S.sv.serves.length}개 서브 · ${S.sv.ms}ms` + (S.sv.fixed ? ` · 정답 득점 ${S.sv.fixed}개로 바로잡음 (알고리즘만이면 ${rs.A}:${rs.B})` : "");
     S.selRun = null; S.dirty = true; renderEvents();
   } catch (e) { toast(e.message, true); $("#calcTag").textContent = "실패"; }
 }
@@ -1064,7 +1120,10 @@ function bindView() {
     else if (e.key === ",") $("[data-fr='-1']").click();
     else if (e.key === ".") $("[data-fr='1']").click();
     else if (e.key === "s" || e.key === "S" || e.key === "ㄴ") { e.preventDefault(); toggleMark(); }
+    else if (["a", "A", "ㅁ"].includes(e.key)) { e.preventDefault(); setTruthWinner("A"); }
+    else if (["b", "B", "ㅠ"].includes(e.key)) { e.preventDefault(); setTruthWinner("B"); }
   });
+  $("#useTruth")?.addEventListener("change", recalc);
 }
 
 boot().catch(e => toast(e.message, true));

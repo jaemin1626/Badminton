@@ -869,10 +869,12 @@ def score_events(events: list, setup: dict, sides: dict):
                 mm = m.clone(); mm.point(tm)
                 if mm.over or mm.game != m.game:
                     ends.append(tm)
+            if e.get("last_won") in ("A", "B") and not m.over:   # 사람이 정해 준 마지막 랠리 득점 팀
+                ends = [e["last_won"]]
             if len(ends) == 1 and not m.over:
                 g = m.clone(); g.point(ends[0])
                 sc = g.games[-1] if g.games else g.score
-                e.update(won=ends[0], won_conf=None, won_guess=True, won_at=None, score_after={"A": sc["A"], "B": sc["B"]})
+                e.update(won=ends[0], won_conf=None, won_guess=not e.get("last_won"), won_at=None, score_after={"A": sc["A"], "B": sc["B"]})
                 m = g
             else:
                 e.update(won=None, won_conf=None, won_at=None, score_after=None)
@@ -880,7 +882,7 @@ def score_events(events: list, setup: dict, sides: dict):
             e.update(won=nx["server"], won_conf=nx["conf"], won_at=nx["t"], score_after=dict(nx["score"]))
     last = live[-1] if live else None
     summary = {"score": dict(m.score), "game": m.game, "games": m.games, "over": m.over,
-               "rallies": len(live), "last_rally": None if not last else ("known" if last.get("kind") == "point" else
+               "rallies": len(live), "last_rally": None if not last else ("known" if last.get("kind") == "point" or last.get("last_won") else
                                                                          "guess" if last.get("won_guess") else "unknown")}
     if m.over and m.games:   # 경기가 끝났으면 마지막 게임 점수를 보여 준다
         summary["score"] = {"A": m.games[-1]["A"], "B": m.games[-1]["B"]}
