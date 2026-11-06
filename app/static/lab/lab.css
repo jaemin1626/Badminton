@@ -103,6 +103,7 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .tl{grid-area:tl;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;min-width:0}
 .tl canvas{display:block;width:100%}
 .tl canvas.ov{height:34px;cursor:pointer;margin-bottom:6px}
+.tl canvas.win{height:34px;cursor:pointer;margin-bottom:6px}
 .tl canvas.detail{height:300px;cursor:crosshair}
 .tlhint{font-size:11px;color:var(--muted);margin-top:4px}
 .events{grid-area:events;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;min-height:0;max-height:520px}

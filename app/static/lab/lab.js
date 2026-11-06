@@ -795,6 +795,26 @@ function setupCanvas(cv) {
   const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); return [c, w, h];
 }
 const PL = 46; // 왼쪽 축 여백
+// 득점 정답 띠: 랠리마다 한 칸 (파랑 = 팀 A 득점 · 주황 = 팀 B 득점 · 어두운 칸 = 아직)
+function drawWinStrip(t) {
+  const cv = $("#winCv"); if (!cv) return;
+  const [c, w, h] = setupCanvas(cv); c.clearRect(0, 0, w, h);
+  const dur = S.meta.duration, X = s => PL + (w - PL) * s / dur, rs = truthRallies();
+  c.fillStyle = "#9aa7a1"; c.font = "11px 'Noto Sans KR',sans-serif"; c.fillText("득점", 6, h / 2 - 2);
+  const n = rs.filter(r => r.w).length; c.fillText(`${n}/${rs.length}`, 6, h / 2 + 12);
+  const hj = S.hoverT != null ? truthIdxNear(S.hoverT) : -1;
+  for (const r of rs) {
+    const xa = X(r.t0) + 1, xb = X(r.t1) - 1, bw = Math.max(2, xb - xa);
+    const fl = S.flash && S.flash.j === r.j && performance.now() < S.flash.until;
+    c.fillStyle = r.w ? TEAM_COL[r.w] : "#2e3834"; c.fillRect(xa, 3, bw, h - 6);
+    if (fl || r.j === hj) { c.strokeStyle = fl ? "#ffffff" : "#ffe14d"; c.lineWidth = 3; c.strokeRect(xa + 1.5, 1.5, bw - 3, h - 3); c.lineWidth = 1; }
+    const lbl = r.w ? `${r.j + 1} ${r.w}` : `${r.j + 1}`;
+    c.font = `bold ${bw > 44 ? 14 : 12}px 'Noto Sans KR',sans-serif`;
+    if (c.measureText(lbl).width + 6 < bw) { c.fillStyle = r.w ? "#0b1a2a" : "#9aa7a1"; c.fillText(lbl, xa + 4, h / 2 + 5); }
+    else if (bw > 12) { c.fillStyle = r.w ? "#0b1a2a" : "#9aa7a1"; c.fillText(r.w || "", xa + 3, h / 2 + 5); }
+  }
+  c.fillStyle = "#fff"; c.fillRect(X(t) - 1, 0, 2, h);
+}
 function drawTimeline(t) {
   if (!S.sv) return;
   const dur = S.meta.duration, tr = S.tr, runs = S.sv.runs;
@@ -815,6 +835,7 @@ function drawTimeline(t) {
     c.fillStyle = "#fff"; c.fillRect(X(t) - 1, 0, 2, h);
     c.fillStyle = "#9aa7a1"; c.font = "11px ui-monospace,'Noto Sans KR',monospace"; c.fillText("전체", 6, h / 2 + 4);
   }
+  drawWinStrip(t);
   // 상세 (창)
   const [c, w, h] = setupCanvas($("#tlCv")); c.clearRect(0, 0, w, h);
   const t0 = S.view.t0, t1 = t0 + S.view.span, X = s => PL + (w - PL) * (s - t0) / (t1 - t0);
@@ -837,15 +858,15 @@ function drawTimeline(t) {
     if (r.t1 < t0 || r.t0 > t1 || !r.w) continue;
     const xa = Math.max(PL, X(r.t0)), xb = Math.min(w, X(r.t1));
     c.fillStyle = TEAM_COL[r.w]; c.globalAlpha = .1; c.fillRect(xa, top, xb - xa, bot - top);
-    c.globalAlpha = .85; c.fillRect(xa, top + 16, xb - xa, 5); c.globalAlpha = 1;
+    c.globalAlpha = .85; c.fillRect(xa, top + 20, xb - xa, 8); c.globalAlpha = 1;
   }
   for (const r of truthRallies()) {
     const tt = r.t0; if (tt < t0 || tt > t1) continue; const x = X(tt), col = r.w ? TEAM_COL[r.w] : "#ffffff";
     const fl = S.flash && S.flash.j === r.j && performance.now() < S.flash.until;
-    c.fillStyle = col; c.beginPath(); c.moveTo(x - (fl ? 10 : 7), top - 3); c.lineTo(x + (fl ? 10 : 7), top - 3); c.lineTo(x, top + (fl ? 14 : 10)); c.fill();
+    c.fillStyle = col; c.beginPath(); c.moveTo(x - (fl ? 14 : 10), top - 3); c.lineTo(x + (fl ? 14 : 10), top - 3); c.lineTo(x, top + (fl ? 20 : 15)); c.fill();
     c.strokeStyle = r.w ? col : "#ffffff88"; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
-    c.font = "bold 12px 'Noto Sans KR',sans-serif"; c.fillStyle = col;
-    c.fillText(r.w ? `${r.j + 1} · ${r.w} 득점` : `${r.j + 1}`, x + 8, top + 13);
+    c.font = "bold 16px 'Noto Sans KR',sans-serif"; c.fillStyle = col;
+    c.fillText(r.w ? `${r.j + 1}번 · ${teamName(r.w)} 득점` : `${r.j + 1}번`, x + 12, top + 16);
   }
   if (S.hoverT != null && S.hoverT >= t0 && S.hoverT <= t1) {
     const x = X(S.hoverT); c.strokeStyle = "#ffe14d"; c.lineWidth = 3; c.beginPath(); c.moveTo(x, top - 4); c.lineTo(x, bot); c.stroke(); c.lineWidth = 1;
@@ -897,7 +918,13 @@ function drawTimeline(t) {
   c.fillStyle = "#fff"; c.fillRect(X(t) - 1, 0, 2, h);
 }
 function bindTimeline() {
-  const ov = $("#ovCv"), cv = $("#tlCv");
+  const ov = $("#ovCv"), cv = $("#tlCv"), wc = $("#winCv");
+  if (wc) {
+    const rAt = e => { const r = wc.getBoundingClientRect(), t = (e.clientX - r.left - PL) / (r.width - PL) * S.meta.duration; return truthRallies().find(x => t >= x.t0 && t < x.t1); };
+    wc.addEventListener("pointermove", e => { const r = rAt(e); S.hoverT = r ? r.t0 : null; });
+    wc.addEventListener("pointerleave", () => { S.hoverT = null; });
+    wc.addEventListener("click", e => { const r = rAt(e); if (r) { S.view.t0 = Math.max(0, r.t0 - 3); seek(Math.max(0, r.t0 - 1.5)); } });
+  }
   const ovT = e => { const r = ov.getBoundingClientRect(); return clamp((e.clientX - r.left - PL) / (r.width - PL), 0, 1) * S.meta.duration; };
   ov.addEventListener("pointerdown", e => { const t = ovT(e); S.view.t0 = Math.max(0, t - S.view.span / 2); seek(t); });
   const tAt = e => { const r = cv.getBoundingClientRect(); return S.view.t0 + (e.clientX - r.left - PL) / (r.width - PL) * S.view.span; };
