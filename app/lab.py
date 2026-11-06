@@ -585,7 +585,7 @@ def _eval_rally(serves, scored, marks, pairs, pred, first, summary):
     정답 서버 팀: 첫 서브는 경기 설정의 첫 서브 팀, 그다음부터는 직전 랠리 득점 팀 (랠리 포인트).
     알고리즘 득점 팀: 다음 판정 서브의 서버 팀 (마지막 랠리는 알 수 없음).
     """
-    wins = [m.get("winner") for m in marks]
+    wins = [None if m.get("win_auto") else m.get("winner") for m in marks]   # 확인 안 한 자동 득점 팀은 정답 아님
     if not any(w in ("A", "B") for w in wins) or not scored:
         return None
     r = {"labeled": sum(w in ("A", "B") for w in wins), "server_ok": 0, "server_n": 0, "winner_ok": 0, "winner_n": 0,
@@ -635,6 +635,37 @@ def lab_candidates(vid: str, which: str = "all"):
     return {"candidates": out}
 
 
+@router.get("/api/lab/{vid}/winners")
+def lab_winners(vid: str):
+    """정답 입력용 랠리별 득점 팀 자동 판정: 정답 서브마다 짝지은 판정 서브의 다음 서브 서버 팀 = 그 랠리 득점 팀.
+    마지막 랠리는 다음 서브가 없어 최종 점수로 채운다(득점 팀 합이 최종 점수에 하나 모자랄 때)."""
+    if not (ldir(vid) / "tracks.npz").exists():
+        raise HTTPException(400, "실험 페이지에서 추적을 먼저 실행해 주세요")
+    cfg = read_json(ldir(vid) / "config.json") or {}
+    if not cfg.get("teams"):
+        raise HTTPException(400, "실험 페이지에서 팀(1팀·2팀 코트)을 먼저 정해 주세요")
+    tr = _tracks(vid)
+    serves = A.find_serves(tr, cfg.get("match", {}).get("mode", "doubles"), A.Params())
+    setup = dict(cfg.get("match", {}))
+    setup["nameA"], setup["nameB"] = cfg["teams"]["1"]["name"], cfg["teams"]["2"]["name"]
+    scored, _ = A.score_events(serves, setup, {"A": cfg["teams"]["1"]["side"], "B": cfg["teams"]["2"]["side"]})
+    truth = read_json(ldir(vid) / "truth.json", {}) or {}
+    marks = sorted(truth.get("marks", []), key=lambda m: m["t"])
+    pred = sorted(range(len(serves)), key=lambda i: serves[i]["t"])
+    pairs: list = []
+    evaluate([serves[i]["t"] for i in pred], [m["t"] for m in marks], pairs)
+    out = [None] * len(marks)
+    for pi, tj in pairs:
+        if pi + 1 < len(pred) and pred[pi + 1] < len(scored):
+            out[tj] = scored[pred[pi + 1]].get("server")
+    fin = truth.get("final")
+    if marks and out[-1] is None and fin and None not in out[:-1]:
+        a = out[:-1].count("A")
+        if a + out[:-1].count("B") == fin["A"] + fin["B"] - 1:
+            out[-1] = "A" if a == fin["A"] - 1 else "B" if a == fin["A"] else None
+    return {"winners": [{"t": m["t"], "winner": w} for m, w in zip(marks, out)]}
+
+
 @router.get("/label")
 def label_page():
     return FileResponse(STATIC / "label" / "index.html")
@@ -664,6 +695,12 @@ def lab_put_truth(vid: str, req: TruthReq):
             item["server"] = m["server"]
         if m.get("note"):
             item["note"] = str(m["note"])[:100]
+        if m.get("winner") in ("A", "B"):
+            item["winner"] = m["winner"]
+            if m.get("win_auto"):   # 자동 판정으로 채운 득점 팀: 사람이 A/D로 확인하기 전에는 채점에 안 씀
+                item["win_auto"] = True
+        if m.get("spot") in ("far-L", "far-R", "near-L", "near-R"):
+            item["spot"] = m["spot"]
         if m.get("src") == "auto":   # 자동 판정에서 불러온 후보: 사람이 확인(ok)해야 정답으로 쓴다
             item.update(src="auto", ok=bool(m.get("ok")), stage=str(m.get("stage", ""))[:4], reason=str(m.get("reason", ""))[:200])
         marks.append(item)

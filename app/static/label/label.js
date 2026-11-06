@@ -14,7 +14,10 @@ function setSpot(m, spot) { m.spot = m.spot === spot ? undefined : spot; changed
 const WIN_KEY = { a: "A", ㅁ: "A", d: "B", ㅇ: "B" };
 function setWin(i, w) {
   const m = S.marks[i]; if (!m) return;
-  m.winner = m.winner === w ? undefined : w; S.sel = i; changed(true);
+  // 자동 판정 값과 같은 팀을 누르면 확인, 확인된 같은 팀을 다시 누르면 지우기
+  if (m.win_auto && m.winner === w) m.win_auto = false;
+  else { m.winner = m.winner === w ? undefined : w; m.win_auto = false; }
+  S.sel = i; changed(true);
   if (m.winner) toast(`${i + 1}번 랠리 → ${S.team[w]} 득점`);
 }
 // 득점 팀을 줄 서브: 멈춘 상태에서 목록에서 고른 서브, 아니면 지금 보고 있는 랠리(지금 시각 직전 서브)
@@ -30,7 +33,7 @@ function runningScore() {
     if (m.winner === "A") a++; else if (m.winner === "B") b++; else known = false;
     out.push(known ? `${a}:${b}` : "");
   }
-  return { out, a, b, n: S.marks.filter(m => m.winner).length };
+  return { out, a, b, n: S.marks.filter(m => m.winner).length, auto: S.marks.filter(m => m.winner && m.win_auto).length };
 }
 const v = () => $("#vid");
 
@@ -114,6 +117,7 @@ function render() {
   renderFinal(goal, np);
   const rsT = runningScore();
   $("#tally").innerHTML = rsT.n ? `득점 기록 ${rsT.n}/${n} · <b class="tA">${S.team.A} ${rsT.a}</b> : <b class="tB">${rsT.b} ${S.team.B}</b>`
+    + (rsT.auto ? ` <span class="bad">자동 판정 ${rsT.auto}개 확인 전</span>` : "")
     + (S.final && rsT.n === n && (rsT.a !== S.final.A || rsT.b !== S.final.B) ? ` <span class="bad">최종 점수와 다름</span>` : "")
     : "랠리가 끝나면 <kbd>A</kbd>/<kbd>D</kbd>로 득점한 팀을 기록하세요";
   const fill = $("#pFill"); fill.style.width = goal ? `${Math.min(100, n / goal * 100)}%` : "0"; fill.classList.toggle("done", goal != null && n === goal);
@@ -129,7 +133,7 @@ function render() {
       <span class="no">${i + 1}</span>${chk}
       <span class="tt" data-go="${i}" title="이 시각으로 이동">${fmt(m.t)}${gap != null ? `<small>+${gap.toFixed(1)}s</small>` : ""}</span>
       <span class="nud"><button data-n="-0.1" title="0.1초 앞당기기">−.1</button><button data-n="0.1" title="0.1초 늦추기">+.1</button></span>
-      <span class="win"><button class="A ${m.winner === "A" ? "on" : ""}" data-w="A" title="${S.team.A} 득점 (A)">1</button><button class="B ${m.winner === "B" ? "on" : ""}" data-w="B" title="${S.team.B} 득점 (D)">2</button><small>${rs.out[i]}</small></span>
+      <span class="win ${m.win_auto ? "auto" : ""}" title="${m.win_auto ? "자동 판정 · 맞으면 같은 팀을 눌러 확인" : ""}"><button class="A ${m.winner === "A" ? "on" : ""}" data-w="A" title="${S.team.A} 득점 (A)">1</button><button class="B ${m.winner === "B" ? "on" : ""}" data-w="B" title="${S.team.B} 득점 (D)">2</button><small>${rs.out[i]}</small></span>
       <span class="spot" title="서버가 선 곳 (화면 기준)">${SPOTS.map(([s, k, lb]) => `<button class="${s.split("-")[0]} ${m.spot === s ? "on" : ""}" data-s="${s}" title="${lb} (${k})" aria-label="${lb}"></button>`).join("")}</span>
       <input class="note" value="${(m.note || "").replace(/"/g, "&quot;")}" placeholder="메모" maxlength="100" aria-label="${i + 1}번 메모">
       <button class="del" title="지우기" aria-label="${i + 1}번 지우기">×</button></li>`;
@@ -165,6 +169,28 @@ async function loadCandidates(which) {
     S.marks.sort((a, b) => a.t - b.t); changed();
     toast(`후보 ${r.candidates.length}개 중 ${added}개를 넣었어요. N으로 하나씩 확인하세요`);
   } catch (e) { toast(e.message, true); }
+}
+// 랠리별 득점 팀 자동 판정 (다음 서브의 서버 팀). 비어 있는 랠리만 채우고, 확인 전에는 채점에 안 쓴다
+async function loadWinners() {
+  try {
+    if (S.dirty) await save(true);
+    const r = await api(`/api/lab/${S.vid}/winners`);
+    let added = 0, miss = 0;
+    for (const w of r.winners) {
+      const m = S.marks.find(m => Math.abs(m.t - w.t) < .011);
+      if (!m || m.winner) continue;
+      if (w.winner) { m.winner = w.winner; m.win_auto = true; added++; } else miss++;
+    }
+    changed(true);
+    toast(`득점 팀 ${added}개를 채웠어요${miss ? ` (판정 못 한 랠리 ${miss}개)` : ""}. 영상을 보며 맞으면 같은 팀 키(A/D)로 확인하세요`);
+  } catch (e) { toast(e.message, true); }
+}
+function nextAutoWin() {
+  const t = v().currentTime;
+  let i = S.marks.findIndex(m => m.win_auto && m.t > t + 1.0);
+  if (i < 0) i = S.marks.findIndex(m => m.win_auto);
+  if (i < 0) { toast("확인할 자동 득점 팀이 없어요"); return; }
+  S.sel = i; seek(S.marks[i + 1] ? S.marks[i + 1].t - 4 : S.marks[i].t); v().play(); render();
 }
 function nextPending(fromStart = false) {
   const t = fromStart ? -1 : v().currentTime;
@@ -235,6 +261,8 @@ function bind() {
   $("#loadAll").onclick = () => loadCandidates("all");
   $("#loadOk").onclick = () => loadCandidates("ok");
   $("#nextBtn").onclick = () => nextPending();
+  $("#loadWin").onclick = loadWinners;
+  $("#nextWin").onclick = nextAutoWin;
   $("#finBtn").onclick = finalize;
   $("#tAdd").onclick = () => { const t = parseT($("#tIn").value); if (t == null) { toast("4:30.5 처럼 분:초로 적어 주세요", true); return; } addMark(t); seek(t - 1.5); $("#tIn").value = ""; };
   $("#tIn").addEventListener("keydown", e => { if (e.key === "Enter") $("#tAdd").click(); });

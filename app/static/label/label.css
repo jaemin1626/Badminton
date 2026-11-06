@@ -63,5 +63,7 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .marks .win button.on.A{background:#5aa9ff;color:#0b1a2a;border-color:#5aa9ff}
 .marks .win button.on.B{background:#ff7a59;color:#2a0f08;border-color:#ff7a59}
 .marks .win small{font:11px var(--mono);color:var(--muted);min-width:34px;text-align:right}
+.marks .win.auto button.on{opacity:.45;border-style:dashed}
+.marks .win.auto small{opacity:.6}
 .tally{margin:8px 0 0;font-size:13px}
 .tally .tA{color:#5aa9ff} .tally .tB{color:#ff7a59} .tally .bad{color:var(--bad,#ff5d6c);font-size:12px}
