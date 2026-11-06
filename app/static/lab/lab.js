@@ -19,7 +19,6 @@ const PARAM_DOC = {
   min_serve_gap: ["서브 최소 간격 (s)", "이보다 가까우면 랠리 중 멈춤으로 봄"],
   box_front: ["서비스 코트 앞 여유 (m)", "숏 서비스 라인보다 네트 쪽 허용"],
   box_back: ["서비스 코트 뒤 여유 (m)", "롱 서비스 라인보다 뒤쪽 허용"],
-  center_margin: ["센터라인 여유 (m)", "이보다 가까우면 좌우 판정 보류"],
   require_diagonal: ["대각선 규칙 (0 끔 · 1 켬)", "켜면 서버·리시버가 대각선이어야 서브"],
   serve_lag: ["서브 시각 당김 (s)", "서브 시각 = 정지가 끝난 때 − 이 값"],
 };
@@ -710,12 +709,7 @@ function liveChecks(i) {
   for (const [side, k, d] of [["far", ff, df], ["near", nf, dn]])
     if (k >= 0) out.push({ st: "B", ok: inb(d), label: `${side} 서비스 코트 깊이`, why: `${name(k)} 네트에서 ${d?.toFixed(2)} m (범위 ${lo}~${hi})` });
   const [bf, bn] = L.box[i];
-  if (bf && bn) out.push({ st: "B", ok: bf === bn, label: "대각선", why: `far ${bf === "right" ? "오른쪽" : "왼쪽"} · near ${bn === "right" ? "오른쪽" : "왼쪽"}` });
-  const [xf, xn] = L.x[i];
-  if (xf != null && xn != null) {
-    const m = Math.min(Math.abs(xf - W_M / 2), Math.abs(xn - W_M / 2));
-    out.push({ st: "B", ok: m >= P.center_margin, label: "센터라인에서 떨어짐", why: `가까운 쪽 ${m.toFixed(2)} m (기준 ${P.center_margin})` });
-  }
+  if (bf && bn) out.push({ st: "B", ok: bf === bn || P.require_diagonal < 0.5, label: P.require_diagonal < 0.5 ? "대각선 (참고 · 규칙 끔)" : "대각선", why: `far ${bf === "right" ? "오른쪽" : "왼쪽"} · near ${bn === "right" ? "오른쪽" : "왼쪽"}` });
   const fail = out.find(c => !c.ok);
   return { list: out, fail };
 }
@@ -907,12 +901,19 @@ function toggleMark() {
   clearTimeout(truthT);
   truthT = setTimeout(async () => { await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: ms, final: S.truthFinal } }); recalc(); }, 600);
 }
+// 정답에 서버 위치가 있으면: 서버 쪽(위/아래 코트) · 좌우 맞힌 수
+function serverLine(sv) {
+  if (!sv) return `<small style="display:block;margin-top:3px;color:var(--muted)">서버 쪽·좌우 채점은 정답 입력 페이지에서 서버 위치(Q W Z X)를 기록하면 나와요</small>`;
+  const t = ts => ts.length ? ` <span class="bad" title="${ts.map(fmt).join(", ")}">(틀림 ${ts.slice(0, 4).map(fmt).join(", ")}${ts.length > 4 ? " …" : ""})</span>` : "";
+  return `<small style="display:block;margin-top:4px">서버 쪽 <b>${sv.side_ok}/${sv.labeled}</b> (이벤트만 보면 ${sv.side_raw_ok})${t(sv.wrong_side)}<br>좌우 <b>${sv.box_ok}/${sv.box_n}</b>${t(sv.wrong_box)}</small>`;
+}
 function renderEval() {
   $("#truthNum").textContent = S.truth.length ? `정답 ${S.truth.length}개` : "";
   const ev = S.sv?.eval, box = $("#evalBox");
   if (!ev) { box.innerHTML = "영상을 보면서 서브 순간에 <b>S</b>를 누르면 정답으로 기록되고, 여기서 채점해요"; return; }
   box.innerHTML = `<div class="sc"><b>${ev.hit}</b>/${ev.truth} 맞음 · <span class="bad">${ev.missed.length} 놓침</span> · <span class="warnc">${ev.false.length} 잘못 잡음</span></div>
     <div class="bar2"><i style="width:${ev.recall * 100}%"></i></div><small>찾은 비율 ${Math.round(ev.recall * 100)}% · 맞힌 비율 ${Math.round(ev.precision * 100)}% · F1 ${ev.f1}</small>
+    ${serverLine(ev.server)}
     <small style="display:block;margin-top:3px">${ev.finalized ? "✓ 최종 정답 기준" : "⚠ 정답이 아직 최종 저장 전이에요"} · <a href="/label#${S.vid}" style="color:var(--wood)">정답 입력 페이지</a></small>`;
 }
 // 놓친 정답: 그 순간(서브 직전) 서브 조건 중 처음 막힌 것

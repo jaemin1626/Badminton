@@ -37,7 +37,6 @@ class Params:
     rally_window: float = 2.5     # s, 정지가 끝나고 이 안에 랠리가 시작돼야 서브
     box_front: float = 0.7        # m, 서비스 코트 앞쪽 여유 (숏 서비스 라인보다 네트 쪽으로)
     box_back: float = 0.4         # m, 서비스 코트 뒤쪽 여유 (복식 롱 서비스 라인보다 뒤로)
-    center_margin: float = 0.25   # m, 센터라인에서 이보다 가까우면 좌우 판정 보류
     require_diagonal: float = 0.0  # 1이면 서버·리시버가 대각선이어야 서브로 인정 (match.mp4에서 진짜 서브 9개를 버려서 기본은 끔)
     serve_lag: float = 1.4        # s, 서브 시각 = 정지가 끝난 때 − serve_lag (실제 서브는 정지 끝보다 평균 1.4초 앞)
     smooth: float = 0.45          # s, 위치 평활 창
@@ -477,9 +476,8 @@ def _live_checks(p, v, known, still, t, far, near, params) -> dict:
             box[i][j] = C.service_box(side, p[i, k])
     in_box = (dist >= lo) & (dist <= hi)
     xs = np.array([[p[i, front[i, j], 0] if front[i, j] >= 0 else np.nan for j in range(2)] for i in range(S)])
-    center_ok = np.abs(xs - C.CENTER) >= params.center_margin
     return dict(fast_k=fast_k, fast_v=fast_v, run_s=run_s, front=front, dist=dist, box=box,
-                in_box=in_box, center_ok=center_ok, x=xs, box_range=(lo, hi))
+                in_box=in_box, x=xs, box_range=(lo, hi))
 
 
 def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debug: dict | None = None):
@@ -568,9 +566,6 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         bf, bn = C.service_box("far", mp[fi]), C.service_box("near", mp[ni])
         if bf != bn and params.require_diagonal >= 0.5:
             ok = False; reasons.append("대각선 아님")
-        for k in (fi, ni):
-            if abs(mp[k][0] - C.CENTER) < params.center_margin:
-                ok = False; reasons.append(f"{slots[k]} 센터라인 위 ({mp[k][0] - C.CENTER:+.2f} m)")
         if not ok:
             note(a, b, "B", " · ".join(reasons), front={"far": slots[fi], "near": slots[ni]},
                  pos={s_: [round(float(x), 2) for x in mp[k]] for k, s_ in enumerate(slots) if kn[k]})
@@ -598,7 +593,10 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             # 서브 시각: 정지가 끝난 때보다 serve_lag 앞 (단, 정지 시작보다 앞으로는 가지 않음)
             i0=int(a), i1=int(b), t_still=float(t[a]), t=float(max(t[a], t[b] - params.serve_lag)), t_end=float(t[b]),
             frame=int(round(max(t[a], t[b] - params.serve_lag) * float(tr["fps"]))), frame_still=int(tr["frames"][a]),
-            box=bf, p_near=round(p_near, 3), view=view,
+            # 좌우(서비스 코트): 양쪽 앞사람 각각의 판정. 점수 계산은 리시버 쪽 값을 쓴다
+            # (서버는 혼복 등에서 센터라인 근처·먼 곳 어디서든 서므로 리시버가 더 믿을 만하다).
+            boxes={"far": bf, "near": bn},
+            box=bf if bf == bn else (bf if p_near >= 0.5 else bn), p_near=round(p_near, 3), view=view,
             seen={"visible": [slots[k] for k in vis], "hidden": [slots[k] for k in hid]},
             front={"far": slots[fi], "near": slots[ni]},
             pos={s: [round(float(x), 2) for x in mp[k]] for k, s in enumerate(slots) if kn[k]},  # 모르는 선수(NaN)는 뺀다
@@ -616,16 +614,16 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             moved = bool(fast[prev["i1"]:c["i0"]].any())
             if not moved:
                 note(prev["i0"], prev["i1"], "C", f"사이에 랠리 없이 {c['t_still']:.1f}초에 다시 멈춤 → 뒤쪽 정지로 대체",
-                     **{k: prev[k] for k in ("box", "p_near", "view", "cues", "front")})
+                     **{k: prev[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
                 out[-1] = c
                 continue
             if c["t_still"] - prev["t_end"] < params.min_serve_gap:
                 note(c["i0"], c["i1"], "C", f"직전 서브와 {c['t_still'] - prev['t_end']:.1f}초 (기준 {params.min_serve_gap}초) → 랠리 중 멈춤",
-                     **{k: c[k] for k in ("box", "p_near", "view", "cues", "front")})
+                     **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
                 continue
         out.append(c)
     for c in out:
-        note(c["i0"], c["i1"], "OK", "서브", **{k: c[k] for k in ("box", "p_near", "view", "cues", "front", "seen", "pos")})
+        note(c["i0"], c["i1"], "OK", "서브", **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front", "seen", "pos")})
     for c in out:
         c.pop("i0"); c.pop("i1")
     if debug is not None:
@@ -714,6 +712,14 @@ PARITY_PENALTY = 2.2   # 서브 위치가 점수 짝/홀과 다를 때 log-확�
 BEAM = 64
 
 
+def _ev_box(ev: dict, side: str):
+    """서버가 side 쪽일 때 관측한 서브 위치 = 리시버(반대쪽 앞사람) 판정. 옛 이벤트는 box 하나."""
+    bx = ev.get("boxes")
+    if bx:
+        return bx.get("far" if side == "near" else "near")
+    return ev.get("box")
+
+
 def _ev_loglik(ev: dict, mm: "Match", team: str) -> float:
     """mm(= team이 서브하는 상태)에서 이벤트 관측값의 log-가능도."""
     side = mm.side[team]
@@ -721,7 +727,7 @@ def _ev_loglik(ev: dict, mm: "Match", team: str) -> float:
     pn = 0.5 + (float(ev.get("p_near", 0.5)) - 0.5) * view
     p_side = pn if side == "near" else 1 - pn
     lp = math.log(min(max(p_side, 0.02), 0.98))
-    if ev.get("box") not in (None, mm.expected_box(team)):
+    if _ev_box(ev, side) not in (None, mm.expected_box(team)):
         lp -= PARITY_PENALTY * (1.0 if view >= 0.6 else 0.5)
     return lp
 
@@ -804,7 +810,10 @@ def score_events(events: list, setup: dict, sides: dict):
                 m.point(team)
             m.started = True
             m.server = team
-            if ev.get("box") and ev["box"] != m.expected_box(team):
+            ob = _ev_box(ev, m.side[team])
+            if ob:
+                ev["box"] = ob
+            if ob and ob != m.expected_box(team):
                 ev["flags"].append("서브 위치가 점수 짝/홀과 다름")
         c = 1.0 if (ev.get("override") or kind == "point") else round(cmap[i], 3)
         if c < 0.75:

@@ -413,7 +413,7 @@ def save_run(vid: str, params: "A.Params", name: str = "") -> dict:
         "serves": [{k: e.get(k) for k in ("t", "server", "score", "game", "conf", "flags", "box", "p_near", "view")} for e in scored]
         or [{"t": e["t"]} for e in serves],
         "summary": summary, "stages": stages,
-        "eval": (evaluate([e["t"] for e in serves], truth) | {"finalized": bool(truth_data.get("finalized"))}) if truth else None,
+        "eval": eval_serves(serves, scored, truth_data),
     }
     out = _results_dir(vid)
     out.mkdir(parents=True, exist_ok=True)
@@ -488,15 +488,14 @@ def lab_serves(vid: str, req: ServeReq):
             "speed": _nan_list(v, 2) if v is not None else [],
             "still": dbg["still"].astype(int).tolist() if "still" in dbg else [],
             "runs": runs, "serves": scored, "summary": summary,
-            "eval": (evaluate([e["t"] for e in serves], truth) | {"finalized": bool(truth_data.get("finalized"))})
-            if truth else None}
+            "eval": eval_serves(serves, scored, truth_data)}
 
 
 # ---------------------------------------------------------------- 정답 서브 · 채점 · 자동 맞추기
 TOL_BEFORE, TOL_AFTER = 1.5, 2.5   # 판정 시각(정지가 끝난 때) 기준으로 정답(사람이 누른 서브 순간)이 이 범위 안이면 맞음
 
 
-def evaluate(pred: list[float], truth: list[float]) -> dict:
+def evaluate(pred: list[float], truth: list[float], pairs: list | None = None) -> dict:
     """판정 서브와 정답 서브를 시간순으로 1:1 짝짓는다."""
     pred, truth = sorted(pred), sorted(truth)
     used, hit = set(), {}
@@ -510,6 +509,8 @@ def evaluate(pred: list[float], truth: list[float]) -> dict:
         if best is not None:
             used.add(best); hit[i] = best
     tp = len(hit)
+    if pairs is not None:
+        pairs.extend(sorted(hit.items()))
     return {"truth": len(truth), "pred": len(pred), "hit": tp, "missed": [t for j, t in enumerate(truth) if j not in used],
             "false": [t for i, t in enumerate(pred) if i not in hit],
             "recall": round(tp / max(len(truth), 1), 3), "precision": round(tp / max(len(pred), 1), 3),
@@ -520,7 +521,7 @@ LABELS = DATA.parent / "labels"   # data/labels/<영상 이름>.json : 같은 �
 
 
 class TruthReq(BaseModel):
-    marks: list[dict] = Field(default_factory=list)   # [{t, server: 'A'|'B', note, src: 'auto', stage, reason, ok}]
+    marks: list[dict] = Field(default_factory=list)   # [{t, spot: 'far-L'|'far-R'|'near-L'|'near-R', note, src: 'auto', stage, reason, ok}]
     final: dict | None = None                          # 최종 점수 {A, B}
     finalized: bool = False                            # '최종 정답 저장'을 눌렀는지
 
@@ -528,6 +529,53 @@ class TruthReq(BaseModel):
 def truth_times(data: dict | None) -> list[float]:
     """채점에 쓰는 정답 시각: 직접 기록한 것 + 자동 후보 중 사람이 확인한 것."""
     return [m["t"] for m in (data or {}).get("marks", []) if m.get("src") != "auto" or m.get("ok")]
+
+
+def spot_truth(spot: str | None):
+    """정답의 서버 위치(화면 기준: 위/아래 코트 · 화면 왼쪽/오른쪽) → (서버 쪽, 서버 기준 서비스 코트)."""
+    if spot not in ("far-L", "far-R", "near-L", "near-R"):
+        return None, None
+    side, lr = spot.split("-")
+    # far 쪽은 카메라를 보고 서므로 화면 왼쪽 = 서버의 오른쪽, near 쪽은 화면 오른쪽 = 서버의 오른쪽
+    box = "right" if (side == "far") == (lr == "L") else "left"
+    return side, box
+
+
+def eval_serves(serves: list, scored: list, truth_data: dict | None) -> dict | None:
+    """서브 시각 채점 + (정답에 서버 위치가 있으면) 서버 쪽·좌우 채점."""
+    marks = sorted([m for m in (truth_data or {}).get("marks", []) if m.get("src") != "auto" or m.get("ok")], key=lambda m: m["t"])
+    if not marks:
+        return None
+    pairs: list = []
+    pred = sorted(range(len(serves)), key=lambda i: serves[i]["t"])
+    ev = evaluate([serves[i]["t"] for i in pred], [m["t"] for m in marks], pairs)
+    ev["finalized"] = bool((truth_data or {}).get("finalized"))
+    sv = {"labeled": 0, "side_ok": 0, "side_raw_ok": 0, "box_ok": 0, "box_n": 0, "wrong_side": [], "wrong_box": []}
+    for pi, tj in pairs:
+        i, m = pred[pi], marks[tj]
+        side, box = spot_truth(m.get("spot"))
+        if not side:
+            continue
+        e = serves[i]
+        s = scored[i] if i < len(scored) else {}
+        sv["labeled"] += 1
+        raw = "near" if float(e.get("p_near", 0.5)) >= 0.5 else "far"   # 이벤트 하나만 보고 고른 쪽
+        got = s.get("side") or raw                                       # 경기 흐름(빔 서치)까지 본 쪽
+        sv["side_raw_ok"] += raw == side
+        if got == side:
+            sv["side_ok"] += 1
+        else:
+            sv["wrong_side"].append(m["t"])
+        # 좌우는 서버 쪽을 정답으로 놓고 그때 알고리즘이 읽은 값(리시버 기준)을 본다
+        bx = (e.get("boxes") or {}).get("far" if side == "near" else "near") or e.get("box")
+        if bx:
+            sv["box_n"] += 1
+            if bx == box:
+                sv["box_ok"] += 1
+            else:
+                sv["wrong_box"].append(m["t"])
+    ev["server"] = sv if sv["labeled"] else None
+    return ev
 
 
 def _stem(vid: str) -> str:
@@ -608,7 +656,6 @@ TUNE_GRID = {   # 자동 맞추기에서 바꿔 보는 값 (서브 판정 기준
     "min_serve_gap": [2.0, 3.5, 5.0],
     "box_front": [0.3, 0.7, 1.2, 1.8],
     "box_back": [0.2, 0.4, 1.0, 1.6],
-    "center_margin": [0.0, 0.1, 0.25],
     "smooth": [0.3, 0.45, 0.7],
     "require_diagonal": [0.0, 1.0],
     "serve_lag": [0.8, 1.1, 1.4, 1.7, 2.0],

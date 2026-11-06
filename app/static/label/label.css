@@ -47,3 +47,11 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .marks .okb{color:var(--ok);font-size:13px}
 .fin .row a.btn{text-decoration:none;color:var(--text)}
 #finBtn:disabled{opacity:.45;cursor:not-allowed}
+
+/* 서버 위치: 코트 모양 2×2 (위 = 먼 코트, 아래 = 가까운 코트) */
+.marks .spot{display:grid;grid-template-columns:14px 14px;grid-template-rows:10px 10px;gap:1px;padding:1px;border:1px solid var(--line);border-radius:3px;background:var(--line)}
+.marks .spot button{border:0;padding:0;background:var(--panel);cursor:pointer}
+.marks .spot button:hover{background:var(--panel2)}
+.marks .spot button:focus-visible{outline:2px solid var(--wood);outline-offset:1px}
+.marks .spot button.far.on{background:#5aa9ff}
+.marks .spot button.near.on{background:#ff7a59}

@@ -5,6 +5,10 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const S = { vid: null, meta: null, marks: [], final: null, sel: -1, saveT: null, dirty: false, finalized: false };
 const STAGE_LBL = { OK: "판정 서브", A: "A 정지", B: "B 대형", C: "C 랠리" };
 const pending = m => m.src === "auto" && !m.ok;
+// 서버 위치 (화면 기준): 위 코트/아래 코트 × 화면 왼쪽/오른쪽
+const SPOTS = [["far-L", "Q", "위 코트 왼쪽"], ["far-R", "W", "위 코트 오른쪽"], ["near-L", "Z", "아래 코트 왼쪽"], ["near-R", "X", "아래 코트 오른쪽"]];
+const SPOT_KEY = { q: "far-L", ㅂ: "far-L", w: "far-R", ㅈ: "far-R", z: "near-L", ㅋ: "near-L", x: "near-R", ㅌ: "near-R" };
+function setSpot(m, spot) { m.spot = m.spot === spot ? undefined : spot; changed(); }
 const v = () => $("#vid");
 
 async function api(url, opt = {}) {
@@ -91,7 +95,7 @@ function render() {
       <span class="no">${i + 1}</span>${chk}
       <span class="tt" data-go="${i}" title="이 시각으로 이동">${fmt(m.t)}${gap != null ? `<small>+${gap.toFixed(1)}s</small>` : ""}</span>
       <span class="nud"><button data-n="-0.1" title="0.1초 앞당기기">−.1</button><button data-n="0.1" title="0.1초 늦추기">+.1</button></span>
-      <span class="sv"><button class="A ${m.server === "A" ? "on" : ""}" data-s="A" title="팀 A 서브">A</button><button class="B ${m.server === "B" ? "on" : ""}" data-s="B" title="팀 B 서브">B</button></span>
+      <span class="spot" title="서버가 선 곳 (화면 기준)">${SPOTS.map(([s, k, lb]) => `<button class="${s.split("-")[0]} ${m.spot === s ? "on" : ""}" data-s="${s}" title="${lb} (${k})" aria-label="${lb}"></button>`).join("")}</span>
       <input class="note" value="${(m.note || "").replace(/"/g, "&quot;")}" placeholder="메모" maxlength="100" aria-label="${i + 1}번 메모">
       <button class="del" title="지우기" aria-label="${i + 1}번 지우기">×</button></li>`;
   }).join("") || `<li class="empty">영상을 보다가 서브하는 순간 <kbd>S</kbd>를 누르세요</li>`;
@@ -100,7 +104,7 @@ function render() {
     li.onclick = e => { if (e.target.tagName !== "INPUT") { S.sel = i; render(); } };
     li.querySelector("[data-go]").onclick = e => { e.stopPropagation(); S.sel = i; seek(m.t - 1.5); render(); };
     li.querySelectorAll("[data-n]").forEach(b => b.onclick = e => { e.stopPropagation(); nudge(i, +b.dataset.n); });
-    li.querySelectorAll("[data-s]").forEach(b => b.onclick = e => { e.stopPropagation(); m.server = m.server === b.dataset.s ? undefined : b.dataset.s; S.sel = i; changed(); });
+    li.querySelectorAll("[data-s]").forEach(b => b.onclick = e => { e.stopPropagation(); S.sel = i; setSpot(m, b.dataset.s); });
     li.querySelector(".note").oninput = e => { m.note = e.target.value; S.dirty = true; clearTimeout(S.saveT); S.saveT = setTimeout(save, 900); };
     li.querySelector(".del").onclick = e => { e.stopPropagation(); S.marks.splice(i, 1); S.sel = -1; changed(); };
     const cf = li.querySelector(".cf"); if (cf) cf.onclick = e => { e.stopPropagation(); m.ok = true; S.sel = i; changed(); };
@@ -160,7 +164,7 @@ function drawStrip() {
   const X = t => w * t / S.meta.duration;
   for (let m = 60; m < S.meta.duration; m += 60) { c.fillStyle = "#ffffff22"; c.fillRect(X(m), 0, 1, h); c.fillStyle = "#9aa7a1"; c.font = "10px ui-monospace,monospace"; c.fillText(`${m / 60}분`, X(m) + 3, 11); }
   S.marks.forEach((m, i) => {
-    c.fillStyle = i === S.sel ? "#ffffff" : pending(m) ? "#7d8a84" : m.server === "A" ? "#5aa9ff" : m.server === "B" ? "#ff7a59" : "#d9b98a";
+    c.fillStyle = i === S.sel ? "#ffffff" : pending(m) ? "#7d8a84" : m.spot?.startsWith("far") ? "#5aa9ff" : m.spot?.startsWith("near") ? "#ff7a59" : "#d9b98a";
     c.fillRect(X(m.t) - 1.5, pending(m) ? 14 : 6, 3, pending(m) ? h - 14 : h - 6);
   });
   c.fillStyle = "#3ecf8e"; c.fillRect(X(v().currentTime) - 1, 0, 2, h);
@@ -216,8 +220,7 @@ function bind() {
       const t = el.currentTime, m = k === "]" ? S.marks.find(m => m.t > t + 1.6) : [...S.marks].reverse().find(m => m.t < t - 0.1 - 1.5);
       if (m) { S.sel = S.marks.indexOf(m); seek(m.t - 1.5); render(); }
     }
-    else if (sel && (k === "a" || k === "A" || k === "ㅁ")) { sel.server = "A"; changed(); }
-    else if (sel && (k === "b" || k === "B" || k === "ㅠ")) { sel.server = "B"; changed(); }
+    else if (sel && SPOT_KEY[k.toLowerCase()]) { e.preventDefault(); setSpot(sel, SPOT_KEY[k.toLowerCase()]); }
     else if (k === "n" || k === "N" || k === "ㅜ") { e.preventDefault(); nextPending(); }
     else if (sel && k === "Enter") { e.preventDefault(); if (sel.src === "auto") { sel.ok = true; changed(); nextPending(); } }
     else if (sel && (k === "Delete" || k === "Backspace")) { e.preventDefault(); const wasPend = pending(sel); S.marks.splice(S.sel, 1); S.sel = -1; changed(); if (wasPend) nextPending(); }
