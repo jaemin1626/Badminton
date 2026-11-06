@@ -718,6 +718,7 @@ function liveChecks(i) {
 const LIVE_COL = { ok: "#3ecf8e", A: "#7d8a84", B: "#ff5d6c" };
 
 const TEAM_COL = { A: "#5aa9ff", B: "#ff7a59" };
+const truthRallies = () => (S.truthMarks || []).map((m, j, ms) => ({ j, t0: m.t, t1: ms[j + 1]?.t ?? S.meta.duration, w: truthWin(m) }));
 // 팀 이름 (경기 설정의 1팀 = A, 2팀 = B)
 const teamName = k => k === "A" ? ($("#nameA")?.value || "1팀") : k === "B" ? ($("#nameB")?.value || "2팀") : "?";
 // 지금 시각의 랠리: 그 랠리 서브 · 득점 판정
@@ -803,7 +804,12 @@ function drawTimeline(t) {
     c.fillStyle = "#262f2b"; c.fillRect(PL, 4, w - PL, h - 8);
     const X = s => PL + (w - PL) * s / dur;
     for (const r of runs) { c.fillStyle = STAGE_COL[r.stage]; c.globalAlpha = r.stage === "OK" ? 1 : .6; c.fillRect(X(r.t0), r.stage === "OK" ? 4 : 10, Math.max(2, X(r.t1) - X(r.t0)), r.stage === "OK" ? h - 8 : h - 20); }
-    c.globalAlpha = 1; c.fillStyle = "#ffffff"; for (const tt of S.truth) c.fillRect(X(tt) - 1, 0, 2, 5);
+    for (const r of truthRallies()) {   // 아래쪽 띠 = 정답 득점 팀 (파랑 A · 주황 B · 회색 아직)
+      c.globalAlpha = r.w ? .9 : .35; c.fillStyle = r.w ? TEAM_COL[r.w] : "#7d8a84";
+      c.fillRect(X(r.t0) + 1, h - 7, Math.max(2, X(r.t1) - X(r.t0) - 2), 6);
+    }
+    c.globalAlpha = 1;
+    for (const r of truthRallies()) { c.fillStyle = r.w ? TEAM_COL[r.w] : "#ffffff"; c.fillRect(X(r.t0) - 1, 0, 2, r.w ? 8 : 5); }
     c.globalAlpha = 1;
     c.strokeStyle = "#d9b98a"; c.lineWidth = 1.5; c.strokeRect(X(S.view.t0), 2, X(S.view.t0 + S.view.span) - X(S.view.t0), h - 4);
     c.fillStyle = "#fff"; c.fillRect(X(t) - 1, 0, 2, h);
@@ -827,12 +833,19 @@ function drawTimeline(t) {
     c.font = "11px 'Noto Sans KR',sans-serif"; c.fillText(STAGE_NAME[r.stage], X(r.t0) + 3, top + 14);
   }
   // 정답 서브 (흰 ▼)
-  for (const tt of S.truth) {
-    if (tt < t0 || tt > t1) continue; const x = X(tt);
-    c.fillStyle = "#ffffff"; c.beginPath(); c.moveTo(x - 6, top - 2); c.lineTo(x + 6, top - 2); c.lineTo(x, top + 9); c.fill();
-    c.strokeStyle = "#ffffff88"; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
-    const tw = truthWin(S.truthMarks?.[S.truth.indexOf(tt)]);
-    if (tw) { c.fillStyle = TEAM_COL[tw]; c.font = "bold 12px 'Noto Sans KR',sans-serif"; c.fillText(`정답 ${tw} 득점`, x + 8, top + 26); }
+  for (const r of truthRallies()) {   // 랠리 구간 바탕색 = 정답 득점 팀
+    if (r.t1 < t0 || r.t0 > t1 || !r.w) continue;
+    const xa = Math.max(PL, X(r.t0)), xb = Math.min(w, X(r.t1));
+    c.fillStyle = TEAM_COL[r.w]; c.globalAlpha = .1; c.fillRect(xa, top, xb - xa, bot - top);
+    c.globalAlpha = .85; c.fillRect(xa, top + 16, xb - xa, 5); c.globalAlpha = 1;
+  }
+  for (const r of truthRallies()) {
+    const tt = r.t0; if (tt < t0 || tt > t1) continue; const x = X(tt), col = r.w ? TEAM_COL[r.w] : "#ffffff";
+    const fl = S.flash && S.flash.j === r.j && performance.now() < S.flash.until;
+    c.fillStyle = col; c.beginPath(); c.moveTo(x - (fl ? 10 : 7), top - 3); c.lineTo(x + (fl ? 10 : 7), top - 3); c.lineTo(x, top + (fl ? 14 : 10)); c.fill();
+    c.strokeStyle = r.w ? col : "#ffffff88"; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
+    c.font = "bold 12px 'Noto Sans KR',sans-serif"; c.fillStyle = col;
+    c.fillText(r.w ? `${r.j + 1} · ${r.w} 득점` : `${r.j + 1}`, x + 8, top + 13);
   }
   if (S.hoverT != null && S.hoverT >= t0 && S.hoverT <= t1) {
     const x = X(S.hoverT); c.strokeStyle = "#ffe14d"; c.lineWidth = 3; c.beginPath(); c.moveTo(x, top - 4); c.lineTo(x, bot); c.stroke(); c.lineWidth = 1;
@@ -976,6 +989,7 @@ function setTruthWinner(w) {
   const m = ms[j];
   if (truthWin(m) === w) { delete m.winner; delete m.win_auto; toast(`${j + 1}번 랠리 득점 정답을 지웠어요`); }
   else { m.winner = w; delete m.win_auto; toast(`${j + 1}번 랠리 (${fmt(m.t)} 서브) → ${teamName(w)} 득점`); }
+  S.flash = { j, until: performance.now() + 700 };
   S.dirty = true; renderEvents(); saveTruthSoon(300);
 }
 function toggleMark() {
