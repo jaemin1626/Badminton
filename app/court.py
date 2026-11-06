@@ -47,14 +47,19 @@ def side_of(y: float) -> str:
 
 
 def foot_point(box, kps=None, kp_thr=0.35):
-    """발 위치(픽셀). 발목 관절이 믿을 만하면 발목 평균, 아니면 박스 아래 중앙."""
+    """발 위치(픽셀). 발목 관절이 믿을 만하면 두 발목의 신뢰도 가중 평균(+ 발바닥까지 조금), 아니면 박스 아래 중앙.
+
+    예전에는 더 아래쪽 발목(max y)을 썼는데, 팀원이 겹쳐 서면 자세 모델이 앞사람 발목을 낮은 신뢰도로
+    뒷사람 것으로 읽어 발 위치가 프레임마다 1 m 넘게 튀었다. 가중 평균은 그런 발목의 영향이 작다.
+    """
     x1, y1, x2, y2 = box[:4]
     if kps is not None:
         ank = kps[[15, 16]]
         good = ank[ank[:, 2] > kp_thr]
         if len(good):
-            fx = float(good[:, 0].mean())
-            fy = max(float(good[:, 1].max()), y1 + 0.85 * (y2 - y1))  # 발목보다 약간 아래 = 발바닥
+            w = good[:, 2]
+            fx = float((good[:, 0] * w).sum() / w.sum())
+            fy = float((good[:, 1] * w).sum() / w.sum()) + 0.03 * (y2 - y1)  # 발목보다 약간 아래 = 발바닥
             return fx, min(fy, y2)
     return (x1 + x2) / 2, y2
 
