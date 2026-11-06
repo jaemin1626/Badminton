@@ -5,7 +5,8 @@
 
   GET  /lab                          실험 페이지
   GET  /api/lab/{vid}                영상 정보 + 실험 설정 + 추적 결과 유무
-  PUT  /api/lab/{vid}/config         코트 점(교차점 4개 이상) · 선수 4명 · 심판 · 경기 설정 저장
+  POST /api/lab/fit-court            코트 점·라인 → 호모그래피와 오차 (설정 화면에서 실시간)
+  PUT  /api/lab/{vid}/config         코트 점·라인 · 선수 4명 · 심판 · 경기 설정 저장
   POST /api/lab/{vid}/detect         설정 프레임 사람 검출 (코트 점으로 코트 위치 계산)
   POST /api/lab/{vid}/track          추적 실행 (작업 ID 반환, /api/jobs/{id}로 진행 확인)
   GET  /api/lab/{vid}/tracks         추적 결과 (위치·박스·가려짐·심판 박스)
@@ -76,30 +77,99 @@ class CourtPoint(BaseModel):
     px: list[float]       # 영상 픽셀
 
 
-def fit_points(points: list[CourtPoint]) -> dict:
-    """코트 교차점 ↔ 픽셀 대응(4개 이상)으로 호모그래피를 구한다. 점별 오차(px)와 좌우 뒤집힘 여부도 돌려준다."""
-    if len(points) < 4:
-        raise HTTPException(400, "코트 점이 4개 이상 필요해요")
-    cm = np.float64([p.court for p in points]); px = np.float64([p.px for p in points])
-    if np.linalg.matrix_rank(np.c_[cm, np.ones(len(cm))]) < 3:
-        raise HTTPException(400, "점들이 한 줄 위에 있어요. 다른 줄의 점을 섞어 주세요")
-    Hc, _ = cv2.findHomography(cm, px, 0)   # 코트(m) → 픽셀, 최소제곱
-    if Hc is None:
-        raise HTTPException(400, "점 배치로 코트를 계산할 수 없어요")
-    proj = cv2.perspectiveTransform(cm.reshape(-1, 1, 2), Hc).reshape(-1, 2)
-    err = np.linalg.norm(proj - px, axis=1)
-    # 좌우 뒤집힘: 코트에서 x(왼→오), y(먼→가까운)가 화면에서도 같은 방향 손잡이인지 (야코비안 부호)
-    c0 = cm.mean(0)
-    f = lambda q: cv2.perspectiveTransform(np.float64([[q]]), Hc)[0, 0]
-    jx, jy = f(c0 + [0.01, 0]) - f(c0), f(c0 + [0, 0.01]) - f(c0)
-    mirrored = bool(jx[0] * jy[1] - jx[1] * jy[0] < 0)
-    return {"h_court2px": Hc / Hc[2, 2], "homography": np.linalg.inv(Hc) / np.linalg.inv(Hc)[2, 2],
-            "errors": err.round(1).tolist(), "mean_err": round(float(err.mean()), 2), "mirrored": mirrored}
+class CourtLine(BaseModel):
+    line: list[list[float]]   # 코트 라인 양 끝 (m)
+    px: list[list[float]]     # 그 라인 위에서 찍은 픽셀들 (끝이 잘려도 보이는 곳 아무 데나, 2개 이상)
+
+
+def fit_court(points: list[CourtPoint], lines: list[CourtLine] = ()) -> dict:
+    """코트 교차점 ↔ 픽셀, 코트 라인 ↔ 그 위의 픽셀들로 호모그래피(코트 m → 픽셀)를 구한다.
+
+    1) 선형 풀이(DLT): 점은 2개 식, 라인은 '라인의 두 끝점을 옮긴 점이 영상 라인 위에 있다'로 2개 식
+    2) 다듬기: 점은 재투영 거리, 라인은 찍은 픽셀과 옮겨진 라인 사이 거리(px)를 최소제곱
+    """
+    from scipy.optimize import least_squares
+    lines = [l for l in lines if len(l.px) >= 2]
+    if 2 * len(points) + 2 * len(lines) < 8:
+        raise HTTPException(400, "코트 점·라인이 더 필요해요 (교차점 1개 = 라인 1개 = 식 2개, 합쳐서 8개 이상)")
+    k = 1000.0  # 픽셀을 1/1000로 줄여 수치 안정화
+    rows = []
+    for p in points:
+        X, Y = p.court; x, y = p.px[0] / k, p.px[1] / k
+        rows += [[X, Y, 1, 0, 0, 0, -x * X, -x * Y, -x], [0, 0, 0, X, Y, 1, -y * X, -y * Y, -y]]
+    img_lines = []
+    for ln in lines:
+        q = np.float64(ln.px) / k
+        c0 = q.mean(0); _, _, vt = np.linalg.svd(q - c0)
+        n = vt[1]; abc = np.array([n[0], n[1], -n @ c0])   # 영상 라인 ax+by+c=0 (|a,b|=1)
+        img_lines.append(abc)
+        for X, Y in ln.line:
+            a_, b_, c_ = abc
+            rows.append([a_ * X, a_ * Y, a_, b_ * X, b_ * Y, b_, c_ * X, c_ * Y, c_])
+    A = np.array(rows)
+    _, sv, vt = np.linalg.svd(A)
+    if sv[-2] < 1e-9 * sv[0]:
+        raise HTTPException(400, "점·라인 배치로 코트를 정할 수 없어요. 서로 다른 방향의 라인이나 점을 섞어 주세요")
+    h = vt[-1].reshape(3, 3)
+    h = np.diag([k, k, 1.0]) @ h
+    h = h / h[2, 2]
+
+    pc = np.float64([p.court for p in points]).reshape(-1, 2); pp = np.float64([p.px for p in points]).reshape(-1, 2)
+
+    def apply(H, P):
+        P = np.c_[P, np.ones(len(P))] @ H.T
+        return P[:, :2] / P[:, 2:3]
+
+    def line_dist(H, ln):
+        e = apply(H, np.float64(ln.line)); d = e[1] - e[0]
+        nrm = np.array([-d[1], d[0]]) / (np.linalg.norm(d) + 1e-12)
+        return (np.float64(ln.px) - e[0]) @ nrm
+
+    def resid(v):
+        H = np.append(v, 1).reshape(3, 3)
+        r = [(apply(H, pc) - pp).ravel()] if len(pc) else []
+        r += [line_dist(H, ln) for ln in lines]
+        return np.concatenate(r)
+
+    try:
+        v = least_squares(resid, h.ravel()[:8], x_scale=np.abs(h.ravel()[:8]) + 1e-6, method="lm").x
+        Hc = np.append(v, 1).reshape(3, 3)
+    except Exception:  # noqa: BLE001  (다듬기 실패 시 선형 풀이 사용)
+        Hc = h
+    perr = np.linalg.norm(apply(Hc, pc) - pp, axis=1) if len(pc) else np.zeros(0)
+    lerr = [float(np.abs(line_dist(Hc, ln)).mean()) for ln in lines]
+    allerr = list(perr) + lerr
+    # 좌우 뒤집힘: 코트 x(왼→오), y(먼→가까운)가 화면에서도 같은 손잡이 방향인지 (야코비안 부호)
+    ref = np.vstack([pc] + [np.float64(ln.line) for ln in lines]).mean(0)
+    o, ex, ey = apply(Hc, np.array([ref, ref + [0.01, 0], ref + [0, 0.01]]))
+    mirrored = bool((ex - o)[0] * (ey - o)[1] - (ex - o)[1] * (ey - o)[0] < 0)
+    Hi = np.linalg.inv(Hc)
+    return {"h_court2px": Hc / Hc[2, 2], "homography": Hi / Hi[2, 2],
+            "errors": [round(float(e), 1) for e in perr], "line_errors": [round(e, 1) for e in lerr],
+            "mean_err": round(float(np.mean(allerr)), 2), "mirrored": mirrored,
+            "spare": 2 * len(points) + 2 * len(lines) - 8}   # 최소(8개)를 넘는 식 수 = 검산 여유
+
+
+def fit_points(points: list[CourtPoint], lines: list[CourtLine] = ()) -> dict:
+    return fit_court(points, lines)
+
+
+class FitReq(BaseModel):
+    points: list[CourtPoint] = Field(default_factory=list)
+    lines: list[CourtLine] = Field(default_factory=list)
+
+
+@router.post("/api/lab/fit-court")
+def lab_fit_court(req: FitReq):
+    """설정 화면에서 점·라인을 찍을 때마다 호출: 호모그래피와 점·라인별 오차."""
+    r = fit_court(req.points, req.lines)
+    return {k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in r.items()}
 
 
 class LabConfig(BaseModel):
     ref_frame: int
-    points: list[CourtPoint]
+    points: list[CourtPoint] = Field(default_factory=list)
+    lines: list[CourtLine] = Field(default_factory=list)
     teams: dict[str, TeamIn]                      # "A" / "B"
     officials: list[list[float]] = Field(default_factory=list)
     match: dict = Field(default_factory=dict)
@@ -109,7 +179,7 @@ class LabConfig(BaseModel):
 def lab_put_config(vid: str, body: LabConfig):
     d = vdir(vid)
     meta = read_json(d / "meta.json", {})
-    fitres = fit_points(body.points)
+    fitres = fit_court(body.points, body.lines)
     H = fitres["homography"]
     teams = {}
     for key, num in (("A", "1"), ("B", "2")):
@@ -124,7 +194,8 @@ def lab_put_config(vid: str, body: LabConfig):
     match.update(body.match)
     cfg = {"fps": meta.get("fps"), "frame_size": [meta.get("width"), meta.get("height")],
            "ref_frame": body.ref_frame, "points": [p.model_dump() for p in body.points],
-           "point_errors": fitres["errors"], "mirrored": fitres["mirrored"],
+           "lines": [l.model_dump() for l in body.lines],
+           "point_errors": fitres["errors"], "line_errors": fitres["line_errors"], "mirrored": fitres["mirrored"],
            "homography": H.tolist(), "h_court2px": fitres["h_court2px"].tolist(), "teams": teams, "match": match,
            "officials": [{"bbox": b, "court_pos": _foot_court(H, b)} for b in body.officials if len(b) >= 4],
            "saved": time.time()}
@@ -135,13 +206,17 @@ def lab_put_config(vid: str, body: LabConfig):
 class LabDetect(BaseModel):
     frame: int
     points: list[CourtPoint] = Field(default_factory=list)
+    lines: list[CourtLine] = Field(default_factory=list)
 
 
 @router.post("/api/lab/{vid}/detect")
 def lab_detect(vid: str, req: LabDetect):
     """설정 프레임에서 사람 검출. 코트 점이 4개 이상이면 코트 위치도 계산한다."""
     img = read_frame(vdir(vid), req.frame)
-    H = fit_points(req.points)["homography"] if len(req.points) >= 4 else None
+    try:
+        H = fit_court(req.points, req.lines)["homography"]
+    except HTTPException:
+        H = None
     return {"frame": req.frame, "people": _detect(img, H)}
 
 

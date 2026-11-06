@@ -25,7 +25,7 @@ const PARAM_DOC = {
 const S = {
   vid: null, info: null, meta: null, mode: "setup",
   // 설정
-  frame: 0, points: [], pick: null, selPt: -1, wide: false, lines: true, drag: -1, people: [], assign: {}, role: "A", detFrame: -1,
+  frame: 0, points: [], clines: [], pick: null, sel: null, fit: null, wide: false, lines: true, drag: null, people: [], assign: {}, role: "A", detFrame: -1,
   // 확인
   tr: null, kps: null, kshape: null, sv: null, params: null, defaults: null, cur: 0, filter: "all", selRun: null,
   view: { t0: 0, span: 40 }, jobTimer: null,
@@ -68,20 +68,6 @@ function homography(src, dst) {
 const COURT = [[0, 0], [W_M, 0], [W_M, L_M], [0, L_M]];
 // 카메라 뒤쪽(d<=0)으로 넘어가는 점은 null
 const map = (H, [X, Y]) => { const d = H[6] * X + H[7] * Y + H[8]; if (d <= 1e-9) return null; return [(H[0] * X + H[1] * Y + H[2]) / d, (H[3] * X + H[4] * Y + H[5]) / d]; };
-// 코트(m) → 픽셀 호모그래피를 점 4개 이상으로 최소제곱 (픽셀은 1/1000로 줄여서 풀고 되돌린다)
-function fitH(pts) {
-  if (pts.length < 4) return null;
-  const k = 1000, A = [], b = [];
-  for (const { court: [X, Y], px: [x0, y0] } of pts) {
-    const x = x0 / k, y = y0 / k;
-    A.push([X, Y, 1, 0, 0, 0, -x * X, -x * Y]); b.push(x); A.push([0, 0, 0, X, Y, 1, -y * X, -y * Y]); b.push(y);
-  }
-  const AtA = Array.from({ length: 8 }, (_, i) => Array.from({ length: 8 }, (_, j) => A.reduce((s, r) => s + r[i] * r[j], 0)));
-  const Atb = Array.from({ length: 8 }, (_, i) => A.reduce((s, r, n) => s + r[i] * b[n], 0));
-  const h = solve(AtA, Atb);
-  if (h.some(v => !isFinite(v))) return null;
-  return [h[0] * k, h[1] * k, h[2] * k, h[3] * k, h[4] * k, h[5] * k, h[6], h[7], 1];
-}
 // 고를 수 있는 코트 점: 라인 교차점 + 네트 기둥 바닥. 왼쪽/오른쪽은 카메라에서 볼 때
 const XS = [[0, "왼쪽 복식"], [0.46, "왼쪽 단식"], [W_M / 2, "센터"], [W_M - 0.46, "오른쪽 단식"], [W_M, "오른쪽 복식"]];
 const YS = [[0, "먼 쪽 엔드"], [LONG_DBL, "먼 쪽 롱서비스"], [NET - SHORT, "먼 쪽 숏서비스"], [NET + SHORT, "가까운 쪽 숏서비스"], [L_M - LONG_DBL, "가까운 쪽 롱서비스"], [L_M, "가까운 쪽 엔드"]];
@@ -156,7 +142,8 @@ async function openVideo(vid, mode) {
   const c = S.info.config, W = S.meta.width, H = S.meta.height;
   S.points = c?.points ? c.points.map(p => ({ court: [...p.court], px: [...p.px] }))
     : c?.court_corners_px ? c.court_corners_px.map((p, i) => ({ court: [...COURT[i]], px: [...p] })) : [];
-  S.pick = null; S.selPt = -1;
+  S.clines = (c?.lines || []).map(l => ({ line: l.line.map(p => [...p]), px: l.px.map(p => [...p]) }));
+  S.pick = null; S.sel = null; S.fit = null;
   S.wide = S.points.some(({ px: [x, y] }) => x < 0 || y < 0 || x > W || y > H);
   S.frame = c?.ref_frame ?? Math.round(S.meta.frames * .1);
   // 저장된 박스를 '지정됨' 상태로 보여 준다 (다시 검출하면 겹치는 박스로 이어 붙음)
@@ -185,7 +172,7 @@ function setMode(m) {
   $("#setup").classList.toggle("hidden", m !== "setup");
   $("#view").classList.toggle("hidden", m !== "view");
   history.replaceState(null, "", `#${S.vid}/${m}`);
-  if (m === "setup") { stopVideo(); buildStage(); loadFrame(S.frame); renderSetupPanel(); }
+  if (m === "setup") { stopVideo(); buildStage(); loadFrame(S.frame); renderSetupPanel(); refit(true); }
   else enterView();
 }
 
@@ -218,14 +205,35 @@ function loadFrame(f) {
 }
 function svgPoint(svg, e) { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); }
 
-function curH() { return fitH(S.points); }
-function ptErrors(H) { return S.points.map(p => { const q = H && map(H, p.court); return q ? Math.hypot(q[0] - p.px[0], q[1] - p.px[1]) : null; }); }
-function mirrored(H) {
-  if (!H || S.points.length < 4) return false;
-  const c = [S.points.reduce((s, p) => s + p.court[0], 0) / S.points.length, S.points.reduce((s, p) => s + p.court[1], 0) / S.points.length];
-  const o = map(H, c), ex = map(H, [c[0] + .01, c[1]]), ey = map(H, [c[0], c[1] + .01]);
-  if (!o || !ex || !ey) return false;
-  return (ex[0] - o[0]) * (ey[1] - o[1]) - (ex[1] - o[1]) * (ey[0] - o[0]) < 0;
+/* ---- 코트 지정: 교차점(점)과 라인(끝이 잘려도 보이는 곳 아무 데나) ---- */
+const LINE_CATALOG = [
+  { l: [[0, 0], [0, L_M]], name: "왼쪽 복식 사이드라인" }, { l: [[0.46, 0], [0.46, L_M]], name: "왼쪽 단식 사이드라인" },
+  { l: [[W_M - 0.46, 0], [W_M - 0.46, L_M]], name: "오른쪽 단식 사이드라인" }, { l: [[W_M, 0], [W_M, L_M]], name: "오른쪽 복식 사이드라인" },
+  { l: [[0, 0], [W_M, 0]], name: "먼 쪽 엔드라인" }, { l: [[0, LONG_DBL], [W_M, LONG_DBL]], name: "먼 쪽 롱서비스 라인" },
+  { l: [[0, NET - SHORT], [W_M, NET - SHORT]], name: "먼 쪽 숏서비스 라인" }, { l: [[0, NET + SHORT], [W_M, NET + SHORT]], name: "가까운 쪽 숏서비스 라인" },
+  { l: [[0, L_M - LONG_DBL], [W_M, L_M - LONG_DBL]], name: "가까운 쪽 롱서비스 라인" }, { l: [[0, L_M], [W_M, L_M]], name: "가까운 쪽 엔드라인" },
+  { l: [[W_M / 2, 0], [W_M / 2, NET - SHORT]], name: "먼 쪽 센터라인" }, { l: [[W_M / 2, NET + SHORT], [W_M / 2, L_M]], name: "가까운 쪽 센터라인" },
+];
+const sameL = (a, b) => sameC(a[0], b[0]) && sameC(a[1], b[1]);
+const lName = l => LINE_CATALOG.find(c => sameL(c.l, l))?.name || "라인";
+const eqCount = () => 2 * S.points.length + 2 * S.clines.filter(l => l.px.length >= 2).length;
+const rpx = p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+
+function curH() { return S.fit && !S.fit.error ? S.fit.H : null; }
+let fitSeq = 0, fitTimer;
+function refit(now = false) {
+  clearTimeout(fitTimer);
+  const go = async () => {
+    const seq = ++fitSeq;
+    if (eqCount() < 8) { S.fit = null; drawSetup(); renderPoints(); return; }
+    try {
+      const r = await api("/api/lab/fit-court", { method: "POST", json: { points: S.points, lines: S.clines.filter(l => l.px.length >= 2) } });
+      if (seq !== fitSeq) return;
+      S.fit = { ...r, H: r.h_court2px.flat() };
+    } catch (e) { if (seq !== fitSeq) return; S.fit = { error: e.message }; }
+    drawSetup(); renderPoints();
+  };
+  if (now) go(); else fitTimer = setTimeout(go, 60);
 }
 
 function drawSetup() {
@@ -245,17 +253,41 @@ function drawSetup() {
     const tx = el("text", { x: x1, y: y1 - 8 * u, "font-size": 20 * u }, b); tx.textContent = label;
     if (here) b.addEventListener("click", e => { if (S.pick === null) { e.stopPropagation(); togglePerson(p); } });
   }
-  // 찍은 코트 점: 찍은 위치(분홍)와 계산된 위치를 선으로 이어 오차를 보여 준다
-  const err = ptErrors(H);
+  // 라인: 찍은 점(하늘색 네모)과 계산된 라인
+  S.clines.forEach((ln, li) => {
+    const on = (S.pick?.kind === "l" && sameL(LINE_CATALOG[S.pick.i].l, ln.line)) || (S.sel?.kind === "l" && S.sel.i === li);
+    if (H) {
+      const lg = el("g", {}, g);
+      drawCourtLinesOne(lg, H, ln.line, on ? "#4fe3ff" : "#4fe3ff99", (on ? 4 : 2.5) * u);
+    }
+    ln.px.forEach((q, j) => {
+      const m = el("g", { class: "lpm" + (S.sel?.kind === "l" && S.sel.i === li && S.sel.j === j ? " sel" : "") }, g);
+      el("rect", { x: q[0] - 7 * u, y: q[1] - 7 * u, width: 14 * u, height: 14 * u, "stroke-width": 3 * u, style: "cursor:grab" }, m);
+      m.addEventListener("pointerdown", e => { e.stopPropagation(); S.drag = { kind: "l", i: li, j }; S.sel = { kind: "l", i: li, j }; $("#sSvg").setPointerCapture(e.pointerId); drawSetup(); renderPoints(); });
+    });
+    const q = ln.px[ln.px.length - 1];
+    if (q) { const t = el("text", { x: q[0] + 12 * u, y: q[1] + 22 * u, "font-size": 18 * u, class: "lbl-l" }, g); const e = S.fit?.line_errors?.[S.clines.filter(l => l.px.length >= 2).indexOf(ln)]; t.textContent = `L${li + 1}${e != null ? ` · ${e.toFixed(1)}px` : ln.px.length < 2 ? " · 점 1개 더" : ""}`; }
+  });
+  // 교차점: 찍은 위치(분홍)와 계산된 위치를 선으로 이어 오차를 보여 준다
   S.points.forEach((p, i) => {
-    const m = el("g", { class: "ptm" + (i === S.selPt ? " sel" : ""), tabindex: 0 }, g);
+    const m = el("g", { class: "ptm" + (S.sel?.kind === "p" && S.sel.i === i ? " sel" : "") }, g);
     const q = H && map(H, p.court);
     if (q) el("line", { x1: p.px[0], y1: p.px[1], x2: q[0], y2: q[1], "stroke-width": 2 * u }, m);
     el("circle", { cx: p.px[0], cy: p.px[1], r: 9 * u, "stroke-width": 3 * u, style: "cursor:grab" }, m);
     const t = el("text", { x: p.px[0] + 12 * u, y: p.px[1] - 10 * u, "font-size": 18 * u }, m);
-    t.textContent = `${i + 1}${err[i] != null ? ` · ${err[i].toFixed(1)}px` : ""}`;
-    m.addEventListener("pointerdown", e => { e.stopPropagation(); S.drag = i; S.selPt = i; $("#sSvg").setPointerCapture(e.pointerId); renderPoints(); });
+    const e = S.fit?.errors?.[i];
+    t.textContent = `${i + 1}${e != null ? ` · ${e.toFixed(1)}px` : ""}`;
+    m.addEventListener("pointerdown", e => { e.stopPropagation(); S.drag = { kind: "p", i }; S.sel = { kind: "p", i }; $("#sSvg").setPointerCapture(e.pointerId); drawSetup(); renderPoints(); });
   });
+}
+function drawCourtLinesOne(g, H, [a, b], col, sw) {
+  let seg = [];
+  const flush = () => { if (seg.length > 1) el("polyline", { points: seg.map(p => p.join(",")).join(" "), fill: "none", stroke: col, "stroke-width": sw }, g); seg = []; };
+  for (let i = 0; i <= 40; i++) {
+    const s = i / 40, q = map(H, [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s]);
+    if (!q || Math.abs(q[0]) > 2e4 || Math.abs(q[1]) > 2e4) flush(); else seg.push(q);
+  }
+  flush();
 }
 function togglePerson(p) {
   const cur = S.assign[p.id];
@@ -272,38 +304,64 @@ function buildDiagram() {
   svg.setAttribute("viewBox", `${-m} ${-m - .5} ${W_M + 2 * m} ${L_M + 2 * m + 1}`);
   svg.innerHTML = "";
   el("rect", { x: 0, y: 0, width: W_M, height: L_M, fill: "#c9a674" }, svg);
-  for (const [a, b] of courtLines()) el("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: "ln" }, svg);
   el("line", { x1: -.4, y1: NET, x2: W_M + .4, y2: NET, class: "net" }, svg);
   const t1 = el("text", { x: W_M / 2, y: -.45, class: "side-lbl" }, svg); t1.textContent = "먼 쪽 (네트 너머)";
   const t2 = el("text", { x: W_M / 2, y: L_M + .75, class: "side-lbl" }, svg); t2.textContent = "카메라 쪽";
+  // 라인 (클릭하면 라인 찍기)
+  LINE_CATALOG.forEach((c, i) => {
+    const done = S.clines.some(l => sameL(l.line, c.l) && l.px.length >= 2);
+    const pick = S.pick?.kind === "l" && S.pick.i === i;
+    const g = el("g", { class: "cl-d" + (done ? " done" : "") + (pick ? " pick" : ""), tabindex: 0, role: "button", "aria-label": c.name }, svg);
+    el("line", { x1: c.l[0][0], y1: c.l[0][1], x2: c.l[1][0], y2: c.l[1][1], class: "hit" }, g);
+    el("line", { x1: c.l[0][0], y1: c.l[0][1], x2: c.l[1][0], y2: c.l[1][1], class: "vis" }, g);
+    const tt = el("title", {}, g); tt.textContent = c.name + " · 라인 위 아무 곳이나 2개 이상 찍기";
+    const choose = () => { S.pick = pick ? null : { kind: "l", i }; S.sel = null; drawSetup(); renderPoints(); };
+    g.addEventListener("click", choose);
+    g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } });
+  });
+  // 교차점
   CATALOG.forEach((p, i) => {
     const done = S.points.some(q => sameC(q.court, p.c));
-    const g = el("g", { class: "cp" + (done ? " done" : "") + (S.pick === i ? " pick" : ""), tabindex: 0, role: "button", "aria-label": p.name }, svg);
+    const pick = S.pick?.kind === "p" && S.pick.i === i;
+    const g = el("g", { class: "cp" + (done ? " done" : "") + (pick ? " pick" : ""), tabindex: 0, role: "button", "aria-label": p.name }, svg);
     el("circle", { cx: p.c[0], cy: p.c[1], r: .2 }, g);
     const tt = el("title", {}, g); tt.textContent = p.name + (done ? " (찍음 · 다시 찍으면 옮겨져요)" : "");
-    const choose = () => { S.pick = S.pick === i ? null : i; S.selPt = -1; renderPoints(); drawSetup(); };
+    const choose = () => { S.pick = pick ? null : { kind: "p", i }; S.sel = null; drawSetup(); renderPoints(); };
     g.addEventListener("click", choose);
     g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } });
   });
 }
 function renderPoints() {
   buildDiagram();
-  const H = curH(), err = ptErrors(H), n = S.points.length;
-  const okErr = err.filter(e => e != null), mean = okErr.length ? okErr.reduce((a, b) => a + b, 0) / okErr.length : null;
-  $("#fitTag").textContent = n < 4 ? `점 ${n}개 · ${4 - n}개 더` : `점 ${n}개 · 평균 오차 ${mean?.toFixed(1)}px`;
-  $("#pickMsg").innerHTML = S.pick !== null ? `<b style="color:#ff4fd8">${CATALOG[S.pick].name}</b> · 영상에서 이 위치를 클릭하세요 (Esc 취소)`
-    : n < 4 ? "도면에서 영상에 보이는 점을 고르세요" : "점을 더 찍으면 오차가 평균화돼요. 오차가 큰 점은 다시 찍거나 지우세요";
-  const worst = Math.max(0, ...okErr);
-  $("#ptList").innerHTML = S.points.map((p, i) => `<li class="${i === S.selPt ? "sel" : ""}" data-i="${i}">
-    <span>${i + 1}</span><span class="nm">${cName(p.court)}</span>
-    <span class="e ${err[i] != null && err[i] > 8 && err[i] === worst ? "bad" : ""}">${err[i] != null ? err[i].toFixed(1) + "px" : "-"}</span>
-    <button data-del="${i}" title="이 점 지우기" aria-label="${i + 1}번 점 지우기">×</button></li>`).join("")
-    + (mirrored(H) ? `<li class="warn-line">좌우가 뒤집힌 것 같아요. 왼쪽/오른쪽을 카메라에서 볼 때 기준으로 찍었는지 확인하세요</li>` : "");
-  $$("#ptList li[data-i]").forEach(li => li.onclick = e => {
-    const d = e.target.dataset.del;
-    if (d !== undefined) { S.points.splice(+d, 1); S.selPt = -1; }
-    else S.selPt = +li.dataset.i;
-    renderPoints(); drawSetup();
+  const eq = eqCount(), f = S.fit;
+  $("#fitTag").textContent = eq < 8 ? `식 ${eq}/8 · 더 필요` : f?.error ? "계산 실패" : f ? `평균 오차 ${f.mean_err}px · 검산 여유 ${f.spare}` : "계산 중";
+  let msg;
+  if (S.pick?.kind === "p") msg = `<b style="color:#ff4fd8">${CATALOG[S.pick.i].name}</b> · 영상에서 이 위치를 클릭하세요 (Esc 취소)`;
+  else if (S.pick?.kind === "l") {
+    const ln = S.clines.find(l => sameL(l.line, LINE_CATALOG[S.pick.i].l));
+    msg = `<b style="color:#4fe3ff">${LINE_CATALOG[S.pick.i].name}</b> · 영상에서 이 라인 위를 클릭하세요. 지금 ${ln?.px.length || 0}개 · 2개 이상, 멀리 떨어뜨려서 (다 찍었으면 Esc)`;
+  } else if (eq < 8) msg = "교차점(점)은 1개에 식 2개, 라인은 1개에 식 2개예요. 합쳐서 8개 이상 필요해요. 끝이 잘린 곳은 라인으로 찍으세요";
+  else if (f?.error) msg = `<span style="color:var(--rejB)">${f.error}</span>`;
+  else if (f && f.spare < 2) msg = `<span style="color:var(--near1)">검산 여유가 ${f.spare}이에요. 점이나 라인을 더 찍어야 잘못 찍은 걸 오차로 알아챌 수 있어요</span>`;
+  else msg = "오차가 큰 점·라인은 다시 찍거나 지우세요. 먼 쪽(네트 너머) 점이 하나라도 있으면 먼 쪽 정확도가 크게 좋아져요";
+  $("#pickMsg").innerHTML = msg;
+  const errs = [...(f?.errors || []), ...(f?.line_errors || [])], worst = Math.max(0, ...errs);
+  const bad = e => e != null && e > 8 && e === worst ? "bad" : "";
+  const validLines = S.clines.filter(l => l.px.length >= 2);
+  $("#ptList").innerHTML =
+    S.points.map((p, i) => { const e = f?.errors?.[i]; return `<li class="${S.sel?.kind === "p" && S.sel.i === i ? "sel" : ""}" data-k="p" data-i="${i}">
+      <span>${i + 1}</span><span class="nm">${cName(p.court)}</span><span class="e ${bad(e)}">${e != null ? e.toFixed(1) + "px" : "-"}</span>
+      <button data-del="1" title="지우기" aria-label="${i + 1}번 점 지우기">×</button></li>`; }).join("")
+    + S.clines.map((l, i) => { const e = f?.line_errors?.[validLines.indexOf(l)]; return `<li class="ln ${S.sel?.kind === "l" && S.sel.i === i ? "sel" : ""}" data-k="l" data-i="${i}">
+      <span>L${i + 1}</span><span class="nm">${lName(l.line)} · ${l.px.length}점</span><span class="e ${bad(e)}">${e != null ? e.toFixed(1) + "px" : l.px.length < 2 ? "1개 더" : "-"}</span>
+      <button data-del="1" title="지우기" aria-label="L${i + 1} 라인 지우기">×</button></li>`; }).join("")
+    + (f?.mirrored ? `<li class="warn-line">좌우가 뒤집힌 것 같아요. 왼쪽/오른쪽을 카메라에서 볼 때 기준으로 찍었는지 확인하세요</li>` : "");
+  $$("#ptList li[data-k]").forEach(li => li.onclick = e => {
+    const k = li.dataset.k, i = +li.dataset.i;
+    if (e.target.dataset.del) { (k === "p" ? S.points : S.clines).splice(i, 1); S.sel = null; refit(true); return; }
+    if (k === "l") { S.pick = { kind: "l", i: LINE_CATALOG.findIndex(c => sameL(c.l, S.clines[i].line)) }; S.sel = { kind: "l", i, j: S.clines[i].px.length - 1 }; }
+    else S.sel = { kind: "p", i };
+    drawSetup(); renderPoints();
   });
 }
 function renderSetupPanel() {
@@ -316,31 +374,44 @@ function renderSetupPanel() {
 
 function bindSetup() {
   const svg = $("#sSvg");
-  // 도면에서 점을 고른 상태면 영상 클릭 = 그 점 찍기
+  // 도면에서 고른 상태면 영상 클릭 = 찍기 (교차점은 한 번, 라인은 Esc까지 계속)
   svg.addEventListener("pointerdown", e => {
     if (S.pick === null) return;
-    const p = svgPoint(svg, e), c = CATALOG[S.pick].c, px = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
-    const i = S.points.findIndex(q => sameC(q.court, c));
-    if (i >= 0) S.points[i].px = px; else S.points.push({ court: [...c], px });
-    S.selPt = i >= 0 ? i : S.points.length - 1; S.pick = null;
-    renderPoints(); drawSetup();
+    const px = rpx(svgPoint(svg, e));
+    if (S.pick.kind === "p") {
+      const c = CATALOG[S.pick.i].c, i = S.points.findIndex(q => sameC(q.court, c));
+      if (i >= 0) S.points[i].px = px; else S.points.push({ court: [...c], px });
+      S.sel = { kind: "p", i: i >= 0 ? i : S.points.length - 1 }; S.pick = null;
+    } else {
+      const c = LINE_CATALOG[S.pick.i].l;
+      let i = S.clines.findIndex(l => sameL(l.line, c));
+      if (i < 0) { S.clines.push({ line: c.map(p => [...p]), px: [] }); i = S.clines.length - 1; }
+      S.clines[i].px.push(px); S.sel = { kind: "l", i, j: S.clines[i].px.length - 1 };
+    }
+    drawSetup(); renderPoints(); refit();
   });
   svg.addEventListener("pointermove", e => {
-    if (S.drag < 0) return; const p = svgPoint(svg, e);
-    S.points[S.drag].px = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
-    drawSetup(); renderPoints();
+    if (!S.drag) return; const px = rpx(svgPoint(svg, e));
+    if (S.drag.kind === "p") S.points[S.drag.i].px = px; else S.clines[S.drag.i].px[S.drag.j] = px;
+    drawSetup(); refit();
   });
   document.addEventListener("keydown", e => {
     if (S.mode !== "setup" || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
-    if (e.key === "Escape") { S.pick = null; renderPoints(); drawSetup(); return; }
-    if (S.selPt < 0) return;
+    if (e.key === "Escape") { S.pick = null; drawSetup(); renderPoints(); return; }
+    if (!S.sel) return;
+    const ref = S.sel.kind === "p" ? S.points[S.sel.i]?.px : S.clines[S.sel.i]?.px[S.sel.j];
+    if (!ref) return;
     const d = e.shiftKey ? 10 : 1, k = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[e.key];
-    if (e.key === "Delete" || e.key === "Backspace") { S.points.splice(S.selPt, 1); S.selPt = -1; }
-    else if (k) { S.points[S.selPt].px[0] += k[0]; S.points[S.selPt].px[1] += k[1]; }
+    if (e.key === "Delete" || e.key === "Backspace") {
+      if (S.sel.kind === "p") S.points.splice(S.sel.i, 1);
+      else { S.clines[S.sel.i].px.splice(S.sel.j, 1); if (!S.clines[S.sel.i].px.length) S.clines.splice(S.sel.i, 1); }
+      S.sel = null;
+    } else if (k) { ref[0] += k[0]; ref[1] += k[1]; }
     else return;
-    e.preventDefault(); drawSetup(); renderPoints();
+    e.preventDefault(); drawSetup(); renderPoints(); refit();
   });
-  const end = () => { S.drag = -1; };
+  const end = () => { if (S.drag) { S.drag = null; renderPoints(); } };
+
   svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
   $("#sRange").oninput = e => loadFrame(+e.target.value);
   $$(".scrub .b").forEach(b => b.onclick = () => loadFrame(S.frame + +b.dataset.d));
@@ -357,7 +428,7 @@ function bindSetup() {
 async function detect() {
   const b = $("#detBtn"); b.disabled = true; b.textContent = "찾는 중";
   try {
-    const r = await api(`/api/lab/${S.vid}/detect`, { method: "POST", json: { frame: S.frame, points: S.points.length >= 4 ? S.points : [] } });
+    const r = await api(`/api/lab/${S.vid}/detect`, { method: "POST", json: { frame: S.frame, points: S.points, lines: S.clines.filter(l => l.px.length >= 2) } });
     // 이전에 지정한 박스와 많이 겹치는 새 박스에 역할을 이어 붙인다
     const old = S.people, oldA = S.assign; S.assign = {};
     for (const p of r.people) {
@@ -376,9 +447,9 @@ async function saveConfig(run) {
   const by = t => S.people.filter(p => S.assign[p.id] === t).map(p => p.box);
   if (by("A").length !== per || by("B").length !== per) { toast(`팀마다 ${per}명씩 지정해 주세요`, true); return; }
   if (S.detFrame < 0) { toast("먼저 사람을 찾아 지정해 주세요", true); return; }
-  if (S.points.length < 4) { toast("코트 점을 4개 이상 찍어 주세요", true); return; }
+  if (!curH()) { toast(eqCount() < 8 ? "코트 점·라인이 더 필요해요" : "코트 계산이 안 됐어요. 점·라인을 확인해 주세요", true); return; }
   const body = {
-    ref_frame: S.detFrame, points: S.points,
+    ref_frame: S.detFrame, points: S.points, lines: S.clines.filter(l => l.px.length >= 2),
     teams: { A: { name: $("#nameA").value, bboxes: by("A") }, B: { name: $("#nameB").value, bboxes: by("B") } },
     officials: by("R"),
     match: { mode: $("#mMode").value, target: +$("#mTarget").value, first: $("#mFirst").value, game: +$("#mGame").value,

@@ -164,3 +164,13 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .ptm text{fill:#fff;font:700 20px "Noto Sans KR",sans-serif;paint-order:stroke;stroke:#000;stroke-width:5px;pointer-events:none}
 .picking .pb{pointer-events:none}
 .picking{cursor:crosshair}
+#diag .cl-d{cursor:pointer}
+#diag .cl-d .hit{stroke:transparent;stroke-width:.4}
+#diag .cl-d .vis{stroke:#fff;stroke-width:.05}
+#diag .cl-d:hover .vis{stroke:#4fe3ff;stroke-width:.1}
+#diag .cl-d.done .vis{stroke:#4fe3ff;stroke-width:.1}
+#diag .cl-d.pick .vis{stroke:#4fe3ff;stroke-width:.18}
+.lpm rect{fill:#4fe3ff;stroke:#00303a}
+.lpm.sel rect{fill:#fff;stroke:#4fe3ff}
+.lbl-l{fill:#4fe3ff;font:700 18px "Noto Sans KR",sans-serif;paint-order:stroke;stroke:#000;stroke-width:5px;pointer-events:none}
+.pts li.ln span:first-child{color:#4fe3ff}
