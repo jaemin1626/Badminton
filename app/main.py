@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import re
 import shutil
@@ -45,7 +44,17 @@ async def no_stale_pages(request: Request, call_next):
     return resp
 
 # ---------------------------------------------------------------- 저장소
-ID_RE = re.compile(r"^[a-z0-9]{6,32}$")
+# 영상 ID = data/videos 아래 폴더 이름. 영상 파일 이름에서 만든다 (예: match.mp4 → match)
+ID_RE = re.compile(r"^[A-Za-z0-9가-힣][A-Za-z0-9가-힣_-]{0,63}$")
+
+
+def name_id(filename: str) -> str:
+    """파일 이름 → 폴더 이름. 영문·숫자·한글·-·_ 만 남기고, 이미 있으면 -2, -3 …을 붙인다."""
+    stem = re.sub(r"[^A-Za-z0-9가-힣_-]+", "-", Path(filename or "video").stem).strip("-_")[:56] or "video"
+    vid, n = stem, 2
+    while (DATA / vid).exists():
+        vid = f"{stem}-{n}"; n += 1
+    return vid
 
 
 def vdir(vid: str) -> Path:
@@ -212,9 +221,10 @@ async def upload(file: UploadFile = File(...)):
     ext = Path(file.filename or "video.mp4").suffix.lower()
     if ext not in {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}:
         raise HTTPException(400, "mp4 · mov · mkv · avi · webm 파일만 올릴 수 있어요")
-    vid = uuid.uuid4().hex[:12]
-    d = DATA / vid
-    d.mkdir(parents=True)
+    with _reg_lock:
+        vid = name_id(file.filename or "video")
+        d = DATA / vid
+        d.mkdir(parents=True)
     dst = d / f"source{ext}"
     try:
         with open(dst, "wb") as f:
@@ -255,17 +265,22 @@ def _register(vid: str, d: Path, dst: Path, name: str, **extra) -> dict:
 def register_local_files():
     """data/videos 에 직접 넣어 둔 영상 파일을 등록한다 (복사 없이 원본을 가리키는 링크).
 
-    영상 ID는 파일 이름으로 정해지므로 같은 파일은 한 번만 등록된다. 등록을 지워도 원본 파일은 남는다.
+    폴더 이름은 파일 이름 (match.mp4 → data/videos/match/). 이미 등록된 파일은 건너뛴다.
+    등록을 지워도 원본 파일은 남고, 원본이 남아 있으면 다음에 다시 등록된다.
     """
     with _reg_lock:
+        done = set()
+        for d in DATA.iterdir():
+            if d.is_dir():
+                m = read_json(d / "meta.json") or {}
+                if m.get("local"):
+                    done.add(Path(m["local"]).name)
         for f in sorted(DATA.iterdir()):
-            if not f.is_file() or f.suffix.lower() not in VIDEO_EXT:
+            if not f.is_file() or f.suffix.lower() not in VIDEO_EXT or f.name in done:
                 continue
-            vid = "f" + hashlib.sha1(f.name.encode()).hexdigest()[:11]
+            vid = name_id(f.name)
             d = DATA / vid
-            if (d / "meta.json").exists():
-                continue
-            d.mkdir(exist_ok=True)
+            d.mkdir()
             dst = d / f"source{f.suffix.lower()}"
             if not dst.exists():
                 dst.symlink_to(Path("..") / f.name)

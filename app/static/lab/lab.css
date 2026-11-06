@@ -225,3 +225,5 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .bar2{height:6px;background:var(--line);border-radius:3px;margin:6px 0 4px;overflow:hidden}
 .bar2 i{display:block;height:100%;background:var(--ok)}
 #evFilter{flex-wrap:wrap}
+
+.btn.hdr{text-decoration:none;padding:6px 12px;font-size:13px}

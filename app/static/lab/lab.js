@@ -108,11 +108,17 @@ async function boot() {
   const list = await api("/api/videos");
   const sel = $("#vidSel");
   sel.innerHTML = list.map(m => `<option value="${m.id}">${m.name} · ${fmt(m.duration || 0)}</option>`).join("") || `<option value="">영상 없음 · 운영 화면에서 올려 주세요</option>`;
-  const fromHash = location.hash.slice(1).split("/");
+  const fromHash = decodeURIComponent(location.hash.slice(1)).split("/");
   const vid = list.find(m => m.id === fromHash[0])?.id || list[0]?.id;
   sel.onchange = () => openVideo(sel.value);
   $$(".tabs button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
   $("#upFile").onchange = e => upload(e.target.files[0]);
+  // 정답 입력 페이지로: 확인 탭에서 보던 시각을 넘겨 그 장면부터 열리게
+  $("#labelLink").addEventListener("click", e => {
+    if (!S.vid) return;
+    const t = S.mode === "view" ? $("#vid").currentTime : 0;   // (이 함수 안에서는 vid가 문자열이라 직접 찾는다)
+    e.currentTarget.href = `/label#${S.vid}${t > 0 ? `@${t.toFixed(2)}` : ""}`;
+  });
   bindSetup(); bindView();
   if (vid) { sel.value = vid; await openVideo(vid, fromHash[1]); }
 }
@@ -138,6 +144,7 @@ async function openVideo(vid, mode) {
   stopVideo();
   S.vid = vid; S.tr = null; S.kps = null; S.sv = null; S.selRun = null; S.baseSig = null; S.truth = []; S.truthLoaded = false;
   S.info = await api(`/api/lab/${vid}`); S.meta = S.info.meta;
+  $("#labelLink").href = `/label#${vid}`;
   S.defaults = { ...S.info.params };
   const saved = JSON.parse(localStorage.getItem("lab:params") || "null");
   S.params = { ...S.defaults, ...(saved || {}) };

@@ -28,11 +28,14 @@ async function boot() {
   const list = await api("/api/videos");
   const sel = $("#vidSel");
   sel.innerHTML = list.map(m => `<option value="${m.id}">${m.name} · ${fmt(m.duration || 0).slice(0, -3)}</option>`).join("") || `<option>영상 없음</option>`;
-  const want = location.hash.slice(1);
+  const [want, at] = decodeURIComponent(location.hash.slice(1)).split("@");
   const vid = list.find(m => m.id === want)?.id || list[0]?.id;
   sel.onchange = () => openVideo(sel.value);
   bind();
-  if (vid) { sel.value = vid; await openVideo(vid); }
+  if (vid) {
+    sel.value = vid; await openVideo(vid);
+    if (at && !isNaN(+at)) { const el = v(); const go = () => seek(+at); el.readyState >= 1 ? go() : el.addEventListener("loadedmetadata", go, { once: true }); }
+  }
   requestAnimationFrame(loop);
 }
 async function openVideo(vid) {

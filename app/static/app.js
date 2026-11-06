@@ -983,5 +983,5 @@ window.addEventListener("resize", () => { if (S.step === 6 && S.result) renderWo
 
 /* ---------------- 시작 ---------------- */
 checkHealth();
-const mh = location.hash.match(/^#\/v\/([a-z0-9]+)(?:\/(\d))?/);
+const mh = decodeURIComponent(location.hash).match(/^#\/v\/([A-Za-z0-9가-힣_-]+)(?:\/(\d))?/);
 if (mh) openVideo(mh[1], mh[2] != null ? +mh[2] : undefined); else go(0);
