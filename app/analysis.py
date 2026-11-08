@@ -733,6 +733,12 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             if not moved and _serve_changed(prev, c):
                 moved = True
             if not moved:
+                # 뒤 정지가 잠깐(short_still 미만)이고 앞 정지가 2배 넘게 길면, 앞쪽이 서브 준비이고 뒤쪽은 랠리 중 잠깐 멈춤
+                d_prev, d_c = prev["t_end"] - prev["t_still"], c["t_end"] - c["t_still"]
+                if d_c < params.short_still and d_prev >= 2 * max(d_c, 0.1):
+                    note(c["i0"], c["i1"], "C", f"{d_c:.1f}초 잠깐 멈춤 · 앞의 {d_prev:.1f}초 정지가 서브 준비",
+                         **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
+                    continue
                 note(prev["i0"], prev["i1"], "C", f"사이에 랠리 없이 {c['t_still']:.1f}초에 다시 멈춤 → 뒤쪽 정지로 대체",
                      **{k: prev[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
                 out[-1] = c
@@ -1145,8 +1151,8 @@ def score_events(events: list, setup: dict, sides: dict):
         if ok:
             fit = ok[0][3]
             beam = [(lp, m, ch) for lp, m, ch, _ in ok]
-        else:   # 최종 점수에 맞는 흐름이 없으면 건너뛰기 없이 고른 것과 같게
-            beam = [b for b in beam if "X" not in b[2]] or beam
+        else:   # 최종 점수에 맞는 흐름이 없으면 (서브가 모자라는 등) 최종 점수 없이 다시 계산하고 알린다
+            return score_events(evs, {**setup, "final": None, "final_failed": True}, sides)
     best_lp, _, best = beam[0]
     if fit:   # 마지막으로 남은 서브(가짜로 뺀 것 제외)의 랠리 득점 팀 = 최종 점수에서 하나 남는 팀
         live_i = [i for i, c in zip(active, best) if c != "X" and evs[i].get("kind", "serve") == "serve"]
