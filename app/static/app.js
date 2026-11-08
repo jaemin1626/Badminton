@@ -887,7 +887,7 @@ function renderPanel() {
       const g = $("#overlay"); g.innerHTML = ""; drawScoreboard(g, { score: { A: f.scoreA, B: f.scoreB }, server: f.first, game: f.game }, setupNow(), U(), b.dataset.k.slice(-1)); saveLocal();
     });
     $("#boardSw").onclick = () => { f.scoreboard = !f.scoreboard; renderPanel(); drawOverlay(); saveLocal(); };
-    bindTitleFields(f, upd => { Object.assign(f, upd); saveLocal(); drawOverlay(); });
+    bindTitleFields(f, upd => { Object.assign(f, upd); saveLocal(); renderPanel(); drawOverlay(); });
     ["fA", "fB"].forEach(id => $("#" + id).oninput = () => {
       const a = $("#fA").value, b = $("#fB").value;
       f.final = a !== "" && b !== "" ? { A: +a, B: +b } : null; saveLocal();
