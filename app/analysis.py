@@ -687,6 +687,9 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
     for c in out:
         note(c["i0"], c["i1"], "OK", "서브", **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front", "seen", "pos")})
     for c in out:
+        # 정지 직전 4초 동안 누군가 랠리 속도로 뛰던 비율. 높으면 랠리 도중 잠깐 멈춘 것일 수 있다 (최종 점수 맞추기에서 빼기 쉬운 쪽)
+        w0 = max(0, c["i0"] - int(round(4.0 / dt)))
+        c["pre_rally"] = round(float(fast[w0:c["i0"]].mean()), 2) if c["i0"] > w0 else 0.0
         c.pop("i0"); c.pop("i1")
     if debug is not None:
         debug["runs"] = sorted(log, key=lambda r: r["t0"])
@@ -956,8 +959,8 @@ def score_events(events: list, setup: dict, sides: dict):
             if fin and kind == "serve" and not ev.get("override"):
                 teams = teams + ["X"]
             for team in teams:
-                if team == "X":   # 이 서브는 가짜로 보고 건너뜀
-                    l2 = lp - SKIP_COST
+                if team == "X":   # 이 서브는 가짜로 보고 건너뜀. 직전까지 랠리가 이어지던 정지면 덜 감점
+                    l2 = lp - SKIP_COST + 3.0 * min(max((float(ev.get("pre_rally") or 0) - 0.3) / 0.3, 0.0), 1.0)
                     k = _state_key(m) + (len(ch),)
                     if k not in nxt or nxt[k][0] < l2:
                         nxt[k] = (l2, m.clone(), ch + ["X"])

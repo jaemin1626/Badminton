@@ -651,7 +651,7 @@ def patch_events(vid: str, body: list[EventPatch]):
     if res is None or cfg is None:
         raise HTTPException(404, "아직 분석 결과가 없어요")
     keep = ("id", "t", "frame", "t_still", "frame_still", "box", "boxes", "p_near", "view", "seen", "front", "pos", "cues",
-            "override", "removed", "kind", "winner", "look")
+            "override", "removed", "kind", "winner", "look", "pre_rally")
     evs = [{k: e[k] for k in keep if k in e} for e in res["events"]]
     by = {e["id"]: e for e in evs}
     fps = cfg.get("fps") or 30
