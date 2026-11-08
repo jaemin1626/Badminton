@@ -33,6 +33,8 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// 게임 규칙 버튼 값: 21점은 단판(games_to_win 1)과 3게임을 나눈다
+const ruleKey = f => +f.target === 21 ? (+f.games_to_win === 1 ? "21-1" : "21") : String(f.target ?? 25);
 const parseMSS = str => { const q = String(str || "").trim().split(":").map(Number); return q.length && q.every(x => !isNaN(x)) && String(str).trim() ? q.reduce((a, b) => a * 60 + b, 0) : null; };
 const fmtTime = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, "0")}`; };
 const fmtBytes = b => b > 1e9 ? (b / 1e9).toFixed(1) + "GB" : (b / 1e6).toFixed(0) + "MB";
@@ -902,7 +904,7 @@ function renderPanel() {
       <div class="field"><label>시작 게임</label>${seg("game", [[1, "1게임"], [2, "2게임"], [3, "3게임"]])}</div>
       <div class="field"><label>우리 팀</label>${seg("ours", [["A", T.A.name], ["B", T.B.name]])}</div>
       <div class="field"><label>스코어보드에서 우리 팀 줄</label>${seg("ours_row", [["top", "윗줄"], ["bottom", "아랫줄"]])}</div>
-      <div class="field"><label>게임 규칙</label>${seg("target", [[25, "25점 단판"], [21, "21점 · 듀스 최대 30"], [15, "15점"]])}</div>
+      <div class="field"><label>게임 규칙</label><div class="seg" id="ruleSeg">${[["25", "25점 단판"], ["21-1", "21점 단판"], ["21", "21점 · 3게임"], ["15", "15점"]].map(([v, l]) => `<button data-v="${v}" class="${ruleKey(f) === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
       <div class="field"><label>코트 교대 시각</label><input class="sw-in" id="swIn" value="${esc((f.switch_manual || []).map(t => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`).join(", "))}" placeholder="비우면 자동 (선수 옷 색으로 찾음)" aria-label="코트 교대 시각, 비우면 자동"><p class="hint-s">자동이 틀렸을 때만 분:초로 적어요. 여러 번이면 쉼표 (예: 3:50, 12:10)</p></div>
       <div class="field"><label>첫 서브 시각 <small class="opt">알면 · 그 전 장면은 경기 전 준비로 봐요</small></label><input class="sw-in" id="stIn0" value="${f.start_t != null ? fmtTime(f.start_t) : ""}" placeholder="비우면 자동 (예: 0:14)" aria-label="첫 서브 시각 (분:초)"></div>
       <div class="toggle-row">스코어보드 미리보기<button class="switch ${f.scoreboard ? "on" : ""}" id="boardSw" role="switch" aria-checked="${f.scoreboard}" aria-label="스코어보드 미리보기"></button></div>
@@ -913,6 +915,12 @@ function renderPanel() {
     $$(".pm button", P).forEach(b => b.onclick = () => {
       f[b.dataset.k] = clamp(f[b.dataset.k] + +b.dataset.d, 0, 29); renderPanel();
       const g = $("#overlay"); g.innerHTML = ""; drawScoreboard(g, { score: { A: f.scoreA, B: f.scoreB }, server: f.first, game: f.game }, setupNow(), U(), b.dataset.k.slice(-1)); saveLocal();
+    });
+    $$("#ruleSeg button").forEach(b => b.onclick = () => {
+      const v = b.dataset.v;
+      f.target = v === "21-1" ? 21 : +v;
+      if (v === "21-1") f.games_to_win = 1; else delete f.games_to_win;
+      renderPanel(); drawOverlay(); saveLocal();
     });
     $("#boardSw").onclick = () => { f.scoreboard = !f.scoreboard; renderPanel(); drawOverlay(); saveLocal(); };
     bindTitleFields(f, (upd, quiet) => { Object.assign(f, upd); saveLocal(); if (!quiet) renderPanel(); drawOverlay(); });
