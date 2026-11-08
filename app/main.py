@@ -716,6 +716,28 @@ def tracks(vid: str, start: int = 0, end: int | None = None):
     return JSONResponse(out)
 
 
+class BoardReq(BaseModel):
+    ours: str | None = None         # "A" / "B"
+    ours_row: str | None = None     # "top" / "bottom"
+
+
+@app.patch("/api/videos/{vid}/board")
+def patch_board(vid: str, body: BoardReq):
+    """스코어보드 표시(우리 팀, 우리 팀 줄 위/아래)만 바꾼다. 점수는 그대로."""
+    d = vdir(vid)
+    upd = {k: v for k, v in (("ours", body.ours), ("ours_row", body.ours_row)) if v is not None}
+    if upd.get("ours", "A") not in ("A", "B") or upd.get("ours_row", "top") not in ("top", "bottom"):
+        raise HTTPException(400, "잘못된 값이에요")
+    res, cfg = read_json(d / "result.json"), read_json(d / "match.json")
+    if res is not None:
+        res["setup"].update(upd)
+        write_json(d / "result.json", res)
+    if cfg is not None:
+        cfg.setdefault("match", {}).update(upd)
+        write_json(d / "match.json", cfg)
+    return res["setup"] if res else upd
+
+
 class RenderReq(BaseModel):
     mask: bool = False              # 공개용: 머리(head) 모자이크
     exclude: list[int] = Field(default_factory=list)   # 마스킹하지 않을 선수 번호

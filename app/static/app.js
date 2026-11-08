@@ -22,7 +22,7 @@ const S = {
   cpts: [], clines: [], pick: null, sel: null, drag: null, fit: null, wide: false, inner: false, guide: null,
   people: [], detFrame: -1, detecting: false, assign: {}, activeTeam: "A", showPose: true,
   teams: { A: { name: "팀 A" }, B: { name: "팀 B" } },
-  fmt: { mode: "doubles", first: "A", scoreA: 0, scoreB: 0, target: 21, ours: "A", scoreboard: true, game: 1 },
+  fmt: { mode: "doubles", first: "A", scoreA: 0, scoreB: 0, target: 21, ours: "A", ours_row: "bottom", scoreboard: true, game: 1 },
   suggest: null, config: null, job: null, renderJob: null, result: null, selEvent: null,
   pub: { exclude: [], scoreboard: true }, publicJob: null, players: null,
 };
@@ -624,6 +624,7 @@ function setupNow() { return { ...S.fmt, nameA: S.teams.A.name, nameB: S.teams.B
 function drawScoreboard(g, state, setup, u, popTeam = null) {
   const ours = setup.ours || "A", opp = ours === "A" ? "B" : "A";
   const rows = [{ t: opp, label: "상대" }, { t: ours, label: "우리" }];
+  if (setup.ours_row === "top") rows.reverse();   // 우리 팀을 윗줄로
   const X = 24 * u, Y = 24 * u, Wd = 380, RH = 58;
   const sb = el("g", { transform: `translate(${X},${Y}) scale(${u})` }, g);
   el("rect", { x: 0, y: 0, width: Wd, height: 30 + RH * 2 + 8, rx: 14, class: "sb-bg" }, sb);
@@ -852,7 +853,8 @@ function renderPanel() {
       <div class="field"><label>첫 서브 팀</label>${seg("first", [["A", T.A.name], ["B", T.B.name]])}</div>
       <div class="field"><label>시작 점수</label><div class="score-in">${sb("A", "scoreA")}<span class="vs">VS</span>${sb("B", "scoreB")}</div></div>
       <div class="field"><label>시작 게임</label>${seg("game", [[1, "1게임"], [2, "2게임"], [3, "3게임"]])}</div>
-      <div class="field"><label>우리 팀 (스코어보드 아랫줄)</label>${seg("ours", [["A", T.A.name], ["B", T.B.name]])}</div>
+      <div class="field"><label>우리 팀</label>${seg("ours", [["A", T.A.name], ["B", T.B.name]])}</div>
+      <div class="field"><label>스코어보드에서 우리 팀 줄</label>${seg("ours_row", [["top", "윗줄"], ["bottom", "아랫줄"]])}</div>
       <div class="field"><label>게임 규칙</label>${seg("target", [[25, "25점 단판"], [21, "21점 · 듀스 최대 30"], [15, "15점"]])}</div>
       <div class="toggle-row">스코어보드 미리보기<button class="switch ${f.scoreboard ? "on" : ""}" id="boardSw" role="switch" aria-checked="${f.scoreboard}" aria-label="스코어보드 미리보기"></button></div>
       <button class="cta" id="next">분석 시작</button>`;
@@ -1062,6 +1064,10 @@ function renderRPanel() {
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
+    <h3>스코어보드</h3>
+    <div class="field"><label>우리 팀</label><div class="seg" id="bOurs">${["A", "B"].map(t => `<button data-v="${t}" class="${(st.ours || "A") === t ? "on" : ""}">${nm(t)}</button>`).join("")}</div></div>
+    <div class="field"><label>우리 팀 줄</label><div class="seg" id="bRow">${[["top", "윗줄"], ["bottom", "아랫줄"]].map(([v, l]) => `<button data-v="${v}" class="${(st.ours_row || "bottom") === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
+    <p class="desc" style="margin:-4px 0 12px">바꾸면 영상 위 스코어보드에 바로 보여요. 점수 영상·공개용 영상은 다시 만들어야 반영돼요.</p>
     <h3>내보내기</h3>
     <div class="exports">
       <button class="icon-btn" id="renderBtn">${S.meta.has_overlay ? "점수 영상 다시 만들기" : "점수 영상 만들기"}</button>
@@ -1091,6 +1097,12 @@ function renderRPanel() {
     if (!team) return; const T = team.trim().toUpperCase(); if (!["A", "B"].includes(T)) { toast("A 또는 B로 입력해 주세요", true); return; }
     await patch([{ action: "add_point", t: Math.max(video.currentTime, (all.at(-1)?.t || 0) + 1), team: T }]); toast("마지막 랠리 점수를 추가했어요");
   };
+  const setBoard = async upd => {
+    try { S.result.setup = await api(`/api/videos/${S.vid}/board`, { method: "PATCH", json: upd }); Object.assign(S.fmt, upd); saveLocal(); renderRPanel(); lastStateKey = ""; }
+    catch (e) { toast(e.message, true); }
+  };
+  $$("#bOurs button").forEach(b => b.onclick = () => setBoard({ ours: b.dataset.v }));
+  $$("#bRow button").forEach(b => b.onclick = () => setBoard({ ours_row: b.dataset.v }));
   $("#renderBtn").onclick = startRender;
   $("#pubBoard").onclick = () => { S.pub.scoreboard = !S.pub.scoreboard; const b = $("#pubBoard"); b.classList.toggle("on", S.pub.scoreboard); b.setAttribute("aria-checked", S.pub.scoreboard); };
   $("#pubBtn").onclick = startPublic;

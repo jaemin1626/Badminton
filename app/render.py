@@ -46,7 +46,10 @@ def scoreboard(state: dict, setup: dict, scale: float, pop: float = 0.0) -> Imag
     mode = "복식" if setup.get("mode", "doubles") == "doubles" else "단식"
     head = f"GAME {state.get('game', 1)} · {setup.get('target', 21)}점 · {mode}"
     d.text((int(16 * s), int(21 * s)), head, font=_font("NotoSansKR.ttf", int(13 * s), 700), fill=ACCENT, anchor="ls")
-    for i, (t, label) in enumerate(((opp, "상대"), (ours, "우리"))):
+    rows = ((opp, "상대"), (ours, "우리"))
+    if setup.get("ours_row") == "top":   # 우리 팀을 윗줄로
+        rows = rows[::-1]
+    for i, (t, label) in enumerate(rows):
         y = top + i * RH
         if i == 1:
             d.line([int(12 * s), y, Wd - int(12 * s), y], fill=(255, 255, 255, 26), width=max(1, int(s)))
