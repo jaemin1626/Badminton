@@ -614,7 +614,7 @@ function watchJob(j) {
     try {
       const k = await api(`/api/jobs/${j.id}`); draw(k);
       if (k.state === "done") {
-        $("#tabView").disabled = false; S.tr = null; S.kps = null; S.sv = null; S.info.has_tracks = true; S.info.tracks_stale = false;
+        $("#tabView").disabled = $("#tabTruth").disabled = false; $("#tabTruth").title = "실제 서브 시각과 서브 팀(정답)을 기록해요"; S.tr = null; S.kps = null; S.sv = null; S.info.has_tracks = true; S.info.tracks_stale = false;
         toast("추적이 끝났어요. 추적 · 서브 확인 탭에서 볼 수 있어요"); if (S.mode === "view") enterView(); return;
       }
       if (!["running", "queued"].includes(k.state)) return;
