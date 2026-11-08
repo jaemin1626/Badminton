@@ -1276,7 +1276,7 @@ function renderEvList() {
   ul.innerHTML = list.map(e => {
     const manual = e.override || e.kind === "point";
     const what = e.kind === "point" ? "랠리 승리" : "서브";
-    const note = e.removed ? "삭제됨" : e.skipped ? "최종 점수에 맞추려고 뺌" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : ""].filter(Boolean).join(" · ");
+    const note = e.removed ? "삭제됨" : e.rescued && e.skipped ? "놓쳤을 수 있는 서브 (예비) · 서브면 팀을 고르세요" : e.skipped ? "최종 점수에 맞추려고 뺌" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : ""].filter(Boolean).join(" · ");
     // 사람이 고친 것: 팀 지정 · 삭제 · 맞음 확인 · 직접 추가
     const fix = e.removed ? "삭제" : e.override ? `${nm(e.override)}로` : e.confirmed ? "확인" : e.manual || e.kind === "point" ? "추가" : "";
     return `<li class="ev-item ${e.id === S.selEvent ? "cur" : ""} ${e.flags?.length && !e.removed ? "flagged" : ""} ${e.removed ? "removed" : ""} ${fix ? "fixed" : ""}" data-id="${e.id}">
@@ -1356,10 +1356,16 @@ function reviewHtml() {
       <span class="wy">${e.skipped ? '<b class="warn-t">뺀 서브</b> · ' : e.server ? `${nm(e.server)} 서브 · ` : ""}${esc((e.why || []).join(" · "))}</span><span class="sv">${e.suspect.toFixed(1)}</span></li>`).join("");
   const gaps = extra != null && extra < 0 && c.gaps?.length ? `<p class="desc">서브가 빠졌을 만한 긴 빈 구간: ${c.gaps.map(([a, b]) => `<a href="#" class="gap" data-t="${a}">${fmtTime(a)}~${fmtTime(b)}</a>`).join(" · ")}</p>` : "";
   if (S.review) return reviewCard();
+  // 예비 서브: 서브 사이가 길게 빈 곳에서 '1명 흔들림 허용'으로 다시 찾은 후보. 확인하면 정식 서브가 된다
+  const spares = r.events.filter(e => e.rescued && e.skipped && !e.removed);
+  const spareHtml = spares.length ? `<div class="spare"><p class="rv-head">놓쳤을 수 있는 서브 <b>${spares.length}</b>개 · 장면을 보고 서브면 넣은 팀을, 아니면 '아님'</p>
+    <ol class="sus spare-list">${spares.map(e => `<li data-id="${e.id}"><span class="tm">${fmtTime(e.t)}</span>
+      <span class="sp-btns"><button class="icon-btn sm" data-sa="watch">보기</button><button class="icon-btn sm" data-sa="A">${nm("A")} 서브</button><button class="icon-btn sm" data-sa="B">${nm("B")} 서브</button><button class="icon-btn sm" data-sa="remove">아님</button></span></li>`).join("")}</ol></div>` : "";
   return `<div class="review">
     <div class="rv-title">검토 · 수동 수정</div>
     <p class="rv-head">${head}</p>
     ${show.length ? `<ol class="sus">${list}</ol><button class="cta sm" id="rvStart">검토 시작 · 의심 순서대로 ${show.length}개 보기</button>` : ""}
+    ${spareHtml}
     ${gaps}</div>`;
 }
 function reviewCard() {
@@ -1402,7 +1408,17 @@ function renderReview() {
   const d = $("#rvDock"); if (!d || !S.result) return;
   d.innerHTML = reviewHtml(); bindReview();
 }
+function bindSpares() {
+  $$(".spare-list li").forEach(li => $$("button[data-sa]", li).forEach(b => b.onclick = async ev => {
+    ev.stopPropagation();
+    const id = li.dataset.id, a = b.dataset.sa, e = S.result.events.find(x => x.id === id);
+    if (a === "watch") { seek((e.t_still ?? e.t) - 1.5, true); return; }
+    if (a === "remove") await patch([{ id, action: "remove" }]);
+    else await patch([{ id, action: "set_server", team: a }]);
+  }));
+}
 function bindReview() {
+  bindSpares();
   $("#rvStart")?.addEventListener("click", () => { S.review = { ids: suspects().slice(0, Math.max(5, (S.result.summary.count?.extra > 0 ? S.result.summary.count.extra : 0) + 3)).map(e => e.id), i: 0 }; reviewGo(0); });
   $("#rvEnd")?.addEventListener("click", () => { S.review = null; renderRPanel(); });
   $$(".review [data-r]").forEach(b => b.onclick = () => reviewAct(b.dataset.r));

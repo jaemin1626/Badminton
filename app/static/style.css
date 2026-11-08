@@ -472,3 +472,7 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .ev-item.fixed.flagged{box-shadow:inset 3px 0 0 var(--accent),inset 6px 0 0 var(--warn)}
 .ev-item .tm{display:flex;flex-direction:column;gap:2px}
 .fix-tag{font:700 10px "Noto Sans KR",sans-serif;color:var(--accent-ink);background:var(--accent);border-radius:5px;padding:1px 5px;white-space:nowrap;text-decoration:none;display:inline-block}
+/* 검토 칸: 놓쳤을 수 있는 서브 */
+.spare{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+.spare-list li{display:flex !important;align-items:center;gap:10px;justify-content:space-between}
+.spare-list .sp-btns{display:flex;gap:6px;flex-wrap:wrap}
