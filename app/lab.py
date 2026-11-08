@@ -810,6 +810,46 @@ def lab_get_truth(vid: str):
     return {"marks": [], "final": None}
 
 
+class FromOpReq(BaseModel):
+    overwrite: bool = False   # 이미 정답이 있으면 덮어쓰기 (원래 것은 truth.bak-시각.json 으로 남김)
+
+
+@router.post("/api/lab/{vid}/truth/from-op")
+def lab_truth_from_op(vid: str, req: FromOpReq):
+    """운영 페이지 편집 결과(남은 서브와 서브 팀, 최종 점수)를 실험 페이지 정답으로 보낸다.
+    실험 설정이 없으면 운영 설정(코트·선수·심판·경기 설정)으로 만들고, 실험 추적이 없으면 추적을 시작한다."""
+    d = vdir(vid)
+    op = read_json(d / "match.json")
+    res = read_json(d / "result.json")
+    if op is None or res is None:
+        raise HTTPException(404, "운영 페이지 분석 결과가 없어요")
+    L = ldir(vid)
+    cur = read_json(L / "truth.json")
+    if cur and cur.get("marks") and not req.overwrite:
+        raise HTTPException(409, f"실험 페이지에 이미 정답 {len(cur['marks'])}개가 있어요")
+    made_cfg = False
+    if read_json(L / "config.json") is None:
+        m = op.get("match", {})
+        lab_put_config(vid, LabConfig(
+            ref_frame=op["ref_frame"], points=op.get("points", []), lines=op.get("lines", []),
+            teams={"A": TeamIn(name=op["teams"]["1"]["name"], bboxes=op["teams"]["1"].get("bboxes", [])),
+                   "B": TeamIn(name=op["teams"]["2"]["name"], bboxes=op["teams"]["2"].get("bboxes", []))},
+            officials=[o["bbox"] for o in op.get("officials", []) if o.get("bbox")],
+            match={k: m[k] for k in ("mode", "first", "scoreA", "scoreB", "target", "game", "games_to_win",
+                                     "start_t", "switch_manual", "final") if k in m}))
+        made_cfg = True
+    if cur and cur.get("marks"):
+        write_json(L / f"truth.bak-{time.strftime('%Y%m%d-%H%M%S')}.json", cur)
+    live = [e for e in res["events"] if not e.get("removed") and not e.get("skipped") and e.get("server")]
+    fin = (res.get("setup") or {}).get("final") or op.get("match", {}).get("final")
+    data = lab_put_truth(vid, TruthReq(marks=[{"t": e["t"], "server": e["server"]} for e in live], final=fin, finalized=False))
+    job = None
+    if not (L / "tracks.npz").exists():
+        job = lab_track(vid)
+    return {"marks": len(data["marks"]), "final": data["final"], "made_config": made_cfg, "tracking": bool(job),
+            "url": f"/lab#{vid}/truth"}
+
+
 @router.put("/api/lab/{vid}/truth")
 def lab_put_truth(vid: str, req: TruthReq):
     cur = read_json(ldir(vid) / "truth.json") or {}

@@ -1140,7 +1140,8 @@ function renderRPanel() {
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
-    <button class="cta" id="toSave" style="margin-top:14px">편집 끝 · 저장하러 가기</button>` : `
+    <button class="icon-btn" id="toLabel" style="width:100%;margin-top:10px" title="지금 남은 서브와 서브 팀, 최종 점수를 실험 페이지 정답 입력으로 보내요">실험 페이지 정답(라벨)으로 보내기</button>
+    <button class="cta" id="toSave" style="margin-top:10px">편집 끝 · 저장하러 가기</button>` : `
     <p class="desc">편집한 점수로 영상을 만들어요. 고칠 게 남았으면 <a href="#" id="toEdit">← 편집으로</a></p>
     <h3>대회 정보</h3>
     ${titleFields(st)}
@@ -1168,6 +1169,18 @@ function renderRPanel() {
     </section>`}`;
   $$("#evFilter button").forEach(b => b.onclick = () => { S.evFilter = b.dataset.f; renderRPanel(); });
   $("#toSave")?.addEventListener("click", () => { S.review = null; go(7); });
+  $("#toLabel")?.addEventListener("click", async () => {
+    const send = overwrite => api(`/api/lab/${S.vid}/truth/from-op`, { method: "POST", json: { overwrite } });
+    let r;
+    try { r = await send(false); }
+    catch (e) {
+      if (!/이미 정답/.test(e.message)) { toast(e.message, true); return; }
+      if (!confirm(`${e.message}. 지금 편집한 결과로 덮어쓸까요? (원래 정답은 따로 보관돼요)`)) return;
+      try { r = await send(true); } catch (e2) { toast(e2.message, true); return; }
+    }
+    toast(`정답 ${r.marks}개를 보냈어요${r.final ? ` · 최종 ${r.final.A}:${r.final.B}` : ""}${r.tracking ? " · 실험 페이지 추적을 시작했어요 (끝나면 정답 탭이 열려요)" : ""}`);
+    window.open(r.url, "_blank");
+  });
   $("#toEdit")?.addEventListener("click", ev => { ev.preventDefault(); go(6); });
   if (S.step === 6) renderReview(); else { const d = $("#rvDock"); if (d) d.innerHTML = ""; }
   const setFinal = async (A, B) => {
@@ -1263,9 +1276,11 @@ function renderEvList() {
   ul.innerHTML = list.map(e => {
     const manual = e.override || e.kind === "point";
     const what = e.kind === "point" ? "랠리 승리" : "서브";
-    const note = e.removed ? "삭제됨" : e.skipped ? "최종 점수에 맞추려고 뺌" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : "", manual ? "수정함" : ""].filter(Boolean).join(" · ");
-    return `<li class="ev-item ${e.id === S.selEvent ? "cur" : ""} ${e.flags?.length && !e.removed ? "flagged" : ""} ${e.removed ? "removed" : ""}" data-id="${e.id}">
-      <span class="tm">${fmtTime(e.t)}</span>
+    const note = e.removed ? "삭제됨" : e.skipped ? "최종 점수에 맞추려고 뺌" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : ""].filter(Boolean).join(" · ");
+    // 사람이 고친 것: 팀 지정 · 삭제 · 맞음 확인 · 직접 추가
+    const fix = e.removed ? "삭제" : e.override ? `${nm(e.override)}로` : e.confirmed ? "확인" : e.manual || e.kind === "point" ? "추가" : "";
+    return `<li class="ev-item ${e.id === S.selEvent ? "cur" : ""} ${e.flags?.length && !e.removed ? "flagged" : ""} ${e.removed ? "removed" : ""} ${fix ? "fixed" : ""}" data-id="${e.id}">
+      <span class="tm">${fmtTime(e.t)}${fix ? `<span class="fix-tag" title="직접 고친 서브">✎ ${fix}</span>` : ""}</span>
       <span class="who">${e.server ? `<span class="sw" style="background:var(--team${e.server})"></span><span class="nm">${nm(e.server)} ${what}</span>` : `<span class="nm">—</span>`}<span class="note">${note}</span></span>
       <span class="sc"><span style="color:var(--teamA)">${e.score.A}</span>:<span style="color:var(--teamB)">${e.score.B}</span></span>
       ${e.conf != null && !e.removed ? `<span class="conf" title="신뢰도 ${Math.round(e.conf * 100)}%"><i style="width:${Math.round(e.conf * 100)}%;${e.conf < .75 ? "background:var(--warn)" : ""}"></i></span>` : ""}
@@ -1395,10 +1410,21 @@ function bindReview() {
   $$(".review .gap").forEach(a => a.onclick = ev => { ev.preventDefault(); seek(+a.dataset.t, true); });
 }
 
+// 다시 그려도 보던 자리 그대로: 목록·오른쪽 패널·페이지 스크롤을 기억했다가 되돌린다
+function keepScroll(fn) {
+  const ul = $("#evlist"), rp = $("#rpanel");
+  const s = { ul: ul?.scrollTop, rp: rp?.scrollTop, win: window.scrollY };
+  fn();
+  const ul2 = $("#evlist"), rp2 = $("#rpanel");
+  if (ul2 && s.ul != null) { ul2.style.scrollBehavior = "auto"; ul2.scrollTop = s.ul; ul2.style.scrollBehavior = ""; }
+  if (rp2 && s.rp != null) rp2.scrollTop = s.rp;
+  window.scrollTo(0, s.win);
+}
 async function patch(body) {
   try {
     S.result = await api(`/api/videos/${S.vid}/events`, { method: "PATCH", json: body });
-    lastStateKey = null; renderWorm(); renderRPanel();
+    if (body[0]?.id) S.selEvent = body[0].id;   // 방금 고친 서브를 표시해 둔다
+    lastStateKey = null; renderWorm(); keepScroll(renderRPanel);
   } catch (e) { toast(e.message, true); }
 }
 function selectEvent(id, doSeek) {

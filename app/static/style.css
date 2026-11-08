@@ -467,3 +467,8 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 /* 코트 지정: 화면 밖 여백은 검은색 */
 .stage{background:#000}
 .wide-seg button{padding:0 9px}
+/* 편집 목록: 직접 고친 서브 표시 */
+.ev-item.fixed{box-shadow:inset 3px 0 0 var(--accent)}
+.ev-item.fixed.flagged{box-shadow:inset 3px 0 0 var(--accent),inset 6px 0 0 var(--warn)}
+.ev-item .tm{display:flex;flex-direction:column;gap:2px}
+.fix-tag{font:700 10px "Noto Sans KR",sans-serif;color:var(--accent-ink);background:var(--accent);border-radius:5px;padding:1px 5px;white-space:nowrap;text-decoration:none;display:inline-block}
