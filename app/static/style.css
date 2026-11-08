@@ -464,3 +464,6 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .fname{word-break:break-all;margin-top:-4px}
 #tEvent button.on{background:var(--accent);color:var(--accent-ink);font-weight:700;box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 40%,transparent)}
 #tEvent button:not(.on):hover{color:var(--ink)}
+/* 코트 지정: 화면 밖 여백은 검은색 */
+.stage{background:#000}
+.wide-seg button{padding:0 9px}

@@ -222,7 +222,18 @@ function bindDiagram() {
   $$("#diag [data-p]").forEach(g => { g.onclick = () => choose("p", +g.dataset.p); g.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("p", +g.dataset.p); } }; });
   $$("#diag [data-l]").forEach(g => { g.onclick = () => choose("l", +g.dataset.l); g.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("l", +g.dataset.l); } }; });
 }
-function stagePad() { return S.step === 2 && S.wide ? { x: Math.round(S.meta.width * .25), y: Math.round(S.meta.height * .45) } : { x: 0, y: 0 }; }
+// 화면 밖 여백 단계: 0 끔 · 1 조금 · 2 넓게 · 3 아주 넓게 (영상 너비·높이 대비 한쪽 여백). 예전 저장값 true 는 1
+const WIDE = [[0, 0], [.25, .45], [.5, 1.0], [1.0, 2.0]];
+function stagePad() { const [fx, fy] = (S.step === 2 && WIDE[Math.max(+S.wide || 0, wideNeeded())]) || WIDE[0]; return { x: Math.round(S.meta.width * fx), y: Math.round(S.meta.height * fy) }; }
+function wideNeeded() {
+  const W = S.meta.width, H = S.meta.height;
+  const pts = [...(S.cpts || []).map(p => p.px), ...(S.clines || []).flatMap(l => l.px || [])];
+  for (let lv = 0; lv < WIDE.length; lv++) {
+    const [fx, fy] = WIDE[lv];
+    if (pts.every(([x, y]) => x >= -W * fx && x <= W * (1 + fx) && y >= -H * fy && y <= H * (1 + fy))) return lv;
+  }
+  return WIDE.length - 1;
+}
 function applyView() {
   if (!svg) return;
   const W = S.meta.width, H = S.meta.height, p = stagePad();
@@ -408,7 +419,7 @@ async function openVideo(id, step) {
     // 브라우저에 남은 작업은 서버 설정보다 나중 것일 때만 코트를 덮는다 (서버에서 고친 설정이 옛 작업에 가려지지 않게)
     const locCourt = loc && (!S.config || (loc.ts || 0) > (S.config.saved || 0));
     if (loc) {
-      S.wide = !!loc.wide; S.inner = !!loc.inner;
+      S.wide = loc.wide === true ? 1 : (+loc.wide || 0); S.inner = !!loc.inner;
       S.showLines = loc.showLines ?? true; S.showPose = loc.showPose ?? true;
     }
     if (locCourt) {
@@ -806,7 +817,7 @@ function renderPanel() {
       <p class="pick-msg">${msg}</p>
       ${items ? `<ul class="corners cp-list">${items}</ul>` : ""}
       <div class="toggle-row">안쪽 점·라인도 고르기<button class="switch ${S.inner ? "on" : ""}" id="innerSw" role="switch" aria-checked="${S.inner}" aria-label="안쪽 점·라인도 고르기"></button></div>
-      <div class="toggle-row">화면 밖까지 넓게 보기<button class="switch ${S.wide ? "on" : ""}" id="wideSw" role="switch" aria-checked="${S.wide}" aria-label="화면 밖까지 넓게 보기"></button></div>
+      <div class="toggle-row">화면 밖 여백<div class="seg wide-seg" id="wideSeg">${["끔", "조금", "넓게", "아주 넓게"].map((x, i) => `<button data-v="${i}" class="${(+S.wide || 0) === i ? "on" : ""}">${x}</button>`).join("")}</div></div>
       <div class="toggle-row">코트 라인 미리보기<button class="switch ${S.showLines ? "on" : ""}" id="lineSw" role="switch" aria-checked="${S.showLines}" aria-label="코트 라인 미리보기"></button></div>
       <div class="btn-row"><button class="icon-btn sm" id="labCourt" title="같은 영상의 실험 페이지 코트 설정(점·라인)을 가져와요">실험 페이지 코트 불러오기</button><button class="icon-btn sm" id="clearCourt">모두 지우기</button></div>
       <ul class="checks" style="margin-top:12px">
@@ -829,7 +840,11 @@ function renderPanel() {
       drawOverlay(); renderPanel();
     });
     $("#innerSw").onclick = () => { S.inner = !S.inner; renderPanel(); saveLocal(); };
-    $("#wideSw").onclick = () => { S.wide = !S.wide; applyView(); drawOverlay(); renderPanel(); saveLocal(); };
+    $$("#wideSeg button").forEach(b => b.onclick = () => {
+      const v = +b.dataset.v;
+      if (v < wideNeeded()) { toast("찍어 둔 점이 화면 밖에 있어 더 줄일 수 없어요", true); return; }
+      S.wide = v; applyView(); drawOverlay(); renderPanel(); saveLocal();
+    });
     $("#lineSw").onclick = () => { S.showLines = !S.showLines; drawOverlay(); renderPanel(); saveLocal(); };
     $("#labCourt").onclick = loadLabCourt;
     $("#clearCourt").onclick = () => { if (!S.cpts.length && !S.clines.length) return; if (!confirm("찍은 점·라인을 모두 지울까요?")) return; S.cpts = []; S.clines = []; S.sel = null; S.pick = null; S.guide = null; S.fit = null; drawOverlay(); renderPanel(); saveLocal(); };

@@ -51,10 +51,11 @@
       <p class="hint small" id="pickMsg">도면에서 점을 고르세요</p>
       <ol class="pts" id="ptList"></ol>
       <div class="row">
-        <label class="sw"><input type="checkbox" id="wideChk"> 화면 밖까지</label>
         <label class="sw"><input type="checkbox" id="linesChk" checked> 라인 미리보기</label>
         <label class="sw" title="바깥 라인이 안 보이는 영상이면 켜세요"><input type="checkbox" id="innerChk"> 안쪽 라인·교차점도</label>
       </div>
+      <div class="wide-row" title="코트 꼭짓점·네트가 화면 밖이면 여백을 넓혀 검은 바깥에 찍으세요"><span>화면 밖 여백</span>
+        <div class="seg" id="wideSeg"><button data-v="0">끔</button><button data-v="1">조금</button><button data-v="2">넓게</button><button data-v="3">아주 넓게</button></div></div>
       <p class="hint small">찍은 점은 끌어서 옮기거나, 선택한 뒤 방향키(Shift+방향키는 10px)로 다듬을 수 있어요.</p>
     </section>
     <section class="box">

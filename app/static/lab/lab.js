@@ -163,7 +163,7 @@ async function openVideo(vid, mode) {
     : c?.court_corners_px ? c.court_corners_px.map((p, i) => ({ court: [...COURT[i]], px: [...p] })) : [];
   S.clines = (c?.lines || []).map(l => ({ line: l.line.map(p => [...p]), px: l.px.map(p => [...p]) }));
   S.pick = null; S.sel = null; S.fit = null;
-  S.wide = S.points.some(({ px: [x, y] }) => x < 0 || y < 0 || x > W || y > H);
+  S.wide = wideNeeded();
   S.frame = c?.ref_frame ?? Math.round(S.meta.frames * .1);
   // 저장된 박스를 '지정됨' 상태로 보여 준다 (다시 검출하면 겹치는 박스로 이어 붙음)
   S.people = []; S.assign = {}; S.detFrame = c ? c.ref_frame : -1;
@@ -180,7 +180,7 @@ async function openVideo(vid, mode) {
     $("#mFinal").value = m.final ? `${m.final.A}:${m.final.B}` : "";
   }
   $("#sRange").max = S.meta.frames - 1;
-  $("#wideChk").checked = S.wide;
+  $$("#wideSeg button").forEach(b => b.classList.toggle("on", +b.dataset.v === +S.wide));
   $("#tabView").disabled = $("#tabTruth").disabled = !S.info.has_tracks;
   $("#tabTruth").title = S.info.has_tracks ? "실제 서브 시각과 서브 팀(정답)을 기록해요" : "추적을 먼저 실행하면 열려요 (서브 후보·타임라인을 같이 써요)";
   watchJob(S.info.job);
@@ -223,7 +223,19 @@ function setMode(m) {
 /* =========================================================
    1. 설정
    ========================================================= */
-function pad() { return S.wide ? { x: Math.round(S.meta.width * .25), y: Math.round(S.meta.height * .45) } : { x: 0, y: 0 }; }
+// 화면 밖 여백 단계: 0 끔 · 1 조금 · 2 넓게 · 3 아주 넓게 (영상 너비·높이 대비 한쪽 여백)
+const WIDE = [[0, 0], [.25, .45], [.5, 1.0], [1.0, 2.0]];
+function pad() { const [fx, fy] = WIDE[+S.wide || 0] || WIDE[0]; return { x: Math.round(S.meta.width * fx), y: Math.round(S.meta.height * fy) }; }
+// 찍어 둔 점·라인이 모두 들어가는 가장 작은 단계
+function wideNeeded() {
+  const W = S.meta.width, H = S.meta.height;
+  const pts = [...S.points.map(p => p.px), ...S.clines.flatMap(l => l.px)];
+  for (let lv = 0; lv < WIDE.length; lv++) {
+    const [fx, fy] = WIDE[lv];
+    if (pts.every(([x, y]) => x >= -W * fx && x <= W * (1 + fx) && y >= -H * fy && y <= H * (1 + fy))) return lv;
+  }
+  return WIDE.length - 1;
+}
 const U = () => S.meta.width / 1600;
 function buildStage() {
   const W = S.meta.width, H = S.meta.height, p = pad(), svg = $("#sSvg");
@@ -470,7 +482,11 @@ function bindSetup() {
   svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
   $("#sRange").oninput = e => loadFrame(+e.target.value);
   $$(".scrub .b").forEach(b => b.onclick = () => loadFrame(S.frame + +b.dataset.d));
-  $("#wideChk").onchange = e => { S.wide = e.target.checked; buildStage(); };
+  $$("#wideSeg button").forEach(b => b.onclick = () => {
+    const v = +b.dataset.v, need = wideNeeded();
+    if (v < need) { toast("찍어 둔 점이 화면 밖에 있어 더 줄일 수 없어요", true); return; }
+    S.wide = v; $$("#wideSeg button").forEach(x => x.classList.toggle("on", x === b)); buildStage();
+  });
   $("#linesChk").onchange = e => { S.lines = e.target.checked; drawSetup(); };
   $("#innerChk").onchange = e => { S.inner = e.target.checked; renderPoints(); };
   $$(".role").forEach(b => b.onclick = () => { S.role = b.dataset.r; renderSetupPanel(); });

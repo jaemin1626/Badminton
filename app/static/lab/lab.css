@@ -65,7 +65,9 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 .actions .btn{flex:1;padding:10px}
 
 /* 설정 화면 SVG */
-.offframe{fill:#262c2a}
+.offframe{fill:#000}
+.wide-row{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}
+.wide-row .seg button{padding:0 10px}
 .frame-edge{fill:none;stroke:#ffffff55;stroke-dasharray:14 10;pointer-events:none}
 .cl{stroke:#f4e04d;fill:none;opacity:.9}
 .net{stroke:#ff4fd8}
