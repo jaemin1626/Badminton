@@ -61,6 +61,7 @@ class Params:
     max_speed: float = 7.0        # m/s, 한 샘플 사이 이동 한계 = max_speed × 지난 시간 + gate_noise
     gate_noise: float = 0.8       # m, 발 위치 오차 여유
     gate_max: float = 4.0         # m, 오래 놓쳐도 한 번에 이보다 멀리 건너뛰지 않음 (2초 넘게 놓치면 다시 찾기)
+    front_amb: float = 0.5        # m, 한쪽 두 명의 네트 거리 차이가 이보다 작으면 앞사람이 애매 → 반대쪽 앞사람과 대각선인 사람을 앞사람으로 (0이면 끔)
     still_occ: float = 0.0        # 1이면 가려진 선수와 다시 나타난 직후는 정지 판단에서 뺌 (실험 중)
     still_px: float = 0.0         # 1이면 정지 판단에 화면 속 움직임(키 대비)도 써서 먼 쪽 위치 흔들림을 무시 (실험 중)
     lost_out: float = 0.1         # m, 마지막 위치가 라인 밖으로 이보다 멀면 '놓침'으로 보고 다시 찾기 (먼 쪽은 앞뒤 위치가 흔들려 라인 바로 뒤로 찍히기도 함)
@@ -671,6 +672,23 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             if (not (C.SHORT - params.box_front <= d <= C.NET - C.LONG_DBL + params.box_back)
                     or not (-0.4 <= mp[k][0] <= C.W + 0.4)):
                 ok = False; reasons.append(f"{slots[k]} 서비스 코트 밖 (네트에서 {d:.2f} m)")
+        # 앞사람이 애매할 때(두 명이 네트에서 거의 같은 거리에 나란히 섬, 혼복 리시브 등):
+        # 반대쪽 앞사람이 확실하면 그 사람과 대각선이 되는 쪽을 앞사람으로 고른다 (서버와 리시버는 대각선)
+        if params.front_amb > 0:
+            def gap(ks, f):
+                o = [k for k in ks if k != f]
+                return (min(C.dist_to_net(mp[k]) for k in o) - C.dist_to_net(mp[f])) if o else 9.0
+            gf, gn = gap(kf, fi), gap(kn_, ni)
+            if gn < params.front_amb <= gf:
+                want = C.service_box("far", mp[fi])
+                m_ = [k for k in kn_ if C.service_box("near", mp[k]) == want]
+                if len(m_) == 1:
+                    ni = m_[0]
+            elif gf < params.front_amb <= gn:
+                want = C.service_box("near", mp[ni])
+                m_ = [k for k in kf if C.service_box("far", mp[k]) == want]
+                if len(m_) == 1:
+                    fi = m_[0]
         bf, bn = C.service_box("far", mp[fi]), C.service_box("near", mp[ni])
         if bf != bn and params.require_diagonal >= 0.5:
             ok = False; reasons.append("대각선 아님")
