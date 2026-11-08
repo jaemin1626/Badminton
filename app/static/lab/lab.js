@@ -690,6 +690,13 @@ function buildCourtMini() {
 }
 function drawCourtMini(i) {
   const g = $("#miniDyn"); if (!g) return; g.innerHTML = ""; const tr = S.tr;
+  // 지금 어느 팀이 위(far)·아래(near) 코트인지 (코트 교대 반영)
+  const sd = sidesAt(tr.frames[i] / tr.fps);
+  if (sd) for (const side of ["far", "near"]) {
+    const tm = sd.A === side ? "A" : "B";
+    const e = el("text", { x: W_M / 2, y: side === "far" ? -.55 : L_M + 1.05, fill: tm === "A" ? "#5aa9ff" : "#ff7a59", "font-size": .62, "text-anchor": "middle", "font-weight": 800 }, g);
+    e.textContent = `${tm} · ${teamName(tm)}`;
+  }
   const back = Math.round(2 * tr.fps / tr.step);
   tr.slots.forEach((s, k) => {
     const pts = []; for (let j = Math.max(0, i - back); j <= i; j++) { const p = tr.pos[j][k]; if (p && p[0] != null) pts.push(p); }

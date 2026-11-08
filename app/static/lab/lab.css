@@ -242,15 +242,18 @@ h2{font:700 15px "Noto Sans KR",sans-serif;margin:0 0 8px;display:flex;align-ite
 
 /* ================= 3 · 정답 입력 (예전 /label 페이지) ================= */
 .truthp{grid-area:truth;display:none;flex-direction:column;gap:10px;min-width:0}
-.view.truth{grid-template-columns:minmax(0,1fr) 440px;grid-template-areas:"player truth" "tl truth"}
-.view.truth .mini,.view.truth .events,.view.truth .params{display:none}
+.view.truth{grid-template-columns:minmax(0,1fr) 250px 420px;grid-template-areas:"player mini truth" "tl tl truth"}
+.view.truth .events,.view.truth .params{display:none}
+.view.truth .mini{align-self:start}
+.view.truth #court{max-height:62vh}
+@media (max-width:1500px){.view.truth{grid-template-columns:minmax(0,1fr) 200px 380px}}
 .view.truth .truthp{display:flex}
 .tbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
 .tbox h2{margin:0 0 8px}
 .tbox .row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
 .tbox .hint{margin:4px 0}
 .view:not(.truth) .lsb{display:none}
-@media (max-width:1000px){.view.truth{grid-template-columns:1fr;grid-template-areas:"player" "truth" "tl"}}
+@media (max-width:1000px){.view.truth{grid-template-columns:1fr;grid-template-areas:"player" "mini" "truth" "tl"}}
 kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--text)}
 
 .final{display:flex;align-items:flex-end;gap:10px}
