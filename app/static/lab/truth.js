@@ -43,8 +43,14 @@ function renderTeams() {
   if (!list) return;
   if (!c?.teams) { list.innerHTML = `<p class="hint small">아직 팀을 안 정했어요. <b>1 · 설정</b>에서 선수 박스를 눌러 팀 A·팀 B를 정해 주세요.</p>`; note.textContent = ""; return; }
   list.innerHTML = [["1", "A"], ["2", "B"]].map(([no, k]) => `
-    <div class="team ${k}"><div class="tn"><span><kbd>${k}</kbd> <b>${esc(teamName(k))}</b></span><small>${T_SIDE_KO[c.teams[no].side] || ""}${c.match?.first === k ? " · 첫 서브" : ""}</small></div>
-      <div class="faces">${(c.teams[no].bboxes || []).map((_, j) => `<canvas data-t="${no}" data-j="${j}" width="56" height="84"></canvas>`).join("")}</div></div>`).join("");
+    <div class="team ${k}"><div class="tn"><span><kbd>${k}</kbd> <input class="tname" data-k="${k}" value="${esc(c.teams[no].name)}" maxlength="12" aria-label="팀 ${k} 이름"></span><small>${T_SIDE_KO[c.teams[no].side] || ""}${c.match?.first === k ? " · 첫 서브" : ""}</small></div>
+      <div class="faces">${(c.teams[no].bboxes || []).map((_, j) => `<canvas data-t="${no}" data-j="${j}" width="56" height="84"></canvas>`).join("")}</div></div>`).join("")
+    + `<div class="row"><button class="btn" id="teamSwap" title="팀 A와 팀 B를 맞바꿔요. 이미 넣은 정답 서브 팀·최종 점수·첫 서브도 같이 바뀌어요">팀 A ↔ 팀 B 바꾸기</button></div>`;
+  $$("#teamList .tname").forEach(inp => {
+    inp.onchange = () => tPatchTeams({ [inp.dataset.k === "A" ? "nameA" : "nameB"]: inp.value });
+    inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
+  });
+  $("#teamSwap").onclick = () => { if (confirm("팀 A와 팀 B를 맞바꿀까요? 이미 넣은 정답의 서브 팀도 같이 바뀌어요.")) tPatchTeams({ swap: true }); };
   const tgt = +(c.match?.target || 21), one = tgt === 25 || +c.match?.games_to_win === 1;
   const sw = tgt === 25 ? 13 : tgt === 15 ? 8 : 11;
   note.innerHTML = `${tgt}점 ${one ? "단판" : "3판"} · ${one ? "" : "마지막 게임 "}${sw}점에서 코트를 바꿔요. 바꾼 뒤에도 같은 선수가 같은 팀이에요.`;
@@ -60,6 +66,20 @@ function renderTeams() {
     });
   };
   img.src = `/api/videos/${S.vid}/frames/${c.ref_frame}`;
+}
+async function tPatchTeams(body) {
+  try {
+    clearTimeout(truthT);
+    if (S.truthLoaded && !S.truthStale) await putTruth();   // 바꾸기 전에 지금 정답을 먼저 저장
+    const r = await api(`/api/lab/${S.vid}/teams`, { method: "PATCH", json: body });
+    S.info.config = r.config; S.cfg = r.config;
+    $("#nameA").value = r.config.teams["1"].name; $("#nameB").value = r.config.teams["2"].name;
+    $("#mFirst").value = r.config.match?.first || "A";
+    S.truthMarks = r.truth.marks || []; S.truthFinal = r.truth.final || null; S.truthFinalized = !!r.truth.finalized; S.truthSaved = r.truth.saved ?? S.truthSaved;
+    S.truth = S.truthMarks.map(m => m.t);
+    toast(body.swap ? "팀 A와 팀 B를 맞바꿨어요" : "팀 이름을 바꿨어요");
+    enterTruth(); S.dirty = true; await recalc();
+  } catch (e) { toast(e.message, true); }
 }
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 

@@ -334,3 +334,7 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .lsb .ft{font-size:11.5px;color:#cfd8d2;margin-top:5px}
 .lsb .q{color:#ffb84d}
 .lsb.auto{border-style:dashed;border-color:#ffb84d88}
+.vrally .vr2{font-size:12.5px;margin-top:3px;text-align:center}
+.vrally .vr2 .ok{color:#3ecf8e}.vrally .vr2 .ng{color:#ff5d6c}
+.teams .tname{background:transparent;border:0;border-bottom:1px dashed var(--line);color:var(--text);font:700 14px "Noto Sans KR",sans-serif;width:120px;padding:1px 2px}
+.teams .tname:focus{outline:none;border-bottom-color:var(--wood)}

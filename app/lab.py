@@ -730,6 +730,46 @@ def lab_winners(vid: str):
     return {"servers": [{"t": m["t"], "server": w} for m, w in zip(marks, out)]}
 
 
+class TeamsReq(BaseModel):
+    nameA: str | None = None
+    nameB: str | None = None
+    swap: bool = False      # 팀 A ↔ 팀 B (선수·이름·첫 서브·정답 서브 팀을 모두 맞바꿈)
+
+
+@router.patch("/api/lab/{vid}/teams")
+def lab_patch_teams(vid: str, req: TeamsReq):
+    """정답 입력 중에 팀을 바로잡는다. 추적은 코트 쪽 기준이라 다시 돌릴 필요 없다 (설정 저장 시각 saved 는 그대로)."""
+    L = ldir(vid)
+    cfg = read_json(L / "config.json")
+    if not cfg or "teams" not in cfg:
+        raise HTTPException(400, "먼저 설정 탭에서 팀을 정해 주세요")
+    t = cfg["teams"]
+    if req.swap:
+        t["1"], t["2"] = t["2"], t["1"]
+        m = cfg.setdefault("match", {})
+        if m.get("first") in ("A", "B"):
+            m["first"] = "B" if m["first"] == "A" else "A"
+        m["scoreA"], m["scoreB"] = m.get("scoreB", 0), m.get("scoreA", 0)
+        tr = read_json(L / "truth.json")
+        if tr:
+            for mk in tr.get("marks", []):
+                if mk.get("server") in ("A", "B"):
+                    mk["server"] = "B" if mk["server"] == "A" else "A"
+            if tr.get("final"):
+                tr["final"] = {"A": tr["final"].get("B"), "B": tr["final"].get("A")}
+            tr["saved"] = time.time()
+            write_json(L / "truth.json", tr)
+            stem = _stem(vid)
+            if NAME_RE.match(stem):
+                write_json(LABELS / f"{stem}.json", tr)
+    if req.nameA is not None and req.nameA.strip():
+        t["1"]["name"] = req.nameA.strip()[:12]
+    if req.nameB is not None and req.nameB.strip():
+        t["2"]["name"] = req.nameB.strip()[:12]
+    write_json(L / "config.json", cfg)
+    return {"config": cfg, "truth": read_json(L / "truth.json") or {"marks": [], "final": None}}
+
+
 @router.get("/label")
 def label_page():
     """예전 정답 입력 페이지 주소. 실험 페이지 '3 · 정답 입력' 탭으로 합쳤다 (#영상@시각 유지)."""
