@@ -61,6 +61,8 @@ class Params:
     max_speed: float = 7.0        # m/s, 한 샘플 사이 이동 한계 = max_speed × 지난 시간 + gate_noise
     gate_noise: float = 0.8       # m, 발 위치 오차 여유
     gate_max: float = 4.0         # m, 오래 놓쳐도 한 번에 이보다 멀리 건너뛰지 않음 (2초 넘게 놓치면 다시 찾기)
+    still_px: float = 0.0         # 1이면 정지 판단에 화면 속 움직임(키 대비)도 써서 먼 쪽 위치 흔들림을 무시 (실험 중)
+    lost_out: float = 0.1         # m, 마지막 위치가 라인 밖으로 이보다 멀면 '놓침'으로 보고 다시 찾기 (먼 쪽은 앞뒤 위치가 흔들려 라인 바로 뒤로 찍히기도 함)
     off_radius: float = 1.0       # m, 지정한 심판 자리 주변은 항상 선수 후보에서 제외
 
 
@@ -263,7 +265,7 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
                 for a, s in enumerate(ss):
                     lp, ls = last[s]
                     # 라인 밖에 머물던 칸은 '놓친 상태'로 보고 다시 찾는다 (라인 옆에 가만히 선 사람에게 계속 붙는 것 방지)
-                    recent = abs(si - ls) <= gap_n and outside(lp) < 0.1
+                    recent = abs(si - ls) <= gap_n and outside(lp) < params.lost_out
                     ref_p = lp if recent else default[s]
                     # 지난 시간 동안 사람이 갈 수 있는 거리 안에서만 잇는다 (2초 넘게 놓쳤으면 코트 안 누구든 다시 찾기)
                     gate = min(params.max_speed * dt_s * max(1, abs(si - ls)) + params.gate_noise, params.gate_max)
@@ -492,6 +494,16 @@ def _stance(mp, ks, front) -> dict:
     return {"xc": xc, "pdx": pdx, "dnet": float(C.dist_to_net(mp[front]))}
 
 
+def _serve_changed(a: dict, b: dict) -> bool:
+    """두 서브 후보 사이에 점수가 났다고 볼 만한가: 서브하는 쪽이 확실히 바뀌었거나, 양쪽 앞사람이 모두 다른 칸으로 옮겼다."""
+    pa, pb = a.get("p_near", .5), b.get("p_near", .5)
+    if min(abs(pa - .5), abs(pb - .5)) >= 0.3 and (pa > .5) != (pb > .5):
+        return True
+    ba, bb = a.get("boxes") or {}, b.get("boxes") or {}
+    return (ba.get("far") == ba.get("near") and bb.get("far") == bb.get("near")
+            and ba.get("far") is not None and ba.get("far") != bb.get("far"))
+
+
 def _live_checks(p, v, known, still, t, far, near, params) -> dict:
     """매 샘플마다 서브 조건(A 정지 · B 대형)을 검사한 값. 실험 페이지에서 '지금 왜 서브가 아닌지' 보여 주는 용도.
 
@@ -570,6 +582,17 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         v = _speed(_interp_smooth(raw, t, params.smooth)[0], dt)
     else:
         v = _speed(p, dt)
+    v_rally = v   # 랠리(빠른 움직임) 판단은 m/s 그대로
+    if params.still_px >= 0.5 and tr.get("box") is not None:
+        # 정지 판단: 화면에서 키 대비 움직인 정도(키 1.7 m 로 환산)도 본다. 먼 쪽은 앞뒤 위치가 몇 픽셀 오차로도
+        # 0.5 m 넘게 흔들려 서 있어도 움직이는 것처럼 보이므로, 두 값 중 작은 쪽으로 정지를 판단한다
+        bx = tr["box"].astype(np.float64)
+        hgt = bx[..., 3] - bx[..., 1]
+        foot = np.stack([(bx[..., 0] + bx[..., 2]) / 2, bx[..., 3]], -1) / np.maximum(hgt, 1)[..., None] * 1.7
+        foot[np.isnan(p[..., 0])] = np.nan
+        fp_, _ = _interp_smooth(foot, t, params.smooth)
+        vb = _speed(fp_, dt)
+        v = np.where(np.isnan(vb), v, np.fmin(v, vb))
     occ = tr.get("occ")
     occ = np.zeros(p.shape[:2], bool) if occ is None else occ.astype(bool)
     far = [i for i, s in enumerate(slots) if s.startswith("far")]
@@ -596,7 +619,7 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
     if debug is not None:
         debug.update(p=p, v=v, still=still, known=known, live=_live_checks(p, v, known, still, t, far, near, params))
 
-    vfast = np.nan_to_num(v, nan=0.0).max(1)
+    vfast = np.nan_to_num(v_rally, nan=0.0).max(1)
     fast = vfast > params.rally_speed
     cands = []
     for a, b in runs:
@@ -615,8 +638,10 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             note(a, b, "B", "한쪽 코트 선수 위치를 모름")
             continue
         # 앞사람(서버/리시버) = 각 쪽에서 네트에 가장 가까운 사람. 슬롯 번호와 무관.
-        fi = min(kf, key=lambda k: C.dist_to_net(mp[k]))
-        ni = min(kn_, key=lambda k: C.dist_to_net(mp[k]))
+        # 앞사람은 직접 보이는 사람 중에서 (가려짐 추정 위치는 다른 사람에게 옮겨 붙었을 수 있다). 다 가려졌으면 전체에서
+        occ_m = occ[tail].mean(0) if occ is not None else np.zeros(len(slots))
+        fi = min([k for k in kf if occ_m[k] < 0.5] or kf, key=lambda k: C.dist_to_net(mp[k]))
+        ni = min([k for k in kn_ if occ_m[k] < 0.5] or kn_, key=lambda k: C.dist_to_net(mp[k]))
         # 몇 명을 봤나: 직접 보임 / 가려짐 추정 / 모름
         vis = [k for k in range(len(slots)) if kn[k] and occ[tail, k].mean() < 0.5]
         hid = [k for k in range(len(slots)) if kn[k] and k not in vis]
@@ -694,6 +719,9 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             prev = out[-1]
             # 사이 랠리: 빠른 움직임이 rally_min초 이상 있어야 랠리로 본다 (자리 잡으며 한두 발 움직인 건 랠리 아님)
             moved = float(fast[prev["i1"]:c["i0"]].sum()) * dt >= params.rally_min
+            # 서브 실수 등 랠리가 거의 없던 경우: 서브하는 쪽이나 서브 칸이 확실히 바뀌었으면 점수가 난 것 → 다른 서브
+            if not moved and _serve_changed(prev, c):
+                moved = True
             if not moved:
                 note(prev["i0"], prev["i1"], "C", f"사이에 랠리 없이 {c['t_still']:.1f}초에 다시 멈춤 → 뒤쪽 정지로 대체",
                      **{k: prev[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
