@@ -45,7 +45,7 @@ function renderTeams(vid, c) {
     list.innerHTML = `<p class="hint small">아직 팀을 안 정했어요. <a href="/lab#${vid}">실험 페이지 설정</a>에서 선수 박스를 눌러 팀 A·팀 B를 정해 주세요.</p>`;
     note.textContent = ""; return;
   }
-  list.innerHTML = [["1", "A", "A"], ["2", "B", "D"]].map(([no, k, key]) => `
+  list.innerHTML = [["1", "A", "A"], ["2", "B", "B"]].map(([no, k, key]) => `
     <div class="team ${k}"><div class="tn"><span><kbd>${key}</kbd> <b>${S.team[k]}</b></span><small>${SIDE_KO[c.teams[no].side] || ""}${c.match?.first === k ? " · 첫 서브" : ""}</small></div>
       <div class="faces">${(c.teams[no].bboxes || []).map((_, j) => `<canvas data-t="${no}" data-j="${j}" width="56" height="84"></canvas>`).join("")}</div></div>`).join("");
   const tgt = +(c.match?.target || 21);
@@ -264,7 +264,24 @@ function drawStrip() {
 
 /* ---------------- 재생 ---------------- */
 function seek(t) { const el = v(); el.currentTime = clamp(t, 0, (S.meta?.duration || 0) - .02); }
-let lastCur = -2;
+let lastCur = -2, lastSb = "";
+// 영상 위 점수판: 지금 시각까지 내가 넣은 라벨로 센 점수 (서브 팀 = 직전 랠리 득점)
+function drawLabelBoard(t) {
+  const cur = S.marks.reduce((k, m, i) => m.t <= t + .05 ? i : k, -1);
+  let a = 0, b = 0, unknown = 0;
+  for (let i = 1; i <= cur; i++) { const w = S.marks[i].server; if (w === "A") a++; else if (w === "B") b++; else unknown++; }
+  const m = cur >= 0 ? S.marks[cur] : null, srv = m?.server || null;
+  const last = cur === S.marks.length - 1 && cur >= 0;
+  const key = [cur, a, b, unknown, srv, m?.win_auto, last && S.final ? S.final.A + ":" + S.final.B : "", S.team.A, S.team.B].join("|");
+  if (key === lastSb) return; lastSb = key;
+  const row = k => `<div class="r ${k}"><i class="bar"></i><span class="nm">${S.team[k]}</span>${srv === k ? '<span class="sv" title="서브">●</span>' : ""}<b class="sc">${k === "A" ? a : b}</b></div>`;
+  const sub = cur < 0 ? "첫 서브 전"
+    : `${cur + 1} / ${S.marks.length}번째 서브 · ${srv ? `${S.team[srv]} 서브${m.win_auto ? " (자동·확인 전)" : ""}` : '<span class="q">서브 팀 미입력</span>'}`
+      + (unknown ? ` · <span class="q">앞에 미입력 ${unknown}개</span>` : "")
+      + (last && S.final ? ` · 최종 ${S.final.A}:${S.final.B}` : "");
+  $("#lsb").innerHTML = `<div class="hd">내 라벨 점수</div>${row("A")}${row("B")}<div class="ft">${sub}</div>`;
+  $("#lsb").classList.toggle("auto", !!m?.win_auto);
+}
 function loop() {
   const el = v();
   if (S.meta) {
@@ -274,6 +291,7 @@ function loop() {
     const cur = S.marks.reduce((k, m, i) => m.t <= t + .05 ? i : k, -1);
     if (cur !== lastCur) { lastCur = cur; $$("#marks li[data-i]").forEach(li => li.classList.toggle("now", +li.dataset.i === cur)); }
     drawStrip();
+    drawLabelBoard(t);
   }
   requestAnimationFrame(loop);
 }

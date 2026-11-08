@@ -71,3 +71,21 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .teams .team.A{border-left-color:#5aa9ff}.teams .team.B{border-left-color:#ff7a59}
 .teams .tn{display:flex;flex-direction:column;gap:2px}.teams .tn small{color:var(--muted);font-size:11px}
 .teams .faces{display:flex;gap:4px}.teams .faces canvas{width:42px;height:63px;border-radius:5px}
+
+/* 영상 위 내 라벨 점수판 */
+.vwrap{position:relative}
+.lsb{position:absolute;left:14px;top:14px;min-width:230px;padding:8px 10px 8px;border-radius:12px;background:rgba(8,14,11,.82);
+  border:1px solid rgba(255,255,255,.12);color:#fff;pointer-events:none;font-size:13px;backdrop-filter:blur(4px)}
+.lsb:empty{display:none}
+.lsb .hd{font-size:11px;font-weight:700;color:#c8f560;margin-bottom:4px}
+.lsb .r{display:flex;align-items:center;gap:8px;height:34px}
+.lsb .r+.r{border-top:1px solid rgba(255,255,255,.1)}
+.lsb .bar{width:5px;height:20px;border-radius:3px}
+.lsb .A .bar{background:#5aa9ff} .lsb .B .bar{background:#ff7a59}
+.lsb .nm{font-weight:700;font-size:16px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+.lsb .sv{color:#c8f560;font-size:14px}
+.lsb .sc{font:800 26px "Barlow Condensed",system-ui,sans-serif;min-width:44px;text-align:center;border-radius:7px;padding:0 6px}
+.lsb .A .sc{background:#2f6fbf} .lsb .B .sc{background:#c4553a}
+.lsb .ft{font-size:11.5px;color:#cfd8d2;margin-top:5px}
+.lsb .q{color:#ffb84d}
+.lsb.auto{border-style:dashed;border-color:#ffb84d88}
