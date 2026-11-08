@@ -61,6 +61,7 @@ class Params:
     max_speed: float = 7.0        # m/s, 한 샘플 사이 이동 한계 = max_speed × 지난 시간 + gate_noise
     gate_noise: float = 0.8       # m, 발 위치 오차 여유
     gate_max: float = 4.0         # m, 오래 놓쳐도 한 번에 이보다 멀리 건너뛰지 않음 (2초 넘게 놓치면 다시 찾기)
+    still_occ: float = 0.0        # 1이면 가려진 선수와 다시 나타난 직후는 정지 판단에서 뺌 (실험 중)
     still_px: float = 0.0         # 1이면 정지 판단에 화면 속 움직임(키 대비)도 써서 먼 쪽 위치 흔들림을 무시 (실험 중)
     lost_out: float = 0.1         # m, 마지막 위치가 라인 밖으로 이보다 멀면 '놓침'으로 보고 다시 찾기 (먼 쪽은 앞뒤 위치가 흔들려 라인 바로 뒤로 찍히기도 함)
     off_radius: float = 1.0       # m, 지정한 심판 자리 주변은 항상 선수 후보에서 제외
@@ -600,7 +601,16 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
     # 정지: 위치를 아는 사람(직접 보임 + 가려짐 추정)은 모두 느려야 하고, 양쪽에 최소 1명씩은 있어야 한다.
     # 위치를 모르는 사람은 판단에서 빼되, 서브마다 '몇 명을 봤는지'로 신뢰도를 낮춘다.
     known = ~np.isnan(v)
-    calm = np.where(known, v < params.still_speed, True).all(1)
+    vs = v
+    if params.still_occ >= 0.5:
+        # 가려진 선수(위치는 추정값)와 다시 나타난 직후(0.5초)는 정지 판단에서 뺀다. 다시 나타날 때 위치가 튀어 가짜 속도가 생긴다
+        hid = occ.copy()
+        n_after = max(1, int(round(0.5 / dt)))
+        for k in range(hid.shape[1]):
+            for a_, b_ in _runs(occ[:, k]):
+                hid[b_ + 1:b_ + 1 + n_after, k] = True
+        vs = np.where(hid, np.nan, v)
+    calm = np.where(~np.isnan(vs), vs < params.still_speed, True).all(1)
     still = calm & known[:, far].any(1) & known[:, near].any(1)
 
     # 짧은 끊김 메우기
