@@ -109,20 +109,32 @@ def title_text(setup: dict) -> str:
 
 
 def title_card(setup: dict, scale: float):
-    text = title_text(setup)
-    if not text:
+    """오른쪽 위 대회 표시: [▌대회명  (종목 급수)]. 대회명은 흰 글씨, 종목·급수는 강조색 알약."""
+    tour = str(setup.get("tournament") or "").strip()
+    tag = " ".join(x for x in (str(setup.get("event") or "").strip(), str(setup.get("division") or "").strip()) if x)
+    if not tour and not tag:
         return None
     s = scale
-    f = _font("NotoSansKR.ttf", int(22 * s), 700)
+    ft = _font("NotoSansKR.ttf", int(21 * s), 700)
+    fg = _font("NotoSansKR.ttf", int(17 * s), 800)
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    tw = int(probe.textlength(text, font=f))
-    pad, bar, H = int(16 * s), int(6 * s), int(48 * s)
-    W = tw + pad * 2 + bar + int(8 * s)
+    H = int(50 * s)
+    bar_x, bar_w = int(14 * s), int(5 * s)
+    x = bar_x + bar_w + int(12 * s)
+    tw = int(probe.textlength(tour, font=ft)) if tour else 0
+    gw = int(probe.textlength(tag, font=fg)) + int(26 * s) if tag else 0
+    gap = int(12 * s) if tour and tag else 0
+    W = x + tw + gap + gw + int(10 * s)
     img = Image.new("RGBA", (W + 2, H + 2), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 0, W, H], radius=int(12 * s), fill=(8, 14, 11, 220), outline=(255, 255, 255, 30))
-    d.rounded_rectangle([int(12 * s), int(12 * s), int(12 * s) + bar, H - int(12 * s)], radius=int(3 * s), fill=ACCENT)
-    d.text((int(12 * s) + bar + int(10 * s), H // 2), text, font=f, fill=(255, 255, 255), anchor="lm")
+    d.rounded_rectangle([0, 0, W, H], radius=int(14 * s), fill=(8, 14, 11, 225), outline=(255, 255, 255, 34))
+    d.rounded_rectangle([bar_x, int(13 * s), bar_x + bar_w, H - int(13 * s)], radius=int(3 * s), fill=ACCENT)
+    if tour:
+        d.text((x, H // 2), tour, font=ft, fill=(255, 255, 255), anchor="lm")
+    if tag:
+        gx = x + tw + gap
+        d.rounded_rectangle([gx, int(10 * s), gx + gw, H - int(10 * s)], radius=int(9 * s), fill=ACCENT)
+        d.text((gx + gw // 2, H // 2 + int(1 * s)), tag, font=fg, fill=ACCENT_INK, anchor="mm")
     return img
 
 

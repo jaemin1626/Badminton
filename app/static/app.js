@@ -624,16 +624,27 @@ function drawPeople(g) {
 function setupNow() { return { ...S.fmt, nameA: S.teams.A.name, nameB: S.teams.B.name }; }
 const titleText = st => [String(st.tournament || "").trim(), [st.event, st.division].map(x => String(x || "").trim()).filter(Boolean).join(" ")].filter(Boolean).join(" / ");
 function drawTitle(g, setup, u) {
-  const text = titleText(setup); if (!text) return;
-  const W = S.meta.width, tg = el("g", {}, g);
-  const t = el("text", { x: 0, y: 24, "font-size": 22, "font-weight": 700, fill: "#fff", "dominant-baseline": "central", style: "font-family:'Noto Sans KR',sans-serif" }, tg);
-  t.textContent = text;
-  const tw = t.getComputedTextLength ? t.getComputedTextLength() : text.length * 20;
-  const bw = tw + 52;
+  const tour = String(setup.tournament || "").trim();
+  const tag = [setup.event, setup.division].map(x => String(x || "").trim()).filter(Boolean).join(" ");
+  if (!tour && !tag) return;
+  const W = S.meta.width, H = 50, tg = el("g", {}, g);
+  const bg = el("rect", { x: 0, y: 0, height: H, rx: 14, class: "sb-bg" }, tg);
+  el("rect", { x: 14, y: 13, width: 5, height: H - 26, rx: 3, fill: "var(--accent)" }, tg);
+  let x = 31;
+  if (tour) {
+    const t = el("text", { x, y: H / 2, "font-size": 21, "font-weight": 700, fill: "#fff", "dominant-baseline": "central", style: "font-family:'Noto Sans KR',sans-serif" }, tg);
+    t.textContent = tour; x += (t.getComputedTextLength?.() || tour.length * 20);
+  }
+  if (tag) {
+    if (tour) x += 12;
+    const pill = el("rect", { x, y: 10, height: H - 20, rx: 9, fill: "var(--accent)" }, tg);
+    const p = el("text", { x: 0, y: H / 2 + 1, "font-size": 17, "font-weight": 800, fill: "var(--accent-ink)", "text-anchor": "middle", "dominant-baseline": "central", style: "font-family:'Noto Sans KR',sans-serif" }, tg);
+    p.textContent = tag;
+    const pw = (p.getComputedTextLength?.() || tag.length * 16) + 26;
+    pill.setAttribute("width", pw); p.setAttribute("x", x + pw / 2); x += pw;
+  }
+  const bw = x + 10; bg.setAttribute("width", bw);
   tg.setAttribute("transform", `translate(${W - 24 * u - bw * u},${24 * u}) scale(${u})`);
-  const bg = el("rect", { x: 0, y: 0, width: bw, height: 48, rx: 12, class: "sb-bg" }); tg.insertBefore(bg, t);
-  const bar = el("rect", { x: 14, y: 12, width: 6, height: 24, rx: 3, fill: "var(--accent)" }); tg.insertBefore(bar, t);
-  t.setAttribute("x", 30);
 }
 function drawScoreboard(g, state, setup, u, popTeam = null) {
   drawTitle(g, setup, u);
