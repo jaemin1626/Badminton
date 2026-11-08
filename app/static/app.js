@@ -898,7 +898,7 @@ function renderPanel() {
       const g = $("#overlay"); g.innerHTML = ""; drawScoreboard(g, { score: { A: f.scoreA, B: f.scoreB }, server: f.first, game: f.game }, setupNow(), U(), b.dataset.k.slice(-1)); saveLocal();
     });
     $("#boardSw").onclick = () => { f.scoreboard = !f.scoreboard; renderPanel(); drawOverlay(); saveLocal(); };
-    bindTitleFields(f, upd => { Object.assign(f, upd); saveLocal(); renderPanel(); drawOverlay(); });
+    bindTitleFields(f, (upd, quiet) => { Object.assign(f, upd); saveLocal(); if (!quiet) renderPanel(); drawOverlay(); });
     ["fA", "fB"].forEach(id => $("#" + id).oninput = () => {
       const a = $("#fA").value, b = $("#fB").value;
       f.final = a !== "" && b !== "" ? { A: +a, B: +b } : null; saveLocal();
@@ -1121,7 +1121,7 @@ function renderRPanel() {
     <p class="desc">편집한 점수로 영상을 만들어요. 고칠 게 남았으면 <a href="#" id="toEdit">← 편집으로</a></p>
     <h3>대회 정보</h3>
     ${titleFields(st)}
-    <p class="desc fname">받을 파일 이름 <b>${esc(saveName(st))}.mp4</b></p>
+    <p class="desc fname">받을 파일 이름 <b id="fnPrev">${esc(saveName(st))}.mp4</b></p>
     <h3>스코어보드</h3>
     <div class="field"><label>우리 팀</label><div class="seg" id="bOurs">${["A", "B"].map(t => `<button data-v="${t}" class="${(st.ours || "A") === t ? "on" : ""}">${nm(t)}</button>`).join("")}</div></div>
     <div class="field"><label>우리 팀 줄</label><div class="seg" id="bRow">${[["top", "윗줄"], ["bottom", "아랫줄"]].map(([v, l]) => `<button data-v="${v}" class="${(st.ours_row || "bottom") === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
@@ -1168,7 +1168,9 @@ function renderRPanel() {
     try { S.result.setup = await api(`/api/videos/${S.vid}/board`, { method: "PATCH", json: upd }); Object.assign(S.fmt, upd); saveLocal(); renderRPanel(); lastStateKey = ""; }
     catch (e) { toast(e.message, true); }
   };
-  if (S.step === 7) bindTitleFields(st, upd => setBoard(upd));
+  if (S.step === 7) bindTitleFields(st, (upd, quiet) => quiet
+    ? api(`/api/videos/${S.vid}/board`, { method: "PATCH", json: upd }).then(r => { Object.assign(S.result.setup, r); Object.assign(S.fmt, upd); saveLocal(); }).catch(e => toast(e.message, true))
+    : setBoard(upd));
   $$("#bOurs button").forEach(b => b.onclick = () => setBoard({ ours: b.dataset.v }));
   $$("#bRow button").forEach(b => b.onclick = () => setBoard({ ours_row: b.dataset.v }));
   if (S.step !== 7) return;
@@ -1263,12 +1265,21 @@ function titleFields(st) {
   return `<div class="field"><label>대회명</label><input class="sw-in" id="tTour" value="${esc(st.tournament || "")}" maxlength="40" placeholder="예: 한국건강관리협회"></div>
     <div class="field"><label>종목</label><div class="seg" id="tEvent">${EVENTS.map(x => `<button data-v="${x}" class="${st.event === x ? "on" : ""}">${x}</button>`).join("")}</div></div>
     <div class="field"><label>급수 · 조</label><input class="sw-in" id="tDiv" value="${esc(st.division || "")}" maxlength="20" placeholder="예: D조"></div>
-    <p class="desc">영상 오른쪽 위에 <b>${esc(titleText(st) || "대회명 / 종목 급수")}</b> 로 나와요</p>`;
+    <p class="desc">영상 오른쪽 위에 <b id="tPrev">${esc(titleText(st) || "대회명 / 종목 급수")}</b> 로 나와요 · 적는 대로 영상 위에 보여요</p>`;
 }
+let titleT;
+// 적는 대로 영상 위에 바로 그리고, 0.7초 뒤 저장 (입력 칸은 다시 그리지 않아 커서가 안 튐)
 function bindTitleFields(st, save) {
   const t = $("#tTour"), d = $("#tDiv"); if (!t) return;
-  t.onchange = () => save({ tournament: t.value.trim() });
-  d.onchange = () => save({ division: d.value.trim() });
+  const live = () => {
+    const upd = { tournament: t.value.trim(), division: d.value.trim() };
+    Object.assign(st, upd);
+    const tp = $("#tPrev"); if (tp) tp.textContent = titleText(st) || "대회명 / 종목 급수";
+    const fp = $("#fnPrev"); if (fp) fp.textContent = saveName(st) + ".mp4";
+    lastStateKey = ""; if (S.step <= 4) drawOverlay();
+    clearTimeout(titleT); titleT = setTimeout(() => save(upd, true), 700);
+  };
+  t.oninput = live; d.oninput = live;
   [t, d].forEach(i => i.addEventListener("keydown", e => { if (e.key === "Enter") i.blur(); }));
   $$("#tEvent button").forEach(b => b.onclick = () => save({ event: st.event === b.dataset.v ? "" : b.dataset.v }));
 }
