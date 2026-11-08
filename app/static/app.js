@@ -1,8 +1,8 @@
 /* =========================================================
    Smash Score — 프런트엔드
-   단계: 0 업로드 → 1 프레임 → 2 코트 → 3 선수 → 4 경기 설정 → 5 분석 → 6 결과
+   단계: 0 업로드 → 1 프레임 → 2 코트 → 3 선수 → 4 경기 설정 → 5 분석 → 6 편집 → 7 저장
    ========================================================= */
-const STEPS = ["영상 업로드", "프레임 선택", "코트 지정", "선수 선택", "경기 설정", "분석", "결과"];
+const STEPS = ["영상 업로드", "프레임 선택", "코트 지정", "선수 선택", "경기 설정", "분석", "편집", "저장"];
 const HINTS = [
   "mp4 · mov 지원",
   "←/→ 1프레임 · Shift+←/→ 1초 이동",
@@ -10,7 +10,8 @@ const HINTS = [
   "팀을 고르고 선수 박스를 클릭 · 다시 클릭하면 해제",
   "왼쪽 위 스코어보드 미리보기 · 결과 영상에도 그대로 들어가요",
   "분석은 서버 GPU에서 진행돼요",
-  "Space 재생 · ←/→ 2초 · [ ] 이전/다음 서브",
+  "Space 재생 · ←/→ 2초 · [ ] 이전/다음 서브 · 검토 중 X/Enter/A/B/N",
+  "스코어보드 모양을 고르고 영상을 만들어 받으세요",
 ];
 const W_M = 6.10, L_M = 13.40, NET = L_M / 2;
 const NS = "http://www.w3.org/2000/svg";
@@ -276,14 +277,14 @@ function setVideoChip() {
 /* ---------------- 단계 ---------------- */
 function maxStep() {
   if (!S.vid) return 0;
-  if (S.result) return 6;
+  if (S.result) return 7;
   if (S.config) return 5;
   return 4;
 }
 function renderStepper() {
   const s = $("#stepper"); const mx = maxStep();
   s.innerHTML = STEPS.map((n, i) => `<button class="step ${i < S.step ? "done" : ""} ${i === S.step ? "active" : ""} ${i > mx ? "locked" : ""}" data-i="${i}" ${i > mx ? 'aria-disabled="true"' : ""}><b>${i < S.step ? "✓" : i + 1}</b>${n}</button>`).join("");
-  $$(".step", s).forEach(d => d.onclick = () => { const i = +d.dataset.i; if (i > mx) { toast(i === 6 ? "분석이 끝나면 결과를 볼 수 있어요" : "앞 단계를 먼저 마쳐 주세요"); return; } go(i); });
+  $$(".step", s).forEach(d => d.onclick = () => { const i = +d.dataset.i; if (i > mx) { toast(i >= 6 ? "분석이 끝나면 편집·저장할 수 있어요" : "앞 단계를 먼저 마쳐 주세요"); return; } go(i); });
 }
 function go(step) {
   S.step = step; setHash(); saveLocal();
@@ -916,7 +917,7 @@ function renderAnalyze(v) {
     <div class="btn-row" style="margin:0">
       ${j ? `<button class="icon-btn" id="cancelBtn">분석 취소</button>` : ""}
       <button class="icon-btn" id="backBtn">설정으로 돌아가기</button>
-      ${S.result ? `<button class="icon-btn" id="resBtn">이전 결과 보기</button>` : ""}
+      ${S.result ? `<button class="icon-btn" id="resBtn">이전 결과 편집</button>` : ""}
       ${!j ? `<button class="icon-btn" id="startBtn">분석 시작</button>` : ""}
     </div>
   </section></main>`;
@@ -971,7 +972,7 @@ function renderResult(v) {
   const m = S.meta;
   v.innerHTML = `<main>
     <section class="card stage-wrap">
-      <div class="stage-top"><span class="chip"><span class="dot" style="background:var(--ok)"></span>분석 결과</span><span class="chip" id="hintChip">${HINTS[6]}</span>
+      <div class="stage-top"><span class="chip"><span class="dot" style="background:var(--ok)"></span>${S.step === 7 ? "저장" : "편집"}</span><span class="chip" id="hintChip">${HINTS[S.step]}</span>
         <span class="spacer"></span><div class="seg" id="srcSeg" style="padding:3px"><button data-k="auto" class="on" title="원본 영상 위에 점수를 실시간으로 표시">실시간 점수</button><button data-k="overlay" ${S.meta.has_overlay ? "title='스코어보드를 합성한 영상'" : "disabled title='점수 영상을 먼저 만들어 주세요'"}>합성 영상</button><button data-k="public" ${S.meta.has_public ? "title='얼굴 모자이크 처리한 공개용 영상'" : "disabled title='공개용 영상을 먼저 만들어 주세요'"}>공개용</button></div></div>
       <div class="player-wrap" style="aspect-ratio:${m.width}/${m.height}">
         <video id="vid" src="/api/videos/${S.vid}/stream?kind=auto" controls playsinline preload="metadata"></video>
@@ -1075,6 +1076,7 @@ function renderRPanel() {
       <span class="vs">VS</span>
       <div class="side B ${winner === "B" ? "win" : ""}"><div class="nm">${nm("B")}</div><div class="sc">${sm.score.B}</div><div class="gw">게임 ${gw("B")}승${(sm.games || []).map(g => ` · ${g.B}`).join("")}</div></div>
     </div>
+    ${S.step === 6 ? `
     ${sm.switch ? `<p class="desc sw-note">${sm.switch.mode === "manual" ? `코트 교대 <b>${sm.switch.times.map(fmtTime).join(", ")}</b> · 설정에서 지정` : sm.switch.mode === "auto" ? `코트 교대 <b>${fmtTime(sm.switch.times[0])}</b> · 선수 옷 색으로 자동 감지. 틀렸으면 경기 설정에서 시각을 적어 다시 분석하세요` : "코트 교대 · 점수 규칙으로 (옷 색으로는 확실하지 않았어요)"}</p>` : ""}
     <p class="desc" style="margin-bottom:10px">서브 ${all.filter(e => !e.removed).length}개${flagged ? ` · <b style="color:var(--warn)">확인 필요 ${flagged}개</b>` : ""}. 서브를 누르면 고칠 수 있어요. 하나를 고치면 뒤쪽 점수가 다시 계산돼요.</p>
     <div class="fin-fit">
@@ -1088,6 +1090,8 @@ function renderRPanel() {
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
+    <button class="cta" id="toSave" style="margin-top:14px">편집 끝 · 저장하러 가기</button>` : `
+    <p class="desc">편집한 점수로 영상을 만들어요. 고칠 게 남았으면 <a href="#" id="toEdit">← 편집으로</a></p>
     <h3>스코어보드</h3>
     <div class="field"><label>우리 팀</label><div class="seg" id="bOurs">${["A", "B"].map(t => `<button data-v="${t}" class="${(st.ours || "A") === t ? "on" : ""}">${nm(t)}</button>`).join("")}</div></div>
     <div class="field"><label>우리 팀 줄</label><div class="seg" id="bRow">${[["top", "윗줄"], ["bottom", "아랫줄"]].map(([v, l]) => `<button data-v="${v}" class="${(st.ours_row || "bottom") === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
@@ -1108,22 +1112,24 @@ function renderRPanel() {
       <div class="toggle-row">스코어보드 같이 넣기<button class="switch ${S.pub.scoreboard ? "on" : ""}" id="pubBoard" role="switch" aria-checked="${S.pub.scoreboard}" aria-label="공개용 영상에 스코어보드 넣기"></button></div>
       <button class="cta" id="pubBtn">${S.meta.has_public ? "공개용 영상 다시 만들기" : "공개용 영상 만들기"}</button>
       <a class="icon-btn pub-dl ${S.meta.has_public ? "" : "hidden"}" id="dlPublic" href="/api/videos/${S.vid}/download/public.mp4">공개용 영상 받기${S.meta.public ? ` · 머리 ${S.meta.public.masked_heads.toLocaleString()}개 가림` : ""}</a>
-    </section>`;
+    </section>`}`;
   $$("#evFilter button").forEach(b => b.onclick = () => { S.evFilter = b.dataset.f; renderRPanel(); });
-  renderReview();
+  $("#toSave")?.addEventListener("click", () => { S.review = null; go(7); });
+  $("#toEdit")?.addEventListener("click", ev => { ev.preventDefault(); go(6); });
+  if (S.step === 6) renderReview(); else { const d = $("#rvDock"); if (d) d.innerHTML = ""; }
   const setFinal = async (A, B) => {
     try { S.result = await api(`/api/videos/${S.vid}/final`, { method: "PATCH", json: { A, B } }); lastStateKey = ""; renderWorm(); renderRPanel(); toast(A == null ? "최종 점수를 해제했어요" : `${A}:${B}에 맞춰 다시 계산했어요`); }
     catch (e) { toast(e.message, true); }
   };
-  $("#finFit").onclick = () => { const a = $("#finA").value, b = $("#finB").value; if (a === "" || b === "") { toast("두 팀 점수를 모두 넣어 주세요", true); return; } setFinal(+a, +b); };
+  if ($("#finFit")) $("#finFit").onclick = () => { const a = $("#finA").value, b = $("#finB").value; if (a === "" || b === "") { toast("두 팀 점수를 모두 넣어 주세요", true); return; } setFinal(+a, +b); };
   $("#finClear")?.addEventListener("click", () => setFinal(null, null));
-  renderEvList();
-  $("#addServe").onclick = async () => {
+  if (S.step === 6) renderEvList();
+  if ($("#addServe")) $("#addServe").onclick = async () => {
     const t = video.currentTime; const team = prompt(`${fmtTime(t)}에 서브한 팀은? A(${st.nameA}) 또는 B(${st.nameB})`, "A");
     if (!team) return; const T = team.trim().toUpperCase(); if (!["A", "B"].includes(T)) { toast("A 또는 B로 입력해 주세요", true); return; }
     await patch([{ action: "add_serve", t, team: T }]); toast("서브를 추가했어요");
   };
-  $("#addPoint").onclick = async () => {
+  if ($("#addPoint")) $("#addPoint").onclick = async () => {
     const team = prompt(`영상 마지막 랠리를 이긴 팀은? A(${st.nameA}) 또는 B(${st.nameB})`, "A");
     if (!team) return; const T = team.trim().toUpperCase(); if (!["A", "B"].includes(T)) { toast("A 또는 B로 입력해 주세요", true); return; }
     await patch([{ action: "add_point", t: Math.max(video.currentTime, (all.at(-1)?.t || 0) + 1), team: T }]); toast("마지막 랠리 점수를 추가했어요");
@@ -1134,6 +1140,7 @@ function renderRPanel() {
   };
   $$("#bOurs button").forEach(b => b.onclick = () => setBoard({ ours: b.dataset.v }));
   $$("#bRow button").forEach(b => b.onclick = () => setBoard({ ours_row: b.dataset.v }));
+  if (S.step !== 7) return;
   $("#renderBtn").onclick = startRender;
   $("#pubBoard").onclick = () => { S.pub.scoreboard = !S.pub.scoreboard; const b = $("#pubBoard"); b.classList.toggle("on", S.pub.scoreboard); b.setAttribute("aria-checked", S.pub.scoreboard); };
   $("#pubBtn").onclick = startPublic;
@@ -1171,7 +1178,7 @@ function pollPublic() {
   const btn = $("#pubBtn"); if (!btn || !S.publicJob) return;
   btn.disabled = true;
   const tick = async () => {
-    if (!S.publicJob || S.step !== 6) return;
+    if (!S.publicJob || S.step !== 7) return;
     try {
       const j = await api(`/api/jobs/${S.publicJob.id}`);
       const b = $("#pubBtn"); if (b) b.textContent = `얼굴 가리는 중 ${Math.round(j.progress * 100)}%`;
@@ -1318,7 +1325,7 @@ function pollRender() {
   const btn = $("#renderBtn"); if (!btn || !S.renderJob) return;
   btn.disabled = true;
   const tick = async () => {
-    if (!S.renderJob || S.step !== 6) return;
+    if (!S.renderJob || S.step !== 7) return;
     try {
       const j = await api(`/api/jobs/${S.renderJob.id}`);
       const b = $("#renderBtn"); if (b) b.textContent = `점수 영상 만드는 중 ${Math.round(j.progress * 100)}%`;
@@ -1353,7 +1360,7 @@ document.addEventListener("keydown", e => {
     if (e.key === "ArrowLeft") { e.preventDefault(); loadFrame(S.frame - d); frameChanged(); }
     if (e.key === "ArrowRight") { e.preventDefault(); loadFrame(S.frame + d); frameChanged(); }
   }
-  if (S.step === 6 && video) {
+  if (S.step >= 6 && video) {
     if (e.key === " " && e.target.tagName !== "BUTTON") { e.preventDefault(); video.paused ? video.play() : video.pause(); }
     if (e.key === "ArrowLeft" && e.target !== video) { e.preventDefault(); seek(video.currentTime - 2); }
     if (e.key === "ArrowRight" && e.target !== video) { e.preventDefault(); seek(video.currentTime + 2); }
@@ -1364,7 +1371,7 @@ document.addEventListener("keydown", e => {
     }
   }
 });
-window.addEventListener("resize", () => { if (S.step === 6 && S.result) renderWorm(); });
+window.addEventListener("resize", () => { if (S.step >= 6 && S.result) renderWorm(); });
 
 /* ---------------- 시작 ---------------- */
 checkHealth();
