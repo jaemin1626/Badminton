@@ -51,6 +51,7 @@ class Params:
     w_form: float = 1.8           # 대형 점수(팀원이 바로 뒤 · 가려짐 포함) 차이
     w_pose: float = 0.0           # 서브 자세 (바로 뒤에서 찍은 영상에서 안 맞아 끔)
     w_onset: float = 0.0          # 정지 끝에 손목 먼저 움직인 쪽 (거의 운이라 끔)
+    short_still: float = 0.6      # s, 서브 사이가 너무 가까울 때 앞 정지가 이보다 짧고 뒤 정지가 2배 넘게 길면 뒤쪽을 서브로
     facing_max: float = 0.05      # 가까운 쪽 두 명이 서로 짝 쪽을 보는 정도(코가 어깨 중심에서 짝 쪽으로, 키 대비)가 둘 다 이보다 크면 서브 아님 (쉬며 마주 보고 이야기). 1이면 끔
     rear_drop: float = 0.0        # (실험 중 · 기본 끔) 1이면 팀원과 겹친 뒷사람 위치를 서브 판정에서 버리고 보간 (발 위치가 튀어 가짜 움직임이 생김)
     # 추적 후보: 발이 코트 안(약간의 여유)인 사람만
@@ -699,6 +700,13 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
                 out[-1] = c
                 continue
             if c["t_still"] - prev["t_end"] < params.min_serve_gap:
+                # 앞 정지가 아주 짧고(잠깐 섬) 뒤 정지가 훨씬 길면, 뒤쪽이 진짜 서브 준비 → 뒤쪽으로 바꿈
+                d_prev, d_c = prev["t_end"] - prev["t_still"], c["t_end"] - c["t_still"]
+                if d_prev < params.short_still and d_c >= 2 * max(d_prev, 0.1):
+                    note(prev["i0"], prev["i1"], "C", f"{d_prev:.1f}초 잠깐 멈춤 → {c['t_still']:.1f}초부터 {d_c:.1f}초 멈춘 쪽이 서브 준비",
+                         **{k: prev[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
+                    out[-1] = c
+                    continue
                 note(c["i0"], c["i1"], "C", f"직전 서브와 {c['t_still'] - prev['t_end']:.1f}초 (기준 {params.min_serve_gap}초) → 랠리 중 멈춤",
                      **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
                 continue
@@ -954,6 +962,7 @@ def count_check(out: list, fin: dict | None) -> dict:
     return res
 
 
+START_TOL = 3.0      # s, 첫 서브 시각과 이만큼 안이면 같은 서브로 본다
 SKIP_COST = 4.0      # 최종 점수에 맞추려고 서브 하나를 '가짜'로 뺄 때 log-확률 감점 (짝/홀 어긋남 하나보다 크게)
 PARITY_PENALTY = 2.2   # 서브 위치가 점수 짝/홀과 다를 때 log-확률 감점
 BEAM = 64
@@ -994,10 +1003,22 @@ def score_events(events: list, setup: dict, sides: dict):
     event 필드: t, frame, box, p_near, [override: 'A'|'B'], [removed], [kind: 'serve'|'point']
     결과 필드:  server(팀), auto, conf, score{A,B}, game, games, side, flags[]
     """
-    evs = sorted((dict(e) for e in events), key=lambda e: e["t"])
+    evs = sorted((dict(e) for e in events if not e.get("start_mark")), key=lambda e: e["t"])
     for e in evs:
         for k in ("skipped", "fit_won", "suspect", "why"):
             e.pop(k, None)
+        if e.pop("pre_start", None):   # 지난번 첫 서브 시각으로 뺀 것은 되돌리고 이번 시각으로 다시 판단
+            e.pop("removed", None)
+    # 첫 서브 시각을 알면: 그 전(START_TOL초 넘게 앞) 장면은 경기 전 준비라 빼고, 그 근처에 잡힌 서브가 없으면 첫 서브를 넣는다
+    st = setup.get("start_t")
+    st = float(st) if isinstance(st, (int, float)) and st >= 0 else None
+    if st is not None:
+        for e in evs:
+            if e.get("kind", "serve") == "serve" and not e.get("removed") and e["t"] < st - START_TOL:
+                e["removed"] = True; e["pre_start"] = True
+        if not any(not e.get("removed") and abs(e["t"] - st) <= START_TOL for e in evs):
+            evs.append({"id": "start", "t": st, "frame": None, "kind": "serve", "start_mark": True, "manual": True})
+            evs.sort(key=lambda e: e["t"])
     active = [i for i, e in enumerate(evs) if not e.get("removed")]
     sw = detect_switch(evs, setup, sides)
     setup = {**setup, "switch_times": sw.get("times")}
@@ -1041,7 +1062,7 @@ def score_events(events: list, setup: dict, sides: dict):
                 teams = [ev.get("override") or m.server]
             else:
                 teams = [ev["override"]] if ev.get("override") else ["A", "B"]
-            if fin and kind == "serve" and not ev.get("override") and not ev.get("confirmed"):
+            if fin and kind == "serve" and not ev.get("override") and not ev.get("confirmed") and not ev.get("start_mark"):
                 teams = teams + ["X"]
             for team in teams:
                 if team == "X":   # 이 서브는 가짜로 보고 건너뜀. 직전까지 랠리가 이어지던 정지면 덜 감점
@@ -1113,6 +1134,8 @@ def score_events(events: list, setup: dict, sides: dict):
         if ev.get("removed"):
             ev.update(server=None, auto=None, conf=None, score=dict(m.score), game=m.game, games=list(m.games),
                       sides=dict(m.side))
+            if ev.get("pre_start"):
+                ev["flags"].append("입력한 첫 서브 시각 전 (경기 전 준비)")
             out.append(ev); continue
         if choice.get(i) == "X":   # 최종 점수에 맞추려고 서브에서 뺌
             ev.update(server=None, auto=None, conf=round(cmap[i], 3), score=dict(m.score), game=m.game, games=list(m.games),

@@ -718,6 +718,29 @@ def patch_final(vid: str, body: FinalReq):
     return _rescore(d, res["events"], cfg)
 
 
+class StartReq(BaseModel):
+    t: float | None = None   # 첫 서브(경기 시작) 시각, 초. None 이면 해제
+
+
+@app.patch("/api/videos/{vid}/start")
+def patch_start(vid: str, body: StartReq):
+    """첫 서브 시각을 알면 넣는다. 그 전 장면(경기 전 준비)은 서브에서 빼고, 그 근처에 잡힌 서브가 없으면 첫 서브를 넣는다."""
+    d = vdir(vid)
+    cfg = read_json(d / "match.json")
+    res = read_json(d / "result.json")
+    if res is None or cfg is None:
+        raise HTTPException(404, "아직 분석 결과가 없어요")
+    m = cfg.setdefault("match", {})
+    if body.t is None:
+        m.pop("start_t", None)
+    else:
+        if body.t < 0:
+            raise HTTPException(400, "시각이 이상해요")
+        m["start_t"] = round(float(body.t), 2)
+    write_json(d / "match.json", cfg)
+    return _rescore(d, res["events"], cfg)
+
+
 @app.post("/api/videos/{vid}/rescore")
 def rescore(vid: str):
     """설정(시작 점수, 첫 서브 등)을 바꾼 뒤 추적은 그대로 두고 점수만 다시 계산."""

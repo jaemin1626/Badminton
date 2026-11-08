@@ -33,6 +33,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const parseMSS = str => { const q = String(str || "").trim().split(":").map(Number); return q.length && q.every(x => !isNaN(x)) && String(str).trim() ? q.reduce((a, b) => a * 60 + b, 0) : null; };
 const fmtTime = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60), r = Math.floor(s % 60); return `${m}:${String(r).padStart(2, "0")}`; };
 const fmtBytes = b => b > 1e9 ? (b / 1e9).toFixed(1) + "GB" : (b / 1e6).toFixed(0) + "MB";
 function el(tag, attrs = {}, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
@@ -888,6 +889,7 @@ function renderPanel() {
       <div class="field"><label>스코어보드에서 우리 팀 줄</label>${seg("ours_row", [["top", "윗줄"], ["bottom", "아랫줄"]])}</div>
       <div class="field"><label>게임 규칙</label>${seg("target", [[25, "25점 단판"], [21, "21점 · 듀스 최대 30"], [15, "15점"]])}</div>
       <div class="field"><label>코트 교대 시각</label><input class="sw-in" id="swIn" value="${esc((f.switch_manual || []).map(t => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`).join(", "))}" placeholder="비우면 자동 (선수 옷 색으로 찾음)" aria-label="코트 교대 시각, 비우면 자동"><p class="hint-s">자동이 틀렸을 때만 분:초로 적어요. 여러 번이면 쉼표 (예: 3:50, 12:10)</p></div>
+      <div class="field"><label>첫 서브 시각 <small class="opt">알면 · 그 전 장면은 경기 전 준비로 봐요</small></label><input class="sw-in" id="stIn0" value="${f.start_t != null ? fmtTime(f.start_t) : ""}" placeholder="비우면 자동 (예: 0:14)" aria-label="첫 서브 시각 (분:초)"></div>
       <div class="toggle-row">스코어보드 미리보기<button class="switch ${f.scoreboard ? "on" : ""}" id="boardSw" role="switch" aria-checked="${f.scoreboard}" aria-label="스코어보드 미리보기"></button></div>
       <button class="cta" id="next">분석 시작</button>`;
     $$(".seg", P).forEach(s => $$("button", s).forEach(b => b.onclick = () => {
@@ -907,6 +909,7 @@ function renderPanel() {
       const out = []; for (const part of e.target.value.split(/[,\s]+/).filter(Boolean)) { const q = part.split(":").map(Number); if (q.some(isNaN)) { toast("3:50 처럼 분:초로 적어 주세요", true); return; } out.push(q.reduce((a, b) => a * 60 + b, 0)); }
       f.switch_manual = out; saveLocal();
     };
+    $("#stIn0").onchange = e => { const v = e.target.value.trim(); if (!v) { f.start_t = null; saveLocal(); return; } const t = parseMSS(v); if (t == null) { toast("0:14 처럼 분:초로 적어 주세요", true); return; } f.start_t = t; saveLocal(); };
     $("#next").onclick = startAnalyze;
   }
 }
@@ -1113,6 +1116,11 @@ function renderRPanel() {
         <button class="icon-btn sm" id="finFit">맞추기</button>${st.final ? `<button class="icon-btn sm" id="finClear">해제</button>` : ""}</div>
       ${st.final && sm.final_failed ? `<p class="desc warn-t">넣은 최종 점수에 맞는 흐름을 못 찾았어요 (서브가 너무 적거나 점수가 다른 경기 것). 최종 점수 없이 계산한 결과예요</p>` : st.final ? `<p class="desc">${all.filter(e => e.skipped).length ? `가짜로 본 서브 ${all.filter(e => e.skipped).map(e => fmtTime(e.t)).join(", ")}를 빼고 맞췄어요. 틀렸으면 그 서브를 '서브 아님'이나 팀으로 직접 고치세요` : "그대로 맞았어요"}</p>` : ""}
     </div>
+    <div class="fin-fit">
+      <label>첫 서브 시각 <small>경기 시작 서브. 그 전 장면(준비 중)은 서브에서 빼요</small></label>
+      <div class="fin-row"><input class="sw-in st-in" id="stIn" value="${st.start_t != null ? fmtTime(st.start_t) + (st.start_t % 1 ? "." + Math.round(st.start_t % 1 * 10) : "") : ""}" placeholder="0:14" aria-label="첫 서브 시각 (분:초)">
+        <button class="icon-btn sm" id="stNow">지금 시각</button><button class="icon-btn sm" id="stSet">적용</button>${st.start_t != null ? `<button class="icon-btn sm" id="stClear">해제</button>` : ""}</div>
+    </div>
     ${(() => { const n = suspects().length, c = r.summary.count || {}; return n || (c.extra ?? 0) !== 0 ? `<p class="desc rv-link">${c.extra > 0 ? `<b class="warn-t">${c.extra}개 더 셈</b> · ` : c.extra < 0 ? `<b class="warn-t">${-c.extra}개 덜 셈</b> · ` : ""}의심 서브 ${n}개 → <b>영상 아래 검토 칸</b>에서 고치세요</p>` : ""; })()}
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>
@@ -1153,6 +1161,13 @@ function renderRPanel() {
   };
   if ($("#finFit")) $("#finFit").onclick = () => { const a = $("#finA").value, b = $("#finB").value; if (a === "" || b === "") { toast("두 팀 점수를 모두 넣어 주세요", true); return; } setFinal(+a, +b); };
   $("#finClear")?.addEventListener("click", () => setFinal(null, null));
+  const setStart = async t => {
+    try { S.result = await api(`/api/videos/${S.vid}/start`, { method: "PATCH", json: { t } }); lastStateKey = ""; renderWorm(); renderRPanel(); toast(t == null ? "첫 서브 시각을 해제했어요" : `첫 서브 ${fmtTime(t)}부터로 다시 계산했어요`); }
+    catch (e) { toast(e.message, true); }
+  };
+  $("#stNow")?.addEventListener("click", () => { $("#stIn").value = fmtTime(video?.currentTime || 0) + "." + Math.floor((video?.currentTime || 0) % 1 * 10); });
+  $("#stSet")?.addEventListener("click", () => { const t = parseMSS($("#stIn").value); if (t == null) { toast("0:14 처럼 분:초로 적어 주세요", true); return; } setStart(t); });
+  $("#stClear")?.addEventListener("click", () => setStart(null));
   if (S.step === 6) renderEvList();
   if ($("#addServe")) $("#addServe").onclick = async () => {
     const t = video.currentTime; const team = prompt(`${fmtTime(t)}에 서브한 팀은? A(${st.nameA}) 또는 B(${st.nameB})`, "A");

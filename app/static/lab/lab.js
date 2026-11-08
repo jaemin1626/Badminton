@@ -22,6 +22,7 @@ const PARAM_DOC = {
   require_diagonal: ["대각선 규칙 (0 끔 · 1 켬)", "켜면 서버·리시버가 대각선이어야 서브"],
   rear_drop: ["겹친 뒷사람 빼기 (0 끔 · 1 켬)", "팀원 뒤에 겹쳐 선 사람의 튀는 발 위치를 정지 판단에서 빼고 보간"],
   rally_min: ["랠리 최소 길이 (초)", "두 정지 사이 빠른 움직임이 이보다 짧으면 자리 잡기로 봄"],
+  short_still: ["잠깐 멈춤 (s)", "가까운 두 정지 중 앞이 이보다 짧고 뒤가 2배 넘게 길면 뒤쪽을 서브로"],
   facing_max: ["마주 봄 한계", "가까운 쪽 두 명이 둘 다 이만큼 넘게 서로를 보면 쉬는 중 (1이면 끔)"],
   w_xc: ["서버 쪽: 센터라인", "앞사람이 센터라인에 붙어 선 쪽이 서브 (서버는 센터라인 가까이)"],
   w_pdx: ["서버 쪽: 팀원 일직선", "팀원이 앞사람 바로 뒤 일직선에 선 쪽이 서브"],
@@ -173,6 +174,7 @@ async function openVideo(vid, mode) {
     $("#mMode").value = m.mode || "doubles"; $("#mTarget").value = +m.target === 21 && +m.games_to_win === 1 ? "21-1" : (m.target || 25); $("#mFirst").value = m.first || "A";
     $("#mGame").value = m.game || 1; $("#mScoreA").value = m.scoreA || 0; $("#mScoreB").value = m.scoreB || 0;
     $("#mSwitch").value = switchStr(m.switch_manual);
+    $("#mStart").value = m.start_t != null ? switchStr([m.start_t]) : "";
     $("#mFinal").value = m.final ? `${m.final.A}:${m.final.B}` : "";
   }
   $("#sRange").max = S.meta.frames - 1;
@@ -509,6 +511,7 @@ async function saveConfig(run, name = null) {
     match: { mode: $("#mMode").value, target: parseInt($("#mTarget").value), first: $("#mFirst").value, game: +$("#mGame").value,
       scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value, ...($("#mTarget").value === "21-1" ? { games_to_win: 1 } : {}),
       switch_manual: parseSwitch($("#mSwitch").value) || [],
+      start_t: (parseSwitch($("#mStart").value) || [])[0] ?? null,
       final: (() => { const q = $("#mFinal").value.trim().split(":").map(x => x.trim()); return q.length === 2 && q.every(x => /^\d+$/.test(x)) ? { A: +q[0], B: +q[1] } : null; })() },
   };
   try {
