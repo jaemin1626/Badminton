@@ -758,7 +758,9 @@ class Match:
         return "A" if self.side["A"] == side else "B"
 
     def point(self, winner: str):
-        """winner가 랠리를 이김."""
+        """winner가 랠리를 이김. 경기가 끝난 뒤에는 점수를 더 올리지 않는다 (끝난 뒤 장면을 서브로 잘못 본 것)."""
+        if self.over:
+            return
         self.score[winner] += 1
         self.server = winner
         a, b = self.score["A"], self.score["B"]
@@ -992,8 +994,26 @@ def score_events(events: list, setup: dict, sides: dict):
 
     # ---- 빔 서치: 각 가설 = (logp, Match, choices)
     beam = [(0.0, Match(setup, sides), [])]
-    for i in active:
+    n_serves_left = [0] * (len(active) + 1)   # active[j] 뒤에 남은 서브 수 (최종 점수 가능성 검사용)
+    for j in range(len(active) - 1, -1, -1):
+        n_serves_left[j] = n_serves_left[j + 1] + (1 if evs[active[j]].get("kind", "serve") == "serve" else 0)
+
+    def feasible(m, left):
+        """이 상태에서 남은 서브(left개) + 마지막 랠리로 최종 점수에 닿을 수 있나. 넘었거나 못 닿으면 버린다."""
+        if not fin or not m.started:
+            return True
+        if m.over:   # 마지막 랠리 전에 경기가 끝나면 최종 점수와 못 맞춤
+            return False
+        if m.games_to_win != 1:   # 여러 게임이면 최종 점수는 마지막 게임 것이라 중간 게임 점수로는 못 거른다
+            return True
+        sa, sb = m.score["A"], m.score["B"]
+        if sa > fin["A"] or sb > fin["B"]:
+            return False
+        return (fin["A"] + fin["B"]) - (sa + sb) <= left + 1
+
+    for j, i in enumerate(active):
         ev = evs[i]
+        left = n_serves_left[j + 1]
         nxt = {}
         for lp, m, ch in beam:
             m.at_time(ev["t"])
@@ -1010,6 +1030,8 @@ def score_events(events: list, setup: dict, sides: dict):
                 if team == "X":   # 이 서브는 가짜로 보고 건너뜀. 직전까지 랠리가 이어지던 정지면 덜 감점
                     l2 = lp - SKIP_COST + 3.0 * min(max((float(ev.get("pre_rally") or 0) - 0.3) / 0.3, 0.0), 1.0)
                     k = _state_key(m) + (len(ch),)
+                    if not feasible(m, left):
+                        continue
                     if k not in nxt or nxt[k][0] < l2:
                         nxt[k] = (l2, m.clone(), ch + ["X"])
                     continue
@@ -1023,8 +1045,12 @@ def score_events(events: list, setup: dict, sides: dict):
                     mm.server = team
                     l2 = lp + (_ev_loglik(ev, mm, team) if not ev.get("override") else 0.0)
                 k = _state_key(mm) + ((len(ch),) if fin else ())
+                if not feasible(mm, left):
+                    continue
                 if k not in nxt or nxt[k][0] < l2:
                     nxt[k] = (l2, mm, ch + [team])
+        if not nxt:   # 최종 점수에 맞는 흐름이 하나도 없음 (입력 점수와 서브 수가 안 맞음) → 최종 점수 없이 다시
+            return score_events(evs, {**setup, "final": None, "final_failed": True}, sides)
         beam = sorted(nxt.values(), key=lambda x: -x[0])[:width]
 
     fit = None
@@ -1130,6 +1156,8 @@ def score_events(events: list, setup: dict, sides: dict):
     summary = {"score": dict(m.score), "game": m.game, "games": m.games, "over": m.over,
                "rallies": len(live), "last_rally": None if not last else ("known" if last.get("kind") == "point" or last.get("last_won") or last.get("fit_won") else
                                                                          "guess" if last.get("won_guess") else "unknown")}
+    if setup.get("final_failed"):
+        summary["final_failed"] = True   # 넣은 최종 점수에 맞는 흐름이 없어 최종 점수 없이 계산함
     summary["switch"] = sw   # 코트 교대: manual(설정) · auto(옷 색) · score(점수 규칙)
     summary["count"] = count_check(out, fin)
     if m.over and m.games:   # 경기가 끝났으면 마지막 게임 점수를 보여 준다
