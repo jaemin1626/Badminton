@@ -44,6 +44,9 @@ class Params:
     occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
     occ_reappear: float = 1.0     # m, 다시 나온 위치가 이보다 멀면 가려진 동안 움직인 것 → 추정 취소
     rally_min: float = 0.5        # s, 두 정지 구간 사이 빠른 움직임이 이보다 짧으면 랠리가 아니라 서브 준비 중 자리 잡기
+    w_pose: float = 0.5           # 서버 쪽(가까운/먼) 판단 가중치: 자세 (두 영상 75개 서브에서 57/75 맞음)
+    w_onset: float = 0.3          # 서버 쪽 판단 가중치: 정지 끝에 손목 먼저 움직인 쪽 (49/74, 거의 운) → 동점 깰 때만
+    w_form: float = 3.0           # 서버 쪽 판단 가중치: 대형(서버 바로 뒤 팀원) (72/72 맞음) → 가장 크게
     facing_max: float = 0.05      # 가까운 쪽 두 명이 서로 짝 쪽을 보는 정도(코가 어깨 중심에서 짝 쪽으로, 키 대비)가 둘 다 이보다 크면 서브 아님 (쉬며 마주 보고 이야기). 1이면 끔
     rear_drop: float = 0.0        # (실험 중 · 기본 끔) 1이면 팀원과 겹친 뒷사람 위치를 서브 판정에서 버리고 보간 (발 위치가 튀어 가짜 움직임이 생김)
     # 추적 후보: 발이 코트 안(약간의 여유)인 사람만
@@ -644,11 +647,10 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         on = _wrist_onset(tr["kps"][:, ni], t, b - int(0.2 / dt), e1)
         onset = 0.0
         if math.isfinite(of) or math.isfinite(on):
-            onset = 0.9 if on < of else -0.9
+            onset = 1.0 if on < of else -1.0
         # 서버 쪽 단서 3 (복식): 대형. 서브하는 팀은 팀원이 서버 바로 뒤에 선다(가려지기도 함).
         form = {"far": _behind_score(mp, kf, fi, occ[tail]), "near": _behind_score(mp, kn_, ni, occ[tail])}
-        formation = 0.5 * (form["near"] - form["far"])
-        logit = (sn - sf) + onset + formation
+        logit = params.w_pose * (sn - sf) + params.w_onset * onset + params.w_form * (form["near"] - form["far"])
         p_near = 1 / (1 + math.exp(-logit))
         cands.append(dict(
             # 서브 시각: 정지가 끝난 때보다 serve_lag 앞 (단, 정지 시작보다 앞으로는 가지 않음)
