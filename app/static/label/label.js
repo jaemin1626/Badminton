@@ -11,7 +11,7 @@ const SPOTS = [["far-L", "Q", "위 코트 왼쪽"], ["far-R", "W", "위 코트 �
 const SPOT_KEY = { q: "far-L", ㅂ: "far-L", w: "far-R", ㅈ: "far-R", z: "near-L", ㅋ: "near-L", x: "near-R", ㅌ: "near-R" };
 function setSpot(m, spot) { m.spot = m.spot === spot ? undefined : spot; changed(true); }
 // 서브 팀 (= 직전 랠리 득점 팀, 첫 서브는 경기 시작 서버): A = 1팀, B = 2팀. 서브 시각·개수가 아니라 덧붙이는 정보라 최종 저장 상태는 그대로 둔다
-const WIN_KEY = { a: "A", ㅁ: "A", d: "B", ㅇ: "B" };
+const WIN_KEY = { a: "A", ㅁ: "A", b: "B", ㅠ: "B", d: "B", ㅇ: "B" };   // 실험 페이지와 같게 A/B, 예전 D도 그대로
 function setWin(i, w) {
   const m = S.marks[i]; if (!m) return;
   // 자동 판정 값과 같은 팀을 누르면 확인, 확인된 같은 팀을 다시 누르면 지우기
@@ -111,7 +111,7 @@ async function openVideo(vid) {
     if (c?.teams) S.team = { A: c.teams["1"]?.name || "1팀", B: c.teams["2"]?.name || "2팀" };
     renderTeams(vid, c);
   } catch { renderTeams(vid, null); }
-  $("#winLegend").innerHTML = `<kbd>A</kbd> ${S.team.A} 서브 · <kbd>D</kbd> ${S.team.B} 서브 (= 직전 랠리 득점)`;
+  $("#winLegend").innerHTML = `<kbd>A</kbd> ${S.team.A} 서브 · <kbd>B</kbd> ${S.team.B} 서브 (= 직전 랠리 득점)`;
   $("#finA").value = S.final?.A ?? ""; $("#finB").value = S.final?.B ?? "";
   if (tr.from_name) { S.dirty = true; toast(`같은 이름 영상(${tr.video_name || ""})의 기록을 불러왔어요`); }
   $("#saveTag").textContent = tr.saved ? `저장됨 ${new Date(tr.saved * 1000).toLocaleTimeString("ko-KR")}` : "아직 기록 없음";
@@ -149,7 +149,7 @@ function render() {
   $("#tally").innerHTML = rsT.n ? `서브 팀 기록 ${rsT.n}/${n} · 마지막 서브 때 <b class="tA">${S.team.A} ${rsT.a}</b> : <b class="tB">${rsT.b} ${S.team.B}</b>`
     + (rsT.auto ? ` <span class="bad">자동 판정 ${rsT.auto}개 확인 전</span>` : "")
     + (S.final && rsT.n === n ? (lastOk ? ` · 마지막 랠리 ${S.final.A > rsT.a ? S.team.A : S.team.B} 득점 → ${S.final.A}:${S.final.B}` : ` <span class="bad">최종 점수와 안 맞음</span>`) : "")
-    : "서브마다 <kbd>A</kbd>/<kbd>D</kbd>로 서브를 넣은 팀(= 직전 랠리 득점 팀)을 기록하세요";
+    : "서브마다 <kbd>A</kbd>/<kbd>B</kbd>로 서브를 넣은 팀(= 직전 랠리 득점 팀)을 기록하세요";
   const fill = $("#pFill"); fill.style.width = goal ? `${Math.min(100, n / goal * 100)}%` : "0"; fill.classList.toggle("done", goal != null && n === goal);
   const now = v().currentTime;
   const cur = S.marks.reduce((k, m, i) => m.t <= now + .05 ? i : k, -1);
