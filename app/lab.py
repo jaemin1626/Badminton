@@ -597,6 +597,7 @@ class TruthReq(BaseModel):
     marks: list[dict] = Field(default_factory=list)   # [{t, server: 'A'|'B' (이 서브를 넣은 팀 = 직전 랠리 득점 팀), win_auto, spot: 'far-L'|'far-R'|'near-L'|'near-R', note, src: 'auto', stage, reason, ok}]
     final: dict | None = None                          # 최종 점수 {A, B}
     finalized: bool = False                            # '최종 정답 저장'을 눌렀는지
+    base: float | None = None                          # 이 탭이 불러온(마지막으로 저장한) 시각. 그 뒤 다른 탭이 저장했으면 덮어쓰지 않는다
 
 
 def truth_times(data: dict | None) -> list[float]:
@@ -753,6 +754,9 @@ def lab_get_truth(vid: str):
 
 @router.put("/api/lab/{vid}/truth")
 def lab_put_truth(vid: str, req: TruthReq):
+    cur = read_json(ldir(vid) / "truth.json") or {}
+    if req.base is not None and float(cur.get("saved") or 0) > req.base + 1e-3:
+        raise HTTPException(409, "다른 탭에서 정답이 바뀌었어요. 덮어쓰지 않았어요. 새로고침해서 최신 정답을 불러오세요")
     marks = []
     for m in req.marks:
         if "t" not in m:

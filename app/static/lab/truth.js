@@ -104,7 +104,7 @@ async function tLoadCandidates(which) {
 async function tLoadWinners() {
   try {
     clearTimeout(truthT);
-    await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: S.truthMarks, final: S.truthFinal, finalized: S.truthFinalized } });
+    await putTruth();
     const r = await api(`/api/lab/${S.vid}/winners`);
     let added = 0, miss = 0;
     for (const w of r.servers) {
@@ -136,8 +136,7 @@ async function tFinalize() {
   if (goal != null && n !== goal && !confirm(`정답 서브가 ${n}개인데 최종 점수로는 ${goal}개예요. 그래도 저장할까요?`)) return;
   S.truthFinalized = true; clearTimeout(truthT);
   try {
-    const r = await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: S.truthMarks, final: S.truthFinal, finalized: true } });
-    $("#tSaveTag").textContent = `저장됨 ${new Date(r.saved * 1000).toLocaleTimeString("ko-KR")}`;
+    await putTruth(true);
     toast("최종 정답을 저장했어요. 2 · 추적 · 서브 확인 탭에서 채점 결과를 볼 수 있어요");
   } catch (e) { S.truthFinalized = false; toast(e.message, true); }
   renderTruth(); recalc();

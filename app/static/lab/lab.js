@@ -612,7 +612,7 @@ async function enterView() {
     S.Hinv = S.cfg?.homography ? S.cfg.homography.flat() : null;
     buildCourtMini(); buildParams();
   }
-  if (!S.truthLoaded) { const tr = await api(`/api/lab/${S.vid}/truth`); S.truthMarks = tr.marks || []; S.truthFinal = tr.final || null; S.truthFinalized = !!tr.finalized; S.truth = S.truthMarks.map(m => m.t); S.truthLoaded = true; }
+  if (!S.truthLoaded) { const tr = await api(`/api/lab/${S.vid}/truth`); S.truthMarks = tr.marks || []; S.truthFinal = tr.final || null; S.truthFinalized = !!tr.finalized; S.truth = S.truthMarks.map(m => m.t); S.truthSaved = tr.from_name ? null : (tr.saved ?? 0); S.truthLoaded = true; }
   if (!S.sv) await recalc();
   loadRuns();
   if (S.mode === "truth") enterTruth();
@@ -993,13 +993,23 @@ function selectRun(r, jump) {
 
 /* ---- 정답 서브 · 채점 ---- */
 let truthT;
+// 정답 저장. 불러온 뒤 다른 탭이 저장했으면 서버가 409로 막는다 (오래된 탭이 라벨을 지우지 않게)
+async function putTruth(finalized = S.truthFinalized) {
+  try {
+    const r = await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: S.truthMarks, final: S.truthFinal, finalized, base: S.truthSaved } });
+    S.truthSaved = r.saved;
+    const tg = $("#tSaveTag"); if (tg) tg.textContent = `저장됨 ${new Date(r.saved * 1000).toLocaleTimeString("ko-KR")}`;
+    return r;
+  } catch (e) {
+    if (/다른 탭/.test(e.message)) { S.truthStale = true; const tg = $("#tSaveTag"); if (tg) tg.textContent = "저장 안 됨 · 새로고침 필요"; alert(e.message); }
+    throw e;
+  }
+}
 function saveTruthSoon(ms = 600) {
   clearTimeout(truthT);
   truthT = setTimeout(async () => {
-    try {
-      const r = await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: S.truthMarks, final: S.truthFinal, finalized: S.truthFinalized } });
-      const tg = $("#tSaveTag"); if (tg) tg.textContent = `저장됨 ${new Date(r.saved * 1000).toLocaleTimeString("ko-KR")}`;
-    } catch (e) { toast(e.message, true); }
+    if (S.truthStale) { toast("이 탭의 정답은 예전 것이라 저장하지 않아요. 새로고침하세요", true); return; }
+    try { await putTruth(); } catch (e) { toast(e.message, true); }
     recalc();
   }, ms);
 }
