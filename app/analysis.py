@@ -600,6 +600,14 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         v = np.where(np.isnan(vb), v, np.fmin(v, vb))
     occ = tr.get("occ")
     occ = np.zeros(p.shape[:2], bool) if occ is None else occ.astype(bool)
+    hgt_all = None
+    hgt_med = np.full(len(slots), np.nan)
+    if tr.get("box") is not None:
+        hgt_all = (tr["box"][..., 3] - tr["box"][..., 1]).astype(np.float64)
+        hgt_all[occ] = np.nan
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            hgt_med = np.nanmedian(hgt_all, 0)
     far = [i for i, s in enumerate(slots) if s.startswith("far")]
     near = [i for i, s in enumerate(slots) if s.startswith("near")]
     # 정지: 위치를 아는 사람(직접 보임 + 가려짐 추정)은 모두 느려야 하고, 양쪽에 최소 1명씩은 있어야 한다.
@@ -694,6 +702,15 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
                 if len(m_) == 1:
                     fi = m_[0]
         bf, bn = C.service_box("far", mp[fi]), C.service_box("near", mp[ni])
+        # 칸 판정 믿음 재료: 센터라인에서 떨어진 거리(m) · 그 사람 박스 키(px, 클수록 가까워 위치가 정확) ·
+        # 평소 키보다 1.5배 넘게 크거나 0.6배 아래면 '이상한 박스'(관중에게 옮겨 붙음 · 둘이 겹침)
+        boxq = {}
+        for side_, k_ in (("far", fi), ("near", ni)):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                bh_ = float(np.nanmedian(hgt_all[tail, k_])) if hgt_all is not None else float("nan")
+            odd = bool(np.isfinite(bh_) and np.isfinite(hgt_med[k_]) and not (0.6 * hgt_med[k_] <= bh_ <= 1.5 * hgt_med[k_]))
+            boxq[side_] = {"m": round(abs(float(mp[k_][0]) - C.W / 2), 2), "h": round(bh_, 1) if np.isfinite(bh_) else None, "odd": odd}
         if bf != bn and params.require_diagonal >= 0.5:
             ok = False; reasons.append("대각선 아님")
         # 가까운 쪽 두 명이 서로 마주 보고 서 있으면 쉬는 중 (코트 교대 휴식 등). 서브 때는 둘 다 네트 쪽을 본다
@@ -740,7 +757,8 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             cues={"pose_far": round(sf, 2), "pose_near": round(sn, 2),
                   "onset": "near" if onset > 0 else ("far" if onset < 0 else None),
                   "formation": {k: round(v_, 2) for k, v_ in form.items()},
-                  "stance": {sd: {k: round(v_, 2) for k, v_ in d_.items()} for sd, d_ in stance.items()}},
+                  "stance": {sd: {k: round(v_, 2) for k, v_ in d_.items()} for sd, d_ in stance.items()},
+                  "boxq": boxq},
         ))
 
     # 랠리 잠금: 앞 후보 뒤에 랠리가 없었으면 같은 서브 준비 → 뒤쪽 유지.
@@ -1052,6 +1070,9 @@ def count_check(out: list, fin: dict | None) -> dict:
 START_TOL = 3.0      # s, 첫 서브 시각과 이만큼 안이면 같은 서브로 본다
 SPARE_ALWAYS = False   # True면 최종 점수가 있을 때 예비 서브를 늘 후보로 (진짜 서브를 대신 빼는 경우가 생겨 끔)
 RESCUE_SKIP = 0.3    # 예비 서브를 쓰지 않을 때 감점 (작게: 모자랄 때만 꺼내 쓰도록)
+BOX_PX = 12.0        # 칸 판정 위치 오차 (픽셀). 0이면 끔(예전처럼 늘 같은 감점)
+SRV_BOX_W = 0.0      # 서버 쪽 칸 감점 비중 (0이면 리시버 쪽만)
+ODD_REL = 0.3        # 이상한 박스(평소 키와 크게 다름)일 때 칸 판정 믿음 배율
 SKIP_COST = 4.0      # 최종 점수에 맞추려고 서브 하나를 '가짜'로 뺄 때 log-확률 감점 (짝/홀 어긋남 하나보다 크게)
 PARITY_PENALTY = 2.2   # 서브 위치가 점수 짝/홀과 다를 때 log-확률 감점
 BEAM = 64
@@ -1072,9 +1093,32 @@ def _ev_loglik(ev: dict, mm: "Match", team: str) -> float:
     pn = 0.5 + (float(ev.get("p_near", 0.5)) - 0.5) * view
     p_side = pn if side == "near" else 1 - pn
     lp = math.log(min(max(p_side, 0.02), 0.98))
-    if _ev_box(ev, side) not in (None, mm.expected_box(team)):
-        lp -= PARITY_PENALTY * (1.0 if view >= 0.6 else 0.5)
+    exp = mm.expected_box(team)
+    rcv = "far" if side == "near" else "near"
+    ob = _ev_box(ev, side)
+    if ob not in (None, exp):
+        lp -= PARITY_PENALTY * (1.0 if view >= 0.6 else 0.5) * _box_rel(ev, rcv)
+    # 서버 쪽 칸도 (서버는 짝/홀 칸에 선다). 혼복 등에서 서버가 센터라인 근처에 서는 일이 많아 약하게
+    if SRV_BOX_W > 0:
+        sb = (ev.get("boxes") or {}).get(side)
+        if sb is not None and sb != exp:
+            lp -= PARITY_PENALTY * SRV_BOX_W * (1.0 if view >= 0.6 else 0.5) * _box_rel(ev, side)
     return lp
+
+
+def _box_rel(ev: dict, side: str) -> float:
+    """그 쪽 앞사람 칸 판정을 믿을 정도 (0~1). 센터라인에 붙어 있을수록, 화면에서 작을수록(멀수록) 낮다.
+    위치 오차(m) ≈ BOX_PX 픽셀 × (키 1.7 m / 박스 키 px). 이상한 박스면 크게 낮춘다. 재료가 없으면(예전 결과) 1."""
+    q = ((ev.get("cues") or {}).get("boxq") or {}).get(side)
+    if not q or BOX_PX <= 0:
+        return 1.0
+    r = 1.0
+    if q.get("h"):
+        sig = BOX_PX * 1.7 / max(float(q["h"]), 1.0)
+        r = math.erf(float(q["m"]) / (sig * math.sqrt(2)))   # = 2Φ(m/σ) − 1
+    if q.get("odd"):
+        r *= ODD_REL
+    return max(0.0, min(1.0, r))
 
 
 def _state_key(m: "Match"):
