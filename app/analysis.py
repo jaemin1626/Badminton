@@ -44,6 +44,7 @@ class Params:
     occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
     occ_reappear: float = 1.0     # m, 다시 나온 위치가 이보다 멀면 가려진 동안 움직인 것 → 추정 취소
     rally_min: float = 0.5        # s, 두 정지 구간 사이 빠른 움직임이 이보다 짧으면 랠리가 아니라 서브 준비 중 자리 잡기
+    facing_max: float = 0.05      # 가까운 쪽 두 명이 서로 짝 쪽을 보는 정도(코가 어깨 중심에서 짝 쪽으로, 키 대비)가 둘 다 이보다 크면 서브 아님 (쉬며 마주 보고 이야기). 1이면 끔
     rear_drop: float = 0.0        # (실험 중 · 기본 끔) 1이면 팀원과 겹친 뒷사람 위치를 서브 판정에서 버리고 보간 (발 위치가 튀어 가짜 움직임이 생김)
     # 추적 후보: 발이 코트 안(약간의 여유)인 사람만
     court_side: float = 0.5       # m, 사이드라인 밖 허용
@@ -507,6 +508,31 @@ def _live_checks(p, v, known, still, t, far, near, params) -> dict:
                 in_box=in_box, x=xs, box_range=(lo, hi))
 
 
+def _facing_partner(tr: dict, near: list, tail: slice):
+    """가까운 쪽 두 선수가 서로를 보는 정도 중 작은 값. 각자 코가 어깨 중심에서 짝 방향으로 얼마나 나왔나(키 대비).
+    둘 다 +면 마주 봄. 얼굴을 못 보면 None."""
+    kps, box = tr.get("kps"), tr.get("box")
+    if kps is None or box is None or len(near) != 2:
+        return None
+    out = []
+    for k in near:
+        o = near[1] if k == near[0] else near[0]
+        r = []
+        for i in range(tail.start, tail.stop):
+            kp, bk, bo = kps[i][k], box[i][k], box[i][o]
+            if kp[0][2] < .3 or kp[5][2] < .3 or kp[6][2] < .3 or np.isnan(bk[0]) or np.isnan(bo[0]):
+                continue
+            h = bk[3] - bk[1]
+            if h <= 1:
+                continue
+            d = np.sign((bo[0] + bo[2]) / 2 - (bk[0] + bk[2]) / 2)
+            r.append((kp[0][0] - (kp[5][0] + kp[6][0]) / 2) / h * d)
+        if not r:
+            return None
+        out.append(float(np.median(r)))
+    return min(out)
+
+
 def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debug: dict | None = None):
     """서브 후보 리스트. 각 후보: 시각, 서비스 코트(right/left), near 쪽이 서버일 확률 등.
 
@@ -597,6 +623,10 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         bf, bn = C.service_box("far", mp[fi]), C.service_box("near", mp[ni])
         if bf != bn and params.require_diagonal >= 0.5:
             ok = False; reasons.append("대각선 아님")
+        # 가까운 쪽 두 명이 서로 마주 보고 서 있으면 쉬는 중 (코트 교대 휴식 등). 서브 때는 둘 다 네트 쪽을 본다
+        fc = _facing_partner(tr, near, tail)
+        if fc is not None and fc > params.facing_max:
+            ok = False; reasons.append(f"가까운 쪽 두 명이 서로 마주 봄 ({fc:.3f})")
         if not ok:
             note(a, b, "B", " · ".join(reasons), front={"far": slots[fi], "near": slots[ni]},
                  pos={s_: [round(float(x), 2) for x in mp[k]] for k, s_ in enumerate(slots) if kn[k]})
