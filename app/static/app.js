@@ -1137,7 +1137,8 @@ function renderRPanel() {
         <button class="icon-btn sm" id="stNow">지금 시각</button><button class="icon-btn sm" id="stSet">적용</button>${st.start_t != null ? `<button class="icon-btn sm" id="stClear">해제</button>` : ""}</div>
     </div>
     ${(() => { const n = suspects().length, c = r.summary.count || {}; return n || (c.extra ?? 0) !== 0 ? `<p class="desc rv-link">${c.extra > 0 ? `<b class="warn-t">${c.extra}개 더 셈</b> · ` : c.extra < 0 ? `<b class="warn-t">${-c.extra}개 덜 셈</b> · ` : ""}의심 서브 ${n}개 → <b>영상 아래 검토 칸</b>에서 고치세요</p>` : ""; })()}
-    <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
+    <div class="tabs seg ev-tabs" id="evFilter">${[["A", nm("A") + " 득점"], ["B", nm("B") + " 득점"], ["cand", "후보"], ["all", "전체"]].map(([k, l]) => `<button data-f="${k}" class="${(["A", "B", "cand", "all"].includes(S.evFilter) ? S.evFilter : "A") === k ? "on" : ""}">${l} <i></i></button>`).join("")}</div>
+    <p class="desc ev-hint">줄을 누르면 그 랠리 영상이 나와요. 득점 팀이 틀리면 바꾸고, 없던 랠리면 '득점 아님', 놓친 랠리는 '후보'에서 넣으세요</p>
     <ul class="evlist" id="evlist"></ul>
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
     <button class="icon-btn" id="toLabel" style="width:100%;margin-top:10px" title="지금 남은 서브와 서브 팀, 최종 점수를 실험 페이지 정답 입력으로 보내요">실험 페이지 정답(라벨)으로 보내기</button>
@@ -1268,39 +1269,81 @@ function pollPublic() {
   };
   tick();
 }
+/* 편집 목록: 득점 기준.
+   서브 하나 = 직전 랠리를 그 팀이 이겨서 얻은 1점 (랠리 포인트). 첫 서브는 경기 시작, 마지막 랠리는 다음 서브가 없어 따로.
+   탭: A팀 득점 · B팀 득점 · 후보(안 센 장면: 놓쳤을 수 있는 서브 · 최종 점수에 맞추려고 뺀 것 · 지운 것) · 전체 */
+function pointItems() {
+  const r = S.result, live = r.events.filter(e => !e.removed && !e.skipped && e.server);
+  const items = live.map((e, k) => ({ e, kind: k === 0 ? "start" : "point", team: e.server, rs: k ? live[k - 1].t : null, re: e.t, score: e.score }));
+  const last = live[live.length - 1];
+  if (last && last.won) items.push({ e: last, kind: "last", team: last.won, rs: last.t, re: null, score: last.score_after });
+  const cands = r.events.filter(e => e.kind !== "point" && (e.removed || e.skipped))
+    .map(e => ({ e, kind: "cand", team: null, rs: (e.t_still ?? e.t) - 2, re: e.t + 3 }));
+  return { items, cands };
+}
+function playClip(a, b) {
+  if (!video) return;
+  if (!video._clipHook) {
+    video.addEventListener("timeupdate", () => { if (S.clipEnd != null && video.currentTime >= S.clipEnd) { video.pause(); S.clipEnd = null; } });
+    video.addEventListener("seeking", () => { if (S.clipSeek) S.clipSeek = false; else S.clipEnd = null; });
+    video._clipHook = true;
+  }
+  S.clipSeek = true; S.clipEnd = b; seek(Math.max(0, a), true);
+}
 function renderEvList() {
   const r = S.result, st = r.setup, ul = $("#evlist"); if (!ul) return;
   const nm = t => esc(t === "A" ? st.nameA : st.nameB);
-  const list = r.events.filter(e => S.evFilter !== "flag" || (e.flags?.length && !e.removed));
-  if (!list.length) { ul.innerHTML = `<li class="empty-state">${S.evFilter === "flag" ? "확인이 필요한 서브가 없어요" : "찾은 서브가 없어요. 영상에서 4명이 멈춰 선 장면이 잘 안 보이면 코트·선수 지정을 다시 확인해 주세요."}</li>`; return; }
-  ul.innerHTML = list.map(e => {
-    const manual = e.override || e.kind === "point";
-    const what = e.kind === "point" ? "랠리 승리" : "서브";
-    const note = e.removed ? "삭제됨" : e.rescued && e.skipped ? "놓쳤을 수 있는 서브 (예비) · 서브면 팀을 고르세요" : e.skipped ? "최종 점수에 맞추려고 뺌" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : ""].filter(Boolean).join(" · ");
-    // 사람이 고친 것: 팀 지정 · 삭제 · 맞음 확인 · 직접 추가
-    const fix = e.removed ? "삭제" : e.override ? `${nm(e.override)}로` : e.confirmed ? "확인" : e.manual || e.kind === "point" ? "추가" : "";
-    return `<li class="ev-item ${e.id === S.selEvent ? "cur" : ""} ${e.flags?.length && !e.removed ? "flagged" : ""} ${e.removed ? "removed" : ""} ${fix ? "fixed" : ""}" data-id="${e.id}">
-      <span class="tm">${fmtTime(e.t)}${fix ? `<span class="fix-tag" title="직접 고친 서브">✎ ${fix}</span>` : ""}</span>
-      <span class="who">${e.server ? `<span class="sw" style="background:var(--team${e.server})"></span><span class="nm">${nm(e.server)} ${what}</span>` : `<span class="nm">—</span>`}<span class="note">${note}</span></span>
-      <span class="sc"><span style="color:var(--teamA)">${e.score.A}</span>:<span style="color:var(--teamB)">${e.score.B}</span></span>
-      ${e.conf != null && !e.removed ? `<span class="conf" title="신뢰도 ${Math.round(e.conf * 100)}%"><i style="width:${Math.round(e.conf * 100)}%;${e.conf < .75 ? "background:var(--warn)" : ""}"></i></span>` : ""}
-      <div class="acts">
-        ${e.flags?.length && !e.removed ? `<span class="chip warn" style="width:100%">${esc(e.flags.join(" · "))}</span>` : ""}
-        ${e.removed ? `<button class="icon-btn sm" data-a="restore">되살리기</button>` : `
-        <button class="icon-btn sm" data-a="A" ${e.server === "A" && manual ? "disabled" : ""}>${nm("A")} ${what}</button>
-        <button class="icon-btn sm" data-a="B" ${e.server === "B" && manual ? "disabled" : ""}>${nm("B")} ${what}</button>
-        ${e.override && e.kind !== "point" ? `<button class="icon-btn sm" data-a="clear">자동 판단으로</button>` : ""}
-        <button class="icon-btn sm" data-a="remove">서브 아님 (삭제)</button>`}
-        <button class="icon-btn sm" data-a="watch">장면 다시 보기</button>
-      </div></li>`;
+  const { items, cands } = pointItems();
+  const f = ["A", "B", "cand", "all"].includes(S.evFilter) ? S.evFilter : "A";
+  const list = f === "cand" ? cands : f === "all" ? [...items, ...cands].sort((x, y) => x.e.t - y.e.t || (x.kind === "last") - (y.kind === "last"))
+    : items.filter(it => it.team === f);
+  // 탭 숫자
+  const cnt = { A: items.filter(i => i.team === "A" && i.kind !== "start").length, B: items.filter(i => i.team === "B" && i.kind !== "start").length, cand: cands.length };
+  $$("#evFilter button").forEach(b => { const c = cnt[b.dataset.f]; const sp = b.querySelector("i"); if (sp) sp.textContent = c ?? ""; });
+  if (!list.length) { ul.innerHTML = `<li class="empty-state">${f === "cand" ? "안 센 후보 장면이 없어요" : "득점이 없어요"}</li>`; return; }
+  ul.innerHTML = list.map(it => {
+    const e = it.e, other = it.team === "A" ? "B" : "A";
+    const fix = e.removed ? "삭제" : e.override ? "팀 고침" : e.confirmed ? "확인" : e.manual ? "추가" : it.kind === "last" && e.last_won ? "팀 고침" : "";
+    const sc = it.score ? `<span class="sc"><span style="color:var(--teamA)">${it.score.A}</span>:<span style="color:var(--teamB)">${it.score.B}</span></span>` : `<span class="sc"></span>`;
+    let what, btns;
+    if (it.kind === "start") {
+      what = `<span class="sw" style="background:var(--team${it.team})"></span><span class="nm">경기 시작 · ${nm(it.team)} 서브</span>`;
+      btns = `<button class="icon-btn sm" data-a="set" data-team="${other}">${nm(other)} 첫 서브로</button>`;
+    } else if (it.kind === "point" || it.kind === "last") {
+      what = `<span class="sw" style="background:var(--team${it.team})"></span><span class="nm">${nm(it.team)} 득점${it.kind === "last" ? " · 마지막 랠리" : ""}</span>`;
+      btns = `<button class="icon-btn sm" data-a="${it.kind === "last" ? "last" : "set"}" data-team="${other}">${nm(other)} 득점으로 바꾸기</button>`
+        + (it.kind === "point" ? `<button class="icon-btn sm" data-a="remove" title="이 랠리가 없었던 것으로 (서브 아님)">득점 아님</button>` : "");
+    } else {
+      const why = e.removed ? "지운 장면" : e.rescued ? "놓쳤을 수 있는 서브" : "최종 점수에 맞추려고 뺀 장면";
+      what = `<span class="nm cand-why">${why}</span>`;
+      btns = `<button class="icon-btn sm" data-a="add" data-team="A">${nm("A")} 득점으로 넣기</button><button class="icon-btn sm" data-a="add" data-team="B">${nm("B")} 득점으로 넣기</button>`
+        + (!e.removed ? `<button class="icon-btn sm" data-a="remove">아님</button>` : "");
+    }
+    const flags = e.flags?.length && !e.removed && it.kind !== "cand" ? `<span class="ev-flag">${esc(e.flags.join(" · "))}</span>` : "";
+    return `<li class="ev-item ${e.id === S.selEvent && S.selKind === it.kind ? "cur" : ""} ${fix ? "fixed" : ""} ${it.kind === "cand" ? "cand" : ""}" data-id="${e.id}" data-kind="${it.kind}" data-rs="${it.rs ?? ""}" data-re="${it.re ?? ""}">
+      <span class="tm">${fmtTime(it.kind === "last" ? e.t : e.t)}${fix ? `<span class="fix-tag">✎ ${fix}</span>` : ""}</span>
+      <span class="who">${what}${flags}</span>${sc}
+      <div class="acts"><button class="icon-btn sm" data-a="watch">▶ ${it.kind === "cand" ? "장면 보기" : it.kind === "start" ? "첫 서브 보기" : "이 랠리 보기"}</button>${btns}</div></li>`;
   }).join("");
   $$(".ev-item", ul).forEach(li => {
-    li.onclick = e => { if (e.target.closest("button")) return; selectEvent(li.dataset.id, true); };
+    const id = li.dataset.id, kind = li.dataset.kind, rs = +li.dataset.rs, re = li.dataset.re === "" ? null : +li.dataset.re;
+    const ev = S.result.events.find(x => x.id === id);
+    const watch = () => {
+      S.selEvent = id; S.selKind = kind; $$(".ev-item", ul).forEach(x => x.classList.toggle("cur", x === li));
+      if (kind === "start") playClip((ev.t_still ?? ev.t) - 2, ev.t + 3);
+      else if (kind === "last") playClip(ev.t - 1, ev.t + 25);   // 마지막 랠리: 끝까지 (멈추면 다시 누르기)
+      else if (kind === "cand") playClip(rs, re);
+      else playClip(rs - 1, re + 1);   // 이전 서브부터 이번 서브까지 = 이 득점이 난 랠리
+    };
+    li.onclick = e => { if (e.target.closest("button")) return; watch(); };
     $$("button[data-a]", li).forEach(b => b.onclick = async () => {
-      const id = li.dataset.id, a = b.dataset.a; const ev = S.result.events.find(x => x.id === id);
-      if (a === "watch") { seek(ev.t_still - 1.5, true); return; }
-      if (a === "A" || a === "B") await patch([{ id, action: "set_server", team: a }]);
-      else await patch([{ id, action: a }]);
+      const a = b.dataset.a, team = b.dataset.team;
+      S.selEvent = id; S.selKind = kind;
+      if (a === "watch") { watch(); return; }
+      if (a === "set") await patch([{ id, action: "set_server", team }]);
+      else if (a === "last") await patch([{ id, action: "set_last_won", team }]);
+      else if (a === "remove") await patch([{ id, action: "remove" }]);
+      else if (a === "add") await patch([...(ev.removed ? [{ id, action: "restore" }] : []), { id, action: "set_server", team }]);
     });
   });
 }

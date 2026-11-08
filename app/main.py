@@ -651,13 +651,13 @@ def patch_events(vid: str, body: list[EventPatch]):
     if res is None or cfg is None:
         raise HTTPException(404, "아직 분석 결과가 없어요")
     keep = ("id", "t", "frame", "t_still", "frame_still", "box", "boxes", "p_near", "view", "seen", "front", "pos", "cues",
-            "override", "removed", "kind", "winner", "look", "pre_rally", "confirmed", "manual", "rescued", "t_end")
+            "override", "removed", "kind", "winner", "look", "pre_rally", "confirmed", "manual", "rescued", "t_end", "last_won")
     evs = [{k: e[k] for k in keep if k in e} for e in res["events"]]
     by = {e["id"]: e for e in evs}
     fps = cfg.get("fps") or 30
     for p in body:
         e = by.get(p.id) if p.id else None
-        if p.action in {"set_server", "clear", "remove", "restore", "confirm", "unconfirm"} and e is None:
+        if p.action in {"set_server", "clear", "remove", "restore", "confirm", "unconfirm", "set_last_won"} and e is None:
             raise HTTPException(404, f"이벤트 {p.id} 없음")
         if p.action == "set_server":
             if p.team not in {"A", "B"}:
@@ -675,6 +675,11 @@ def patch_events(vid: str, body: list[EventPatch]):
             e["confirmed"] = True; e.pop("removed", None)
         elif p.action == "unconfirm":
             e.pop("confirmed", None)
+        elif p.action == "set_last_won":   # 마지막 랠리(다음 서브가 없음) 득점 팀. team 없으면 해제
+            for x in evs:
+                x.pop("last_won", None)
+            if p.team in {"A", "B"}:
+                e["last_won"] = p.team
         elif p.action in {"add_serve", "add_point"}:
             t = p.t if p.t is not None else (p.frame or 0) / fps
             fr = p.frame if p.frame is not None else int(round(t * fps))

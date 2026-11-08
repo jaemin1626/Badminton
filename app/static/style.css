@@ -476,3 +476,11 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .spare{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
 .spare-list li{display:flex !important;align-items:center;gap:10px;justify-content:space-between}
 .spare-list .sp-btns{display:flex;gap:6px;flex-wrap:wrap}
+/* 편집 목록: 득점 탭 */
+.ev-tabs button i{font-style:normal;font-size:11px;opacity:.75;margin-left:2px}
+.ev-hint{font-size:12px;margin:6px 0 8px}
+.ev-item .ev-flag{display:block;font-size:11px;color:var(--warn);white-space:normal}
+.ev-item .who{flex-wrap:wrap}
+.ev-item.cand{background:color-mix(in srgb,var(--warn) 7%,var(--bg2))}
+.ev-item .cand-why{color:var(--muted)}
+.evlist{max-height:560px}
