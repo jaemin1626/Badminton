@@ -443,3 +443,21 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .field label .opt{font-weight:400;color:var(--muted);font-size:12px;margin-left:6px}
 .fin-row.big input{width:72px;font-size:24px;padding:8px}
 .field.more summary{cursor:pointer;color:var(--muted);font-size:13px;margin-bottom:8px}
+/* 검토 칸: 영상 바로 아래, 크게 */
+.rv-dock:empty{display:none}
+.rv-dock{margin-top:12px}
+.rv-dock .review{padding:16px 18px;margin:0;border-width:2px}
+.rv-title{font-weight:800;font-size:15px;margin-bottom:6px;color:var(--accent)}
+.rv-dock .rv-head{font-size:15px}
+.rv-dock .sus{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:6px}
+.rv-dock .sus li{font-size:14px;padding:10px 12px;grid-template-columns:22px 56px 1fr 34px}
+.rv-dock .sus .tm{font-size:16px}
+.rv-dock .cta.sm{height:52px;font-size:16px;max-width:420px}
+.rv-dock .rv-top b{font-size:34px}.rv-dock .rv-top .ix{font-size:15px;color:var(--muted)}.rv-dock .rv-top .st{font-size:15px}
+.rv-dock .desc{font-size:14px}
+.rv-dock .rv-btns{grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}
+.rv-dock .rv-btns .icon-btn{height:64px;font-size:17px;font-weight:700;border-width:2px}
+.rv-dock .rv-nav .icon-btn{height:44px;font-size:15px;padding:0 18px}
+.rv-dock kbd{font-size:12px}
+@media (max-width:900px){.rv-dock .rv-btns{grid-template-columns:1fr 1fr}}
+.rv-link{margin:0 0 10px}

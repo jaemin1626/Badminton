@@ -978,6 +978,7 @@ function renderResult(v) {
         <svg class="ov" id="ov" viewBox="0 0 ${m.width} ${m.height}"></svg>
         <div class="flag" id="flag">확인 필요</div>
       </div>
+      <div class="rv-dock" id="rvDock"></div>
       <div class="worm" id="worm"></div>
     </section>
     <aside>
@@ -1083,7 +1084,7 @@ function renderRPanel() {
         <button class="icon-btn sm" id="finFit">맞추기</button>${st.final ? `<button class="icon-btn sm" id="finClear">해제</button>` : ""}</div>
       ${st.final ? `<p class="desc">${all.filter(e => e.skipped).length ? `가짜로 본 서브 ${all.filter(e => e.skipped).map(e => fmtTime(e.t)).join(", ")}를 빼고 맞췄어요. 틀렸으면 그 서브를 '서브 아님'이나 팀으로 직접 고치세요` : "그대로 맞았어요"}</p>` : ""}
     </div>
-    ${reviewHtml()}
+    ${(() => { const n = suspects().length, c = r.summary.count || {}; return n || (c.extra ?? 0) !== 0 ? `<p class="desc rv-link">${c.extra > 0 ? `<b class="warn-t">${c.extra}개 더 셈</b> · ` : c.extra < 0 ? `<b class="warn-t">${-c.extra}개 덜 셈</b> · ` : ""}의심 서브 ${n}개 → <b>영상 아래 검토 칸</b>에서 고치세요</p>` : ""; })()}
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
@@ -1109,7 +1110,7 @@ function renderRPanel() {
       <a class="icon-btn pub-dl ${S.meta.has_public ? "" : "hidden"}" id="dlPublic" href="/api/videos/${S.vid}/download/public.mp4">공개용 영상 받기${S.meta.public ? ` · 머리 ${S.meta.public.masked_heads.toLocaleString()}개 가림` : ""}</a>
     </section>`;
   $$("#evFilter button").forEach(b => b.onclick = () => { S.evFilter = b.dataset.f; renderRPanel(); });
-  bindReview();
+  renderReview();
   const setFinal = async (A, B) => {
     try { S.result = await api(`/api/videos/${S.vid}/final`, { method: "PATCH", json: { A, B } }); lastStateKey = ""; renderWorm(); renderRPanel(); toast(A == null ? "최종 점수를 해제했어요" : `${A}:${B}에 맞춰 다시 계산했어요`); }
     catch (e) { toast(e.message, true); }
@@ -1238,6 +1239,7 @@ function reviewHtml() {
   const gaps = extra != null && extra < 0 && c.gaps?.length ? `<p class="desc">서브가 빠졌을 만한 긴 빈 구간: ${c.gaps.map(([a, b]) => `<a href="#" class="gap" data-t="${a}">${fmtTime(a)}~${fmtTime(b)}</a>`).join(" · ")}</p>` : "";
   if (S.review) return reviewCard();
   return `<div class="review">
+    <div class="rv-title">검토 · 수동 수정</div>
     <p class="rv-head">${head}</p>
     ${show.length ? `<ol class="sus">${list}</ol><button class="cta sm" id="rvStart">검토 시작 · 의심 순서대로 ${show.length}개 보기</button>` : ""}
     ${gaps}</div>`;
@@ -1248,9 +1250,9 @@ function reviewCard() {
   if (!e) return `<div class="review on"><p class="rv-head">검토할 서브가 없어요</p><button class="icon-btn sm" id="rvEnd">검토 끝내기</button></div>`;
   const st = e.removed ? "서브 아님으로 바꿈" : e.confirmed ? "맞음으로 확인함" : e.override ? `${nm(e.override)} 서브로 고침` : e.skipped ? "지금은 뺀 상태" : `지금 판정: ${nm(e.server)} 서브`;
   return `<div class="review on">
-    <div class="rv-top"><span>${rv.i + 1} / ${rv.ids.length}</span><b>${fmtTime(e.t)}</b><span class="st">${st}</span></div>
+    <div class="rv-title">검토 중 · 장면 앞뒤 3초 반복</div>
+    <div class="rv-top"><span class="ix">${rv.i + 1} / ${rv.ids.length}</span><b>${fmtTime(e.t)}</b><span class="st">${st}</span></div>
     <p class="desc">${esc((e.why || []).join(" · ")) || "의심 이유 없음"}</p>
-    <p class="desc">장면을 앞뒤 3초씩 반복해서 보여 줘요. 서브가 맞는지, 누가 넣었는지 보고 고르세요.</p>
     <div class="rv-btns">
       <button class="icon-btn" data-r="remove">서브 아님 <kbd>X</kbd></button>
       <button class="icon-btn" data-r="confirm">맞음 <kbd>Enter</kbd></button>
@@ -1277,6 +1279,10 @@ async function reviewAct(a) {
   else if (a === "remove") await patch([{ id, action: "remove" }]);
   if (rv.i + 1 < rv.ids.length) reviewGo(rv.i + 1);
   else { toast("검토를 마쳤어요. 개수와 점수를 확인하세요"); S.review = null; renderRPanel(); }
+}
+function renderReview() {
+  const d = $("#rvDock"); if (!d || !S.result) return;
+  d.innerHTML = reviewHtml(); bindReview();
 }
 function bindReview() {
   $("#rvStart")?.addEventListener("click", () => { S.review = { ids: suspects().slice(0, Math.max(5, (S.result.summary.count?.extra > 0 ? S.result.summary.count.extra : 0) + 3)).map(e => e.id), i: 0 }; reviewGo(0); });
