@@ -651,7 +651,7 @@ def patch_events(vid: str, body: list[EventPatch]):
     if res is None or cfg is None:
         raise HTTPException(404, "아직 분석 결과가 없어요")
     keep = ("id", "t", "frame", "t_still", "frame_still", "box", "boxes", "p_near", "view", "seen", "front", "pos", "cues",
-            "override", "removed", "kind", "winner")
+            "override", "removed", "kind", "winner", "look")
     evs = [{k: e[k] for k in keep if k in e} for e in res["events"]]
     by = {e["id"]: e for e in evs}
     fps = cfg.get("fps") or 30
@@ -688,6 +688,30 @@ def patch_events(vid: str, body: list[EventPatch]):
         if e["id"].startswith("m"):
             e["manual"] = True
     return _rescore(d, evs, cfg)
+
+
+class FinalReq(BaseModel):
+    A: int | None = None
+    B: int | None = None
+
+
+@app.patch("/api/videos/{vid}/final")
+def patch_final(vid: str, body: FinalReq):
+    """실제 최종 점수를 알면 넣는다. 그 점수에 맞는 흐름(가짜 서브는 빼고) 중 가장 그럴듯한 것으로 다시 계산. 비우면 해제."""
+    d = vdir(vid)
+    cfg = read_json(d / "match.json")
+    res = read_json(d / "result.json")
+    if res is None or cfg is None:
+        raise HTTPException(404, "아직 분석 결과가 없어요")
+    m = cfg.setdefault("match", {})
+    if body.A is None or body.B is None:
+        m.pop("final", None)
+    else:
+        if body.A < 0 or body.B < 0 or body.A > 40 or body.B > 40:
+            raise HTTPException(400, "점수가 이상해요")
+        m["final"] = {"A": body.A, "B": body.B}
+    write_json(d / "match.json", cfg)
+    return _rescore(d, res["events"], cfg)
 
 
 @app.post("/api/videos/{vid}/rescore")

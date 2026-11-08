@@ -167,6 +167,7 @@ async function openVideo(vid, mode) {
     $("#mMode").value = m.mode || "doubles"; $("#mTarget").value = +m.target === 21 && +m.games_to_win === 1 ? "21-1" : (m.target || 25); $("#mFirst").value = m.first || "A";
     $("#mGame").value = m.game || 1; $("#mScoreA").value = m.scoreA || 0; $("#mScoreB").value = m.scoreB || 0;
     $("#mSwitch").value = switchStr(m.switch_manual);
+    $("#mFinal").value = m.final ? `${m.final.A}:${m.final.B}` : "";
   }
   $("#sRange").max = S.meta.frames - 1;
   $("#wideChk").checked = S.wide;
@@ -501,7 +502,8 @@ async function saveConfig(run, name = null) {
     officials: by("R"),
     match: { mode: $("#mMode").value, target: parseInt($("#mTarget").value), first: $("#mFirst").value, game: +$("#mGame").value,
       scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value, ...($("#mTarget").value === "21-1" ? { games_to_win: 1 } : {}),
-      switch_manual: parseSwitch($("#mSwitch").value) || [] },
+      switch_manual: parseSwitch($("#mSwitch").value) || [],
+      final: (() => { const q = $("#mFinal").value.trim().split(":").map(x => x.trim()); return q.length === 2 && q.every(x => /^\d+$/.test(x)) ? { A: +q[0], B: +q[1] } : null; })() },
   };
   try {
     let cfg = await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });

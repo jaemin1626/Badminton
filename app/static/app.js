@@ -1067,6 +1067,13 @@ function renderRPanel() {
     </div>
     ${sm.switch ? `<p class="desc sw-note">${sm.switch.mode === "manual" ? `코트 교대 <b>${sm.switch.times.map(fmtTime).join(", ")}</b> · 설정에서 지정` : sm.switch.mode === "auto" ? `코트 교대 <b>${fmtTime(sm.switch.times[0])}</b> · 선수 옷 색으로 자동 감지. 틀렸으면 경기 설정에서 시각을 적어 다시 분석하세요` : "코트 교대 · 점수 규칙으로 (옷 색으로는 확실하지 않았어요)"}</p>` : ""}
     <p class="desc" style="margin-bottom:10px">서브 ${all.filter(e => !e.removed).length}개${flagged ? ` · <b style="color:var(--warn)">확인 필요 ${flagged}개</b>` : ""}. 서브를 누르면 고칠 수 있어요. 하나를 고치면 뒤쪽 점수가 다시 계산돼요.</p>
+    <div class="fin-fit">
+      <label>실제 최종 점수 <small>알면 넣으세요. 그 점수에 맞게 서브를 다시 맞춰요</small></label>
+      <div class="fin-row"><span class="nm" style="color:var(--teamA)">${nm("A")}</span><input type="number" id="finA" min="0" max="40" value="${st.final?.A ?? ""}" aria-label="${nm("A")} 최종 점수">
+        <span>:</span><input type="number" id="finB" min="0" max="40" value="${st.final?.B ?? ""}" aria-label="${nm("B")} 최종 점수"><span class="nm" style="color:var(--teamB)">${nm("B")}</span>
+        <button class="icon-btn sm" id="finFit">맞추기</button>${st.final ? `<button class="icon-btn sm" id="finClear">해제</button>` : ""}</div>
+      ${st.final ? `<p class="desc">${all.filter(e => e.skipped).length ? `가짜로 본 서브 ${all.filter(e => e.skipped).map(e => fmtTime(e.t)).join(", ")}를 빼고 맞췄어요. 틀렸으면 그 서브를 '서브 아님'이나 팀으로 직접 고치세요` : "그대로 맞았어요"}</p>` : ""}
+    </div>
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
@@ -1092,6 +1099,12 @@ function renderRPanel() {
       <a class="icon-btn pub-dl ${S.meta.has_public ? "" : "hidden"}" id="dlPublic" href="/api/videos/${S.vid}/download/public.mp4">공개용 영상 받기${S.meta.public ? ` · 머리 ${S.meta.public.masked_heads.toLocaleString()}개 가림` : ""}</a>
     </section>`;
   $$("#evFilter button").forEach(b => b.onclick = () => { S.evFilter = b.dataset.f; renderRPanel(); });
+  const setFinal = async (A, B) => {
+    try { S.result = await api(`/api/videos/${S.vid}/final`, { method: "PATCH", json: { A, B } }); lastStateKey = ""; renderWorm(); renderRPanel(); toast(A == null ? "최종 점수를 해제했어요" : `${A}:${B}에 맞춰 다시 계산했어요`); }
+    catch (e) { toast(e.message, true); }
+  };
+  $("#finFit").onclick = () => { const a = $("#finA").value, b = $("#finB").value; if (a === "" || b === "") { toast("두 팀 점수를 모두 넣어 주세요", true); return; } setFinal(+a, +b); };
+  $("#finClear")?.addEventListener("click", () => setFinal(null, null));
   renderEvList();
   $("#addServe").onclick = async () => {
     const t = video.currentTime; const team = prompt(`${fmtTime(t)}에 서브한 팀은? A(${st.nameA}) 또는 B(${st.nameB})`, "A");
@@ -1168,7 +1181,7 @@ function renderEvList() {
   ul.innerHTML = list.map(e => {
     const manual = e.override || e.kind === "point";
     const what = e.kind === "point" ? "랠리 승리" : "서브";
-    const note = e.removed ? "삭제됨" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : "", manual ? "수정함" : ""].filter(Boolean).join(" · ");
+    const note = e.removed ? "삭제됨" : e.skipped ? "최종 점수에 맞추려고 뺌" : [e.box ? (e.box === "right" ? "오른쪽 코트" : "왼쪽 코트") : "", manual ? "수정함" : ""].filter(Boolean).join(" · ");
     return `<li class="ev-item ${e.id === S.selEvent ? "cur" : ""} ${e.flags?.length && !e.removed ? "flagged" : ""} ${e.removed ? "removed" : ""}" data-id="${e.id}">
       <span class="tm">${fmtTime(e.t)}</span>
       <span class="who">${e.server ? `<span class="sw" style="background:var(--team${e.server})"></span><span class="nm">${nm(e.server)} ${what}</span>` : `<span class="nm">—</span>`}<span class="note">${note}</span></span>
