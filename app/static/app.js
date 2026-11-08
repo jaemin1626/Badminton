@@ -856,6 +856,7 @@ function renderPanel() {
       <div class="field"><label>우리 팀</label>${seg("ours", [["A", T.A.name], ["B", T.B.name]])}</div>
       <div class="field"><label>스코어보드에서 우리 팀 줄</label>${seg("ours_row", [["top", "윗줄"], ["bottom", "아랫줄"]])}</div>
       <div class="field"><label>게임 규칙</label>${seg("target", [[25, "25점 단판"], [21, "21점 · 듀스 최대 30"], [15, "15점"]])}</div>
+      <div class="field"><label>코트 교대 시각</label><input class="sw-in" id="swIn" value="${esc((f.switch_manual || []).map(t => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`).join(", "))}" placeholder="비우면 자동 (선수 옷 색으로 찾음)" aria-label="코트 교대 시각, 비우면 자동"><p class="hint-s">자동이 틀렸을 때만 분:초로 적어요. 여러 번이면 쉼표 (예: 3:50, 12:10)</p></div>
       <div class="toggle-row">스코어보드 미리보기<button class="switch ${f.scoreboard ? "on" : ""}" id="boardSw" role="switch" aria-checked="${f.scoreboard}" aria-label="스코어보드 미리보기"></button></div>
       <button class="cta" id="next">분석 시작</button>`;
     $$(".seg", P).forEach(s => $$("button", s).forEach(b => b.onclick = () => {
@@ -866,6 +867,10 @@ function renderPanel() {
       const g = $("#overlay"); g.innerHTML = ""; drawScoreboard(g, { score: { A: f.scoreA, B: f.scoreB }, server: f.first, game: f.game }, setupNow(), U(), b.dataset.k.slice(-1)); saveLocal();
     });
     $("#boardSw").onclick = () => { f.scoreboard = !f.scoreboard; renderPanel(); drawOverlay(); saveLocal(); };
+    $("#swIn").onchange = e => {
+      const out = []; for (const part of e.target.value.split(/[,\s]+/).filter(Boolean)) { const q = part.split(":").map(Number); if (q.some(isNaN)) { toast("3:50 처럼 분:초로 적어 주세요", true); return; } out.push(q.reduce((a, b) => a * 60 + b, 0)); }
+      f.switch_manual = out; saveLocal();
+    };
     $("#next").onclick = startAnalyze;
   }
 }
@@ -1060,6 +1065,7 @@ function renderRPanel() {
       <span class="vs">VS</span>
       <div class="side B ${winner === "B" ? "win" : ""}"><div class="nm">${nm("B")}</div><div class="sc">${sm.score.B}</div><div class="gw">게임 ${gw("B")}승${(sm.games || []).map(g => ` · ${g.B}`).join("")}</div></div>
     </div>
+    ${sm.switch ? `<p class="desc sw-note">${sm.switch.mode === "manual" ? `코트 교대 <b>${sm.switch.times.map(fmtTime).join(", ")}</b> · 설정에서 지정` : sm.switch.mode === "auto" ? `코트 교대 <b>${fmtTime(sm.switch.times[0])}</b> · 선수 옷 색으로 자동 감지. 틀렸으면 경기 설정에서 시각을 적어 다시 분석하세요` : "코트 교대 · 점수 규칙으로 (옷 색으로는 확실하지 않았어요)"}</p>` : ""}
     <p class="desc" style="margin-bottom:10px">서브 ${all.filter(e => !e.removed).length}개${flagged ? ` · <b style="color:var(--warn)">확인 필요 ${flagged}개</b>` : ""}. 서브를 누르면 고칠 수 있어요. 하나를 고치면 뒤쪽 점수가 다시 계산돼요.</p>
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>

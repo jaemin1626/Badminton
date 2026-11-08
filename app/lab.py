@@ -337,6 +337,21 @@ def lab_track(vid: str):
     return submit(job, fn, GPU_POOL).to_dict()
 
 
+def _looks(vid: str, tr: dict, cfg: dict, serves: list) -> list:
+    """서브마다 옷 색 look (코트 교대 자동 감지용). 추적·팀 박스가 그대로면 lab/looks.json 을 다시 쓴다."""
+    if not cfg.get("teams"):
+        return serves
+    p = ldir(vid) / "looks.json"
+    key = f"{(ldir(vid) / 'tracks.npz').stat().st_mtime:.0f}|{cfg.get('ref_frame')}|{cfg['teams']['1'].get('bboxes')}|{cfg['teams']['2'].get('bboxes')}"
+    old = read_json(p, {}) or {}
+    cache = old.get("v", {}) if old.get("key") == key else {}
+    n0 = len(cache)
+    A.serve_looks(str(source_path(vdir(vid))), tr, cfg, serves, cache)
+    if len(cache) != n0:
+        write_json(p, {"key": key, "v": cache})
+    return serves
+
+
 def _tracks(vid: str) -> dict:
     p = ldir(vid) / "tracks.npz"
     if not p.exists():
@@ -455,6 +470,7 @@ def save_run(vid: str, params: "A.Params", name: str = "") -> dict:
     cfg = read_json(L / "config.json") or {}
     dbg: dict = {}
     serves = A.find_serves(tr, cfg.get("match", {}).get("mode", "doubles"), params, debug=dbg)
+    _looks(vid, tr, cfg, serves)
     scored, summary = [], None
     if cfg.get("teams"):
         setup = dict(cfg.get("match", {}))
@@ -530,6 +546,7 @@ def lab_serves(vid: str, req: ServeReq):
     dbg: dict = {}
     t0 = time.time()
     serves = A.find_serves(tr, cfg.get("match", {}).get("mode", "doubles"), params, debug=dbg)
+    _looks(vid, tr, cfg, serves)
     scored, summary = [], None
     if cfg.get("teams"):
         setup = dict(cfg.get("match", {}))
@@ -715,6 +732,7 @@ def lab_winners(vid: str):
         raise HTTPException(400, "실험 페이지에서 팀(1팀·2팀 코트)을 먼저 정해 주세요")
     tr = _tracks(vid)
     serves = A.find_serves(tr, cfg.get("match", {}).get("mode", "doubles"), A.Params())
+    _looks(vid, tr, cfg, serves)
     setup = dict(cfg.get("match", {}))
     setup["nameA"], setup["nameB"] = cfg["teams"]["1"]["name"], cfg["teams"]["2"]["name"]
     scored, _ = A.score_events(serves, setup, {"A": cfg["teams"]["1"]["side"], "B": cfg["teams"]["2"]["side"]})

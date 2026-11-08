@@ -594,6 +594,8 @@ def analyze(vid: str):
         job.finish_stage(1, f"{len(tr['frames']):,}개 프레임 분석")
         job.stage(2, 0.5)
         cands = A.find_serves(tr, cfg.get("match", {}).get("mode", "doubles"))
+        job.stage(2, 0.7, "코트 교대 찾기 (옷 색)")
+        A.serve_looks(str(source_path(d)), tr, cfg, cands)
         for i, c in enumerate(cands):
             c["id"] = f"e{i:04d}"
         write_json(d / "serves_raw.json", cands)

@@ -676,7 +676,7 @@ RULES = {
 def rules_for(target: int, s: dict | None = None) -> dict:
     r = dict(RULES.get(int(target), dict(deuce=True, cap=int(target) + 9, games_to_win=2, switch_at=(int(target) + 1) // 2)))
     for k in r:   # 설정에서 바꿀 수 있게 (예: {"deuce": true})
-        if s and k in s:
+        if s and s.get(k) is not None:
             r[k] = type(r[k])(s[k])
     return r
 
@@ -704,6 +704,15 @@ class Match:
         self.started = False
         self.server = s.get("first", "A")
         self.over = False
+        # 코트 교대 시각(초) 목록. None이면 규칙대로 점수(11·13점 등)로 바꾼다
+        sw = s.get("switch_times")
+        self.fixed_sw = sorted(float(x) for x in sw) if isinstance(sw, (list, tuple)) and len(sw) else None
+        self.sw_i = 0
+
+    def at_time(self, t: float):
+        """시각 t의 이벤트를 처리하기 전에, 지나간 교대 시각만큼 코트를 바꾼다."""
+        while self.fixed_sw is not None and self.sw_i < len(self.fixed_sw) and t > self.fixed_sw[self.sw_i]:
+            self._swap(); self.sw_i += 1
 
     def clone(self):
         m = Match.__new__(Match)
@@ -720,7 +729,7 @@ class Match:
         a, b = self.score["A"], self.score["B"]
         # 마지막 게임(단판이면 그 게임) 중간 코트 교대: 21점 11점, 15점 8점, 25점 13점
         last_game = 2 * self.games_to_win - 1
-        if self.game == last_game and not self.switched_mid and max(a, b) >= self.rules["switch_at"]:
+        if self.fixed_sw is None and self.game == last_game and not self.switched_mid and max(a, b) >= self.rules["switch_at"]:
             self._swap(); self.switched_mid = True
         if game_over(a, b, self.target, self.rules):
             self.games.append({"A": a, "B": b, "winner": winner})
@@ -731,13 +740,119 @@ class Match:
             self.game += 1
             self.score = {"A": 0, "B": 0}
             self.switched_mid = False
-            self._swap()
+            if self.fixed_sw is None:
+                self._swap()
 
     def _swap(self):
         self.side = {"A": self.side["B"], "B": self.side["A"]}
 
     def expected_box(self, team: str) -> str:
         return "right" if self.score[team] % 2 == 0 else "left"
+
+
+# ---------------------------------------------------------------- 코트 교대 자동 감지 (옷 색)
+def _torso(img, b):
+    """선수 박스에서 상체(가슴~배) 부분."""
+    x1, y1, x2, y2 = (float(v) for v in b[:4])
+    w, h = x2 - x1, y2 - y1
+    c = img[max(int(y1 + h * .18), 0):max(int(y1 + h * .48), 1), max(int(x1 + w * .25), 0):max(int(x2 - w * .25), 1)]
+    return c if c.size and c.shape[0] >= 6 and c.shape[1] >= 4 else None
+
+
+def _hist(c):
+    hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
+    h = cv2.calcHist([hsv], [0, 1, 2], None, [12, 4, 4], [0, 180, 0, 256, 0, 256]).flatten()
+    return (h / (h.sum() + 1e-9)).astype(np.float32)
+
+
+def _bd(h1, h2) -> float:
+    return float(cv2.compareHist(h1, h2, cv2.HISTCMP_BHATTACHARYYA))
+
+
+def serve_looks(video_path: str, tr: dict, cfg: dict, events: list, cache: dict | None = None) -> list:
+    """서브마다 ev['look'] = 옷 색으로 본 '팀 A가 가까운 쪽' 정도 (+면 A가 가까운 쪽 같음).
+
+    설정 프레임에서 고른 팀별 선수 상체 색을 견본으로, 서브 직전 정지 순간 선수 상체 색과 비교한다.
+    가까운 쪽은 조명·크기 탓에 늘 한쪽으로 치우치므로 값 자체가 아니라 '경기 중 한 번 뚝 바뀌는 때'를 쓴다.
+    cache: {프레임 번호(str): look} — 기준값만 바꿔 다시 계산할 때 영상을 다시 읽지 않게.
+    """
+    teams = cfg.get("teams") or {}
+    if not events or "1" not in teams or "2" not in teams or cfg.get("ref_frame") is None:
+        return events
+    cache = cache if cache is not None else {}
+    todo = []
+    for e in events:
+        f = int(e.get("frame_still", e.get("frame", 0)))
+        if str(f) in cache:
+            e["look"] = cache[str(f)]
+        else:
+            todo.append((f, e))
+    if not todo:
+        return events
+    cap = cv2.VideoCapture(video_path)
+
+    def read(f):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(f)); ok, im = cap.read(); return im if ok else None
+    ref = read(cfg["ref_frame"])
+    sig = {}
+    for no, k in (("1", "A"), ("2", "B")):
+        sig[k] = [_hist(c) for b in teams[no].get("bboxes", []) if ref is not None and (c := _torso(ref, b)) is not None]
+    if not sig["A"] or not sig["B"]:
+        cap.release(); return events
+    frames = np.asarray(tr["frames"]); slots = [str(x) for x in tr["slots"]]
+    for f, e in sorted(todo, key=lambda x: x[0]):
+        i = int(np.argmin(np.abs(frames - f)))
+        im = read(frames[i])
+        tot = 0.0; n = 0
+        if im is not None:
+            for k, sl in enumerate(slots):
+                b = tr["box"][i][k]
+                if b is None or np.isnan(b[0]) or tr["occ"][i][k]:
+                    continue
+                c = _torso(im, b)
+                if c is None:
+                    continue
+                h = _hist(c)
+                d = min(_bd(h, x) for x in sig["B"]) - min(_bd(h, x) for x in sig["A"])   # +면 A 같음
+                tot += d if sl.startswith("near") else -0.5 * d; n += 1
+        e["look"] = round(tot, 3) if n else None
+        cache[str(f)] = e["look"]
+    cap.release()
+    return events
+
+
+SWITCH_MIN_RATIO = 1.5   # 교대 앞뒤 옷 색 차이 / 흔들림 이 이상이어야 자동 교대로 믿는다
+
+
+def detect_switch(events: list, setup: dict, sides: dict) -> dict:
+    """코트 교대 시각을 정한다.
+    1) 설정에 교대 시각이 있으면 그대로 (mode='manual')
+    2) 단판 경기면 옷 색(look)이 한 번 뚝 바뀌는 서브 사이를 교대로 (mode='auto')
+    3) 아니면 규칙대로 점수로 (mode='score')"""
+    man = setup.get("switch_manual")
+    if isinstance(man, (list, tuple)) and len(man):
+        return {"mode": "manual", "times": sorted(float(x) for x in man)}
+    rules = rules_for(int(setup.get("target", 21)), setup)
+    evs = [e for e in sorted(events, key=lambda e: e["t"]) if not e.get("removed") and e.get("kind", "serve") == "serve" and e.get("look") is not None]
+    if rules["games_to_win"] != 1 or len(evs) < 8:
+        return {"mode": "score"}
+    x = np.array([e["look"] for e in evs], float); n = len(x)
+    best = None
+    for c in range(3, n - 2):   # 앞뒤 각각 서브 3개 이상
+        sse = ((x[:c] - x[:c].mean()) ** 2).sum() + ((x[c:] - x[c:].mean()) ** 2).sum()
+        if best is None or sse < best[0]:
+            best = (sse, c)
+    sse, c = best
+    diff = x[c:].mean() - x[:c].mean()
+    noise = max(np.sqrt(sse / max(n - 2, 1)), 1e-3)
+    ratio = abs(diff) / noise
+    want = 1.0 if sides.get("A") == "far" else -1.0   # 교대하면 A가 가까운 쪽으로 오면 look이 올라가야 한다
+    info = {"ratio": round(float(ratio), 2), "between": [round(evs[c - 1]["t"], 2), round(evs[c]["t"], 2)]}
+    if np.sign(diff) != want or ratio < SWITCH_MIN_RATIO:
+        return {"mode": "score", **info}
+    # 교대는 두 서브 사이 가장 긴 쉬는 때: 앞 서브 랠리가 끝난 뒤라 뒤 서브 직전으로 둔다
+    t_sw = evs[c]["t"] - 1.0
+    return {"mode": "auto", "times": [round(float(t_sw), 2)], **info}
 
 
 PARITY_PENALTY = 2.2   # 서브 위치가 점수 짝/홀과 다를 때 log-확률 감점
@@ -781,6 +896,8 @@ def score_events(events: list, setup: dict, sides: dict):
     """
     evs = sorted((dict(e) for e in events), key=lambda e: e["t"])
     active = [i for i, e in enumerate(evs) if not e.get("removed")]
+    sw = detect_switch(evs, setup, sides)
+    setup = {**setup, "switch_times": sw.get("times")}
 
     # ---- 빔 서치: 각 가설 = (logp, Match, choices)
     beam = [(0.0, Match(setup, sides), [])]
@@ -788,6 +905,7 @@ def score_events(events: list, setup: dict, sides: dict):
         ev = evs[i]
         nxt = {}
         for lp, m, ch in beam:
+            m.at_time(ev["t"])
             kind = ev.get("kind", "serve")
             if kind == "point":
                 teams = [ev.get("override") or ev.get("winner") or "A"]
@@ -827,6 +945,7 @@ def score_events(events: list, setup: dict, sides: dict):
     out = []
     for i, ev in enumerate(evs):
         ev["flags"] = []
+        m.at_time(ev["t"])
         if ev.get("removed"):
             ev.update(server=None, auto=None, conf=None, score=dict(m.score), game=m.game, games=list(m.games),
                       sides=dict(m.side))
@@ -884,6 +1003,7 @@ def score_events(events: list, setup: dict, sides: dict):
     summary = {"score": dict(m.score), "game": m.game, "games": m.games, "over": m.over,
                "rallies": len(live), "last_rally": None if not last else ("known" if last.get("kind") == "point" or last.get("last_won") else
                                                                          "guess" if last.get("won_guess") else "unknown")}
+    summary["switch"] = sw   # 코트 교대: manual(설정) · auto(옷 색) · score(점수 규칙)
     if m.over and m.games:   # 경기가 끝났으면 마지막 게임 점수를 보여 준다
         summary["score"] = {"A": m.games[-1]["A"], "B": m.games[-1]["B"]}
     return out, summary

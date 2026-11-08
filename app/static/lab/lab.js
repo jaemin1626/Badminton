@@ -165,6 +165,7 @@ async function openVideo(vid, mode) {
     const m = c.match || {};
     $("#mMode").value = m.mode || "doubles"; $("#mTarget").value = +m.target === 21 && +m.games_to_win === 1 ? "21-1" : (m.target || 25); $("#mFirst").value = m.first || "A";
     $("#mGame").value = m.game || 1; $("#mScoreA").value = m.scoreA || 0; $("#mScoreB").value = m.scoreB || 0;
+    $("#mSwitch").value = switchStr(m.switch_manual);
   }
   $("#sRange").max = S.meta.frames - 1;
   $("#wideChk").checked = S.wide;
@@ -498,7 +499,8 @@ async function saveConfig(run, name = null) {
     teams: { A: { name: $("#nameA").value, bboxes: by("A") }, B: { name: $("#nameB").value, bboxes: by("B") } },
     officials: by("R"),
     match: { mode: $("#mMode").value, target: parseInt($("#mTarget").value), first: $("#mFirst").value, game: +$("#mGame").value,
-      scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value, ...($("#mTarget").value === "21-1" ? { games_to_win: 1 } : {}) },
+      scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value, ...($("#mTarget").value === "21-1" ? { games_to_win: 1 } : {}),
+      switch_manual: parseSwitch($("#mSwitch").value) || [] },
   };
   try {
     let cfg = await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });
@@ -731,6 +733,23 @@ function rallyAt(t) {
   return k < 0 ? null : { n: sv.slice(0, k + 1).filter(e => !e.removed).length, e: sv[k] };
 }
 // 서브 순간 상황: 첫 서브는 경기 시작, 그다음부터는 직전 랠리를 이긴 팀이 득점하고 그 팀이 서브 (랠리 포인트)
+// "3:50, 12:10" ↔ [230, 730]
+const parseSwitch = str => { const out = []; for (const part of String(str || "").split(/[,\s]+/).filter(Boolean)) { const p = part.split(":").map(Number); if (p.some(isNaN)) return null; out.push(p.reduce((a, b) => a * 60 + b, 0)); } return out; };
+const switchStr = arr => (arr || []).map(t => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`).join(", ");
+// 코트 교대를 어떻게 정했나 (결과 summary.switch)
+function switchText(sw) {
+  if (!sw) return "";
+  if (sw.mode === "manual") return `코트 교대 <b>${switchStr(sw.times)}</b> · 설정에서 지정`;
+  if (sw.mode === "auto") return `코트 교대 <b>${switchStr(sw.times)}</b> · 옷 색으로 자동 감지 (차이 ${sw.ratio})`;
+  return `코트 교대 · 점수 규칙으로${sw.between ? ` (옷 색 차이 ${sw.ratio}로 약해서 자동 감지 안 씀)` : ""}`;
+}
+// 정답 라벨로 본 교대: 정답 점수가 교대 점수에 닿은 서브와 그 앞 서브 사이
+function truthSwitch() {
+  const c = S.info?.config, ms = S.truthMarks || []; if (!c || ms.length < 2) return null;
+  const tgt = +(c.match?.target || 21), sw = tgt === 25 ? 13 : tgt === 15 ? 8 : 11;
+  for (let j = 1; j < ms.length; j++) { const sc = truthScoreAt(j); if (!sc) return null; if (Math.max(sc.A, sc.B) >= sw) return [ms[j - 1].t, ms[j].t]; }
+  return null;
+}
 const scoreTxt = sc => `${teamName("A")} ${sc.A} : ${sc.B} ${teamName("B")}`;
 // 정답 라벨로 센 점수 (j번 정답 서브 순간). 앞쪽에 서브 팀이 빈 서브가 있으면 null
 function truthScoreAt(j) {
@@ -776,6 +795,7 @@ function drawNow(i, t) {
   const sm = S.sv?.summary;
   if (sm?.rallies) {
     const pts = sm.score.A + sm.score.B + (sm.games || []).slice(0, sm.over ? -1 : undefined).reduce((k, g) => k + g.A + g.B, 0);
+    if (sm.switch) h += `<div class="lc-score">${switchText(sm.switch)}</div>`;
     h += `<div class="lc-score">경기 끝 점수 <b>${teamName("A")} ${sm.score.A} : ${sm.score.B} ${teamName("B")}</b><br><small>서브 ${sm.rallies}개 = 랠리 ${sm.rallies}개 중 ${pts}개 반영${sm.last_rally === "unknown" ? " · 마지막 랠리는 다음 서브가 없어 득점 팀을 모름" : sm.last_rally === "guess" ? " · 마지막 랠리는 게임 포인트라 추정" : ""}</small></div>`;
   }
   $("#nowBox").innerHTML = h || "판정 정보 없음";
@@ -1089,6 +1109,9 @@ function renderEval() {
   box.innerHTML = `<div class="sc"><b>${ev.hit}</b>/${ev.truth} 맞음 · <span class="bad">${ev.missed.length} 놓침</span> · <span class="warnc">${ev.false.length} 잘못 잡음</span></div>
     <div class="bar2"><i style="width:${ev.recall * 100}%"></i></div><small>찾은 비율 ${Math.round(ev.recall * 100)}% · 맞힌 비율 ${Math.round(ev.precision * 100)}% · F1 ${ev.f1}</small>
     ${rallyLine(ev.rally)}${serverLine(ev.server)}
+    ${(() => { const tsw = truthSwitch(), sw = (S.sv.raw_summary || S.sv.summary)?.switch; if (!tsw || !sw) return "";
+      const t = sw.times?.[0], ok = t != null && t >= tsw[0] - 1 && t <= tsw[1] + 1;
+      return `<small style="display:block;margin-top:4px">코트 교대 정답 ${fmt(tsw[0])}~${fmt(tsw[1])} 사이 · 알고리즘 ${t != null ? fmt(t) : "점수 규칙"} <b style="color:${ok ? "var(--ok,#3ecf8e)" : "#ff5d6c"}">${ok ? "✓" : "✗"}</b></small>`; })()}
     <small style="display:block;margin-top:3px">${ev.finalized ? "✓ 최종 정답 기준" : "⚠ 정답이 아직 최종 저장 전이에요"} · <a href="#" onclick="setMode('truth');return false" style="color:var(--wood)">3 · 정답 입력</a></small>`;
 }
 // 놓친 정답: 그 순간(서브 직전) 서브 조건 중 처음 막힌 것
