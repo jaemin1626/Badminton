@@ -17,10 +17,10 @@
   <nav class="tabs" role="tablist">
     <button role="tab" data-mode="setup" id="tabSetup">1 · 설정</button>
     <button role="tab" data-mode="view" id="tabView">2 · 추적 · 서브 확인</button>
+    <button role="tab" data-mode="truth" id="tabTruth" title="실제 서브 시각과 서브 팀(정답)을 기록해요">3 · 정답 입력</button>
   </nav>
   <div class="spacer"></div>
   <span class="job" id="jobBox"></span>
-  <a class="btn primary hdr" id="labelLink" href="/label" title="이 영상의 실제 서브 시각을 기록하는 페이지 (지금 보던 시각으로 열려요)">정답 설정하기</a>
   <a class="link" href="/" title="운영 화면으로">운영 화면</a>
 </header>
 
@@ -72,7 +72,7 @@
       <h2>경기</h2>
       <div class="grid2">
         <label>방식<select id="mMode"><option value="doubles">복식</option><option value="singles">단식</option></select></label>
-        <label>규칙<select id="mTarget"><option value="25">25점 단판</option><option value="21">21점 3판</option><option value="15">15점 3판</option></select></label>
+        <label>규칙<select id="mTarget"><option value="25">25점 단판</option><option value="21-1">21점 단판</option><option value="21">21점 3판</option><option value="15">15점 3판</option></select></label>
         <label>첫 서브<select id="mFirst"><option value="A">팀 A</option><option value="B">팀 B</option></select></label>
         <label>게임<select id="mGame"><option>1</option><option>2</option><option>3</option></select></label>
         <label>시작 A<input type="number" id="mScoreA" min="0" max="29" value="0"></label>
@@ -102,6 +102,7 @@
       <svg id="vSvg"></svg>
       <div class="vinfo" id="vInfo"></div>
       <div class="vrally hidden" id="vRally"></div>
+      <div class="lsb" id="lsb" aria-live="polite"></div>
     </div>
     <div class="seekrow"><input type="range" id="seek" min="0" max="1" step="0.05" value="0" aria-label="재생 위치"><span class="num" id="seekNum"></span></div>
     <div class="vbar">
@@ -145,6 +146,65 @@
     <ol id="evList"></ol>
   </aside>
 
+  <aside class="truthp" id="truthPanel">
+    <section class="tbox teams">
+      <h2>팀 <span class="tag" id="tSaveTag"></span></h2>
+      <div id="teamList"></div>
+      <p class="hint small" id="teamNote"></p>
+    </section>
+    <section class="tbox">
+      <h2>최종 점수</h2>
+      <div class="final">
+        <label>팀 A<input type="number" id="finA" min="0" max="40" placeholder="21"></label>
+        <span>:</span>
+        <label>팀 B<input type="number" id="finB" min="0" max="40" placeholder="13"></label>
+      </div>
+      <div class="prog"><div class="pbar"><i id="pFill"></i></div><span id="pText">서브 0개 기록</span></div>
+      <p class="tally" id="tally"></p>
+      <p class="hint small">랠리마다 서브가 한 번이라, 서브 수 = 두 팀 점수의 합이에요 (예: 21:13 → 34번).</p>
+    </section>
+    <section class="tbox">
+      <h2>자동 판정 불러오기</h2>
+      <p class="hint small">추적 결과의 서브 후보를 목록에 넣어요. 후보마다 영상을 보고 맞으면 <kbd>Enter</kbd>, 아니면 <kbd>Delete</kbd>. 후보에 없는 서브는 <kbd>S</kbd>로 추가하세요.</p>
+      <div class="row">
+        <button class="btn" id="loadAll" title="정지 구간 전부 (서브로 판정된 것 + 탈락한 것)">정지 구간 전부</button>
+        <button class="btn" id="loadOk" title="서브로 판정된 것만">서브 판정만</button>
+        <button class="btn primary" id="nextBtn" title="확인 안 한 다음 후보 장면으로 (N)">다음 후보 <kbd>N</kbd></button>
+      </div>
+      <p class="hint small">서브 팀도 자동으로 채울 수 있어요. 흐리게 보이는 건 확인 전이라 채점에 안 쓰여요. 맞으면 같은 팀 키(<kbd>A</kbd>/<kbd>B</kbd>), 틀리면 다른 팀 키.</p>
+      <div class="row">
+        <button class="btn" id="loadWin" title="비어 있는 서브에 알고리즘이 본 서브 팀 채우기">서브 팀 자동 판정</button>
+        <button class="btn" id="nextWin" title="확인 안 한 자동 서브 팀이 있는 서브 직전으로">다음 확인할 서브</button>
+      </div>
+    </section>
+    <section class="tbox">
+      <h2>정답 서브 목록 <span class="tag" id="cnt">0</span></h2>
+      <div class="row addrow">
+        <input id="tIn" placeholder="4:30.5" aria-label="직접 입력할 시각 (분:초)">
+        <button class="btn" id="tAdd">시각으로 추가</button>
+      </div>
+      <ol class="marks" id="marks"></ol>
+    </section>
+    <section class="tbox fin">
+      <h2>최종 정답 <span class="tag" id="finTag">아직 저장 안 함</span></h2>
+      <p class="hint small" id="finMsg"></p>
+      <div class="row"><button class="btn primary" id="finBtn">최종 정답 저장</button></div>
+    </section>
+    <section class="tbox keys">
+      <h2>단축키</h2>
+      <ul>
+        <li><kbd>S</kbd> 지금 시각을 정답 서브로 기록 (서버가 셔틀을 치는 순간)</li>
+        <li><kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 5초 · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1초 · <kbd>,</kbd><kbd>.</kbd> 한 칸</li>
+        <li><kbd>[</kbd><kbd>]</kbd> 이전/다음 정답 서브로</li>
+        <li id="winLegend"><kbd>A</kbd> 팀 A 서브 · <kbd>B</kbd> 팀 B 서브 (= 직전 랠리 득점)</li>
+        <li class="small">마우스를 댄 서브(목록 줄·타임라인), 멈춘 채 목록에서 고른 서브, 아니면 지금 시각 직전 서브에 들어가요. 마지막 랠리 득점은 최종 점수로 정해져요.</li>
+        <li>서버가 선 곳 (화면 기준): 위 코트 <kbd>Q</kbd> 왼쪽 <kbd>W</kbd> 오른쪽 · 아래 코트 <kbd>Z</kbd> 왼쪽 <kbd>X</kbd> 오른쪽</li>
+        <li>목록에서 고른 서브: <kbd>Delete</kbd> 지우기 · <kbd>-</kbd><kbd>=</kbd> 0.1초 조정</li>
+        <li>후보 검토: <kbd>N</kbd> 다음 후보 장면 · <kbd>Enter</kbd> 맞음(확인) · <kbd>Delete</kbd> 서브 아님</li>
+      </ul>
+    </section>
+  </aside>
+
   <aside class="params">
     <h2>기준값 <span class="tag" id="calcTag"></span></h2>
     <div id="paramList"></div>
@@ -164,6 +224,7 @@
   <div class="actions"><button class="btn" id="askNo">새로 지정할게요</button><button class="btn primary" id="askYes">이 설정 사용하기</button></div>
 </dialog>
 <div class="toast" id="toast"></div>
+<script src="/static/lab/truth.js"></script>
 <script src="/static/lab/lab.js"></script>
 </body>
 </html>

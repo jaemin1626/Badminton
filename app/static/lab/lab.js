@@ -111,19 +111,17 @@ async function boot() {
   const list = await api("/api/videos");
   const sel = $("#vidSel");
   sel.innerHTML = list.map(m => `<option value="${m.id}">${m.name} · ${fmt(m.duration || 0)}</option>`).join("") || `<option value="">영상 없음 · 운영 화면에서 올려 주세요</option>`;
-  const fromHash = decodeURIComponent(location.hash.slice(1)).split("/");
+  const [hashMain, hashAt] = decodeURIComponent(location.hash.slice(1)).split("@");
+  const fromHash = hashMain.split("/");
   const vid = list.find(m => m.id === fromHash[0])?.id || list[0]?.id;
   sel.onchange = () => openVideo(sel.value);
   $$(".tabs button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
   $("#upFile").onchange = e => upload(e.target.files[0]);
-  // 정답 입력 페이지로: 확인 탭에서 보던 시각을 넘겨 그 장면부터 열리게
-  $("#labelLink").addEventListener("click", e => {
-    if (!S.vid) return;
-    const t = S.mode === "view" ? $("#vid").currentTime : 0;   // (이 함수 안에서는 vid가 문자열이라 직접 찾는다)
-    e.currentTarget.href = `/label#${S.vid}${t > 0 ? `@${t.toFixed(2)}` : ""}`;
-  });
-  bindSetup(); bindView();
-  if (vid) { sel.value = vid; await openVideo(vid, fromHash[1]); }
+  bindSetup(); bindView(); bindTruth();
+  if (vid) {
+    sel.value = vid; await openVideo(vid, fromHash[1]);
+    if (hashAt && !isNaN(+hashAt) && S.mode !== "setup") { const v = $("#vid"), go = () => { seek(+hashAt); S.view.t0 = Math.max(0, +hashAt - 8); }; v.readyState >= 1 ? go() : v.addEventListener("loadedmetadata", go, { once: true }); }
+  }
 }
 
 function upload(f) {
@@ -145,9 +143,8 @@ function upload(f) {
 
 async function openVideo(vid, mode) {
   stopVideo();
-  S.vid = vid; S.tr = null; S.kps = null; S.sv = null; S.selRun = null; S.baseSig = null; S.truth = []; S.truthLoaded = false;
+  S.vid = vid; S.tr = null; S.kps = null; S.sv = null; S.selRun = null; S.baseSig = null; S.truth = []; S.truthLoaded = false; S.tsel = -1;
   S.info = await api(`/api/lab/${vid}`); S.meta = S.info.meta;
-  $("#labelLink").href = `/label#${vid}`;
   S.defaults = { ...S.info.params };
   const saved = JSON.parse(localStorage.getItem("lab:params") || "null");
   S.params = { ...S.defaults, ...(saved || {}) };
@@ -166,14 +163,15 @@ async function openVideo(vid, mode) {
     for (const o of c.officials || []) { S.people.push({ id, box: o.bbox, saved: true }); S.assign[id++] = "R"; }
     $("#nameA").value = c.teams["1"].name; $("#nameB").value = c.teams["2"].name;
     const m = c.match || {};
-    $("#mMode").value = m.mode || "doubles"; $("#mTarget").value = m.target || 25; $("#mFirst").value = m.first || "A";
+    $("#mMode").value = m.mode || "doubles"; $("#mTarget").value = +m.target === 21 && +m.games_to_win === 1 ? "21-1" : (m.target || 25); $("#mFirst").value = m.first || "A";
     $("#mGame").value = m.game || 1; $("#mScoreA").value = m.scoreA || 0; $("#mScoreB").value = m.scoreB || 0;
   }
   $("#sRange").max = S.meta.frames - 1;
   $("#wideChk").checked = S.wide;
-  $("#tabView").disabled = !S.info.has_tracks;
+  $("#tabView").disabled = $("#tabTruth").disabled = !S.info.has_tracks;
+  $("#tabTruth").title = S.info.has_tracks ? "실제 서브 시각과 서브 팀(정답)을 기록해요" : "추적을 먼저 실행하면 열려요 (서브 후보·타임라인을 같이 써요)";
   watchJob(S.info.job);
-  setMode(mode === "view" && S.info.has_tracks ? "view" : (S.info.has_tracks && !mode ? "view" : "setup"));
+  setMode(["view", "truth"].includes(mode) && S.info.has_tracks ? mode : (S.info.has_tracks && !mode ? "view" : "setup"));
   clearTimeout(draftT); S.baseSig = stateSig();   // 서버 설정 상태를 기준으로
   if (applyDraft(c)) { toast("저장하지 않은 작업을 이어서 불러왔어요. 저장 버튼을 눌러야 설정 파일에 들어가요"); if (S.mode === "setup") { buildStage(); loadFrame(S.frame); renderSetupPanel(); refit(true); } }
   else if (S.info.seeded) toast("운영 화면 설정을 시작점으로 불러왔어요. 저장해야 실험용으로 쓰여요");
@@ -198,11 +196,12 @@ function askSameName(p) {
 }
 
 function setMode(m) {
-  if (m === "view" && $("#tabView").disabled) return;
+  if (m !== "setup" && $("#tabView").disabled) return;
   S.mode = m;
   $$(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
   $("#setup").classList.toggle("hidden", m !== "setup");
-  $("#view").classList.toggle("hidden", m !== "view");
+  $("#view").classList.toggle("hidden", m === "setup");
+  $("#view").classList.toggle("truth", m === "truth");   // 정답 탭: 같은 영상·타임라인 + 오른쪽에 정답 패널
   history.replaceState(null, "", `#${S.vid}/${m}`);
   if (m === "setup") { stopVideo(); buildStage(); loadFrame(S.frame); renderSetupPanel(); refit(true); }
   else enterView();
@@ -498,8 +497,8 @@ async function saveConfig(run, name = null) {
     ref_frame: S.detFrame, points: S.points, lines: S.clines.filter(l => l.px.length >= 2),
     teams: { A: { name: $("#nameA").value, bboxes: by("A") }, B: { name: $("#nameB").value, bboxes: by("B") } },
     officials: by("R"),
-    match: { mode: $("#mMode").value, target: +$("#mTarget").value, first: $("#mFirst").value, game: +$("#mGame").value,
-      scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value },
+    match: { mode: $("#mMode").value, target: parseInt($("#mTarget").value), first: $("#mFirst").value, game: +$("#mGame").value,
+      scoreA: +$("#mScoreA").value, scoreB: +$("#mScoreB").value, ...($("#mTarget").value === "21-1" ? { games_to_win: 1 } : {}) },
   };
   try {
     let cfg = await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });
@@ -616,6 +615,7 @@ async function enterView() {
   if (!S.truthLoaded) { const tr = await api(`/api/lab/${S.vid}/truth`); S.truthMarks = tr.marks || []; S.truthFinal = tr.final || null; S.truthFinalized = !!tr.finalized; S.truth = S.truthMarks.map(m => m.t); S.truthLoaded = true; }
   if (!S.sv) await recalc();
   loadRuns();
+  if (S.mode === "truth") enterTruth();
   loop();
 }
 
@@ -765,7 +765,7 @@ let raf = null;
 function loop() {
   cancelAnimationFrame(raf);
   const step = () => {
-    if (S.mode !== "view" || !S.tr) return;
+    if (S.mode === "setup" || !S.tr) return;
     const t = vid().currentTime, i = sampleAt(t);
     if (i !== S.cur || S.dirty) {
       S.cur = i; S.dirty = false;
@@ -777,6 +777,8 @@ function loop() {
           + (tw ? ` · <small>정답: <b class="w${tw}">${teamName(tw)} ${ra.n > 1 ? "득점 · 서브" : "서브"}</b></small>` : ` · <small>A/B로 이 서브를 넣은 팀 정답</small>`); } }
     }
     $("#vNum").textContent = `${fmt(t)} / ${fmt(S.meta.duration)}`;
+    drawLabelBoard(t);
+    if (S.mode === "truth") { const ms = S.truthMarks || [], c = ms.reduce((k, m, i) => m.t <= t + .05 ? i : k, -1); if (c !== S.tNow) { S.tNow = c; $$("#marks li[data-i]").forEach(li => li.classList.toggle("now", +li.dataset.i === c)); } }
     const sk = $("#seek"); if (!S.seeking) { sk.max = S.meta.duration; sk.value = t; }
     // 재생 중이면 타임라인 창이 따라가게
     const v = S.view; if (!vid().paused && (t > v.t0 + v.span * .85 || t < v.t0)) v.t0 = Math.max(0, t - v.span * .15);
@@ -994,8 +996,10 @@ let truthT;
 function saveTruthSoon(ms = 600) {
   clearTimeout(truthT);
   truthT = setTimeout(async () => {
-    try { await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: S.truthMarks, final: S.truthFinal, finalized: S.truthFinalized } }); }
-    catch (e) { toast(e.message, true); }
+    try {
+      const r = await api(`/api/lab/${S.vid}/truth`, { method: "PUT", json: { marks: S.truthMarks, final: S.truthFinal, finalized: S.truthFinalized } });
+      const tg = $("#tSaveTag"); if (tg) tg.textContent = `저장됨 ${new Date(r.saved * 1000).toLocaleTimeString("ko-KR")}`;
+    } catch (e) { toast(e.message, true); }
     recalc();
   }, ms);
 }
@@ -1010,35 +1014,38 @@ const truthWin = m => m && !m.win_auto && (m.server === "A" || m.server === "B")
 // 랠리 득점 팀 정답: 마우스를 댄 서브(타임라인 ▼·초록 선, 목록 줄) 또는 지금 보고 있는 랠리에 A/B
 function setTruthWinner(w) {
   const ms = S.truthMarks || [];
-  if (!ms.length) { toast("정답 서브가 없어요. 정답 입력 페이지나 S로 먼저 서브를 표시하세요", true); return; }
+  if (!ms.length) { toast("정답 서브가 없어요. S로 먼저 서브를 표시하세요 (3 · 정답 입력 탭)", true); return; }
   let j = S.hoverT != null ? truthIdxNear(S.hoverT) : -1;
+  if (j < 0 && S.hoverT == null && S.mode === "truth" && vid().paused && S.tsel >= 0) j = S.tsel;
   if (j < 0 && S.hoverT == null) { const t = vid().currentTime; ms.forEach((m, k) => { if (m.t <= t + .05) j = k; }); }
   if (j < 0) { toast("이 서브 근처(2.5초 안)에 정답 서브가 없어요. S로 먼저 표시하세요", true); return; }
   const m = ms[j];
-  if (truthWin(m) === w) { delete m.server; delete m.win_auto; toast(`${j + 1}번 서브 정답을 지웠어요`); }
+  if (m.win_auto && m.server === w) { delete m.win_auto; toast(`${j + 1}번 서브 자동 판정을 확인했어요 (${teamName(w)})`); }
+  else if (truthWin(m) === w) { delete m.server; delete m.win_auto; toast(`${j + 1}번 서브 정답을 지웠어요`); }
   else { m.server = w; delete m.win_auto; toast(j ? `${j + 1}번 서브 (${fmt(m.t)}) → ${teamName(w)} 득점 · 서브` : `1번 서브 → 경기 시작 ${teamName(w)} 서브`); }
   S.flash = { j, until: performance.now() + 700 };
-  S.dirty = true; renderEvents(); saveTruthSoon(300);
+  S.tsel = j; S.dirty = true; renderEvents(); renderTruth(); lastSb = ""; saveTruthSoon(300);
 }
 function toggleMark() {
+  if (S.mode === "truth") { tAddMark(vid().currentTime); return; }
   const t = vid().currentTime, ms = S.truthMarks || (S.truthMarks = []), i = ms.findIndex(m => Math.abs(m.t - t) < 1.0);
   if (i >= 0) { ms.splice(i, 1); toast(`${fmt(t)} 정답 표시를 지웠어요`); }
   else { ms.push({ t: Math.round(t * 100) / 100 }); ms.sort((a, b) => a.t - b.t); toast(`${fmt(t)} 정답 서브 (${ms.length}개)`); }
-  S.truth = ms.map(m => m.t);
+  S.truth = ms.map(m => m.t); S.truthFinalized = false;
   $("#truthNum").textContent = `정답 ${S.truth.length}개`;
   saveTruthSoon();
 }
 // 정답에 서버 위치가 있으면: 서버 쪽(위/아래 코트) · 좌우 맞힌 수
 // 정답에 랠리별 득점 팀이 있으면: 서버 팀 · 득점 팀 · 최종 점수
 function rallyLine(r) {
-  if (!r) return `<small style="display:block;margin-top:4px;color:var(--muted)">서버 팀·득점 팀 채점은 정답 입력 페이지에서 랠리마다 득점 팀(A/D)을 기록하면 나와요</small>`;
+  if (!r) return `<small style="display:block;margin-top:4px;color:var(--muted)">서버 팀·득점 팀 채점은 정답 서브마다 서브 팀(A/B)을 기록하면 나와요</small>`;
   const t = ts => ts.length ? ` <span class="bad" title="${ts.map(fmt).join(", ")}">(틀림 ${ts.slice(0, 4).map(fmt).join(", ")}${ts.length > 4 ? " …" : ""})</span>` : "";
   const ts = r.truth_score, ps = r.pred_score;
   return `<small style="display:block;margin-top:4px">서브 팀 <b>${r.server_ok}/${r.server_n}</b>${t(r.wrong_server)}<br>랠리 득점 팀 <b>${r.winner_ok}/${r.winner_n}</b>${t(r.wrong_winner)}<br>`
     + `점수 정답 <b>${ts.A}:${ts.B}</b>${r.labeled < r.server_n + 1 ? ` (득점 기록 ${r.labeled}개)` : ""}${ps ? ` · 계산 <b>${ps.A}:${ps.B}</b>` : ""}</small>`;
 }
 function serverLine(sv) {
-  if (!sv) return `<small style="display:block;margin-top:3px;color:var(--muted)">서버 쪽·좌우 채점은 정답 입력 페이지에서 서버 위치(Q W Z X)를 기록하면 나와요</small>`;
+  if (!sv) return `<small style="display:block;margin-top:3px;color:var(--muted)">서버 쪽·좌우 채점은 3 · 정답 입력 탭에서 서버 위치(Q W Z X)를 기록하면 나와요</small>`;
   const t = ts => ts.length ? ` <span class="bad" title="${ts.map(fmt).join(", ")}">(틀림 ${ts.slice(0, 4).map(fmt).join(", ")}${ts.length > 4 ? " …" : ""})</span>` : "";
   return `<small style="display:block;margin-top:4px">서버 쪽 <b>${sv.side_ok}/${sv.labeled}</b> (이벤트만 보면 ${sv.side_raw_ok})${t(sv.wrong_side)}<br>좌우 <b>${sv.box_ok}/${sv.box_n}</b>${t(sv.wrong_box)}</small>`;
 }
@@ -1049,7 +1056,7 @@ function renderEval() {
   box.innerHTML = `<div class="sc"><b>${ev.hit}</b>/${ev.truth} 맞음 · <span class="bad">${ev.missed.length} 놓침</span> · <span class="warnc">${ev.false.length} 잘못 잡음</span></div>
     <div class="bar2"><i style="width:${ev.recall * 100}%"></i></div><small>찾은 비율 ${Math.round(ev.recall * 100)}% · 맞힌 비율 ${Math.round(ev.precision * 100)}% · F1 ${ev.f1}</small>
     ${rallyLine(ev.rally)}${serverLine(ev.server)}
-    <small style="display:block;margin-top:3px">${ev.finalized ? "✓ 최종 정답 기준" : "⚠ 정답이 아직 최종 저장 전이에요"} · <a href="/label#${S.vid}" style="color:var(--wood)">정답 입력 페이지</a></small>`;
+    <small style="display:block;margin-top:3px">${ev.finalized ? "✓ 최종 정답 기준" : "⚠ 정답이 아직 최종 저장 전이에요"} · <a href="#" onclick="setMode('truth');return false" style="color:var(--wood)">3 · 정답 입력</a></small>`;
 }
 // 놓친 정답: 그 순간(서브 직전) 서브 조건 중 처음 막힌 것
 function missReason(tt) {
@@ -1155,7 +1162,8 @@ function bindView() {
   $("#rerunTrack").onclick = async () => { try { watchJob(await api(`/api/lab/${S.vid}/track`, { method: "POST" })); toast("추적을 다시 시작했어요"); } catch (e) { toast(e.message, true); } };
   bindTimeline();
   document.addEventListener("keydown", e => {
-    if (S.mode !== "view" || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+    if (S.mode === "setup" || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+    if (S.mode === "truth" && truthKey(e)) { e.preventDefault(); return; }
     if (e.key === " ") { e.preventDefault(); v.paused ? v.play() : v.pause(); }
     else if (e.key === "ArrowLeft") seek(v.currentTime - (e.shiftKey ? 1 : 5));
     else if (e.key === "ArrowRight") seek(v.currentTime + (e.shiftKey ? 1 : 5));

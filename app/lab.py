@@ -25,7 +25,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from . import analysis as A
@@ -731,7 +731,11 @@ def lab_winners(vid: str):
 
 @router.get("/label")
 def label_page():
-    return FileResponse(STATIC / "label" / "index.html")
+    """예전 정답 입력 페이지 주소. 실험 페이지 '3 · 정답 입력' 탭으로 합쳤다 (#영상@시각 유지)."""
+    return HTMLResponse("""<!doctype html><meta charset="utf-8"><title>Smash Lab</title><script>
+const [v, at] = decodeURIComponent(location.hash.slice(1)).split("@");
+location.replace("/lab#" + (v ? v + "/truth" + (at ? "@" + at : "") : ""));
+</script>""")
 
 
 @router.get("/api/lab/{vid}/truth")
