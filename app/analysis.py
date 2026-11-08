@@ -44,9 +44,13 @@ class Params:
     occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
     occ_reappear: float = 1.0     # m, 다시 나온 위치가 이보다 멀면 가려진 동안 움직인 것 → 추정 취소
     rally_min: float = 0.5        # s, 두 정지 구간 사이 빠른 움직임이 이보다 짧으면 랠리가 아니라 서브 준비 중 자리 잡기
-    w_pose: float = 0.5           # 서버 쪽(가까운/먼) 판단 가중치: 자세 (두 영상 75개 서브에서 57/75 맞음)
-    w_onset: float = 0.3          # 서버 쪽 판단 가중치: 정지 끝에 손목 먼저 움직인 쪽 (49/74, 거의 운) → 동점 깰 때만
-    w_form: float = 3.0           # 서버 쪽 판단 가중치: 대형(서버 바로 뒤 팀원) (72/72 맞음) → 가장 크게
+    # 서버 쪽(가까운/먼) 판단 가중치. 라벨 있는 영상 3개(대각선 2 · 바로 뒤 1)에서 한 영상씩 빼고 맞춰 검증한 값
+    w_xc: float = 1.8             # 앞사람이 센터라인에 붙어 섰나 (서버는 센터라인 가까이) — 양쪽 차이, m
+    w_pdx: float = 1.2            # 팀원이 앞사람 바로 뒤 일직선에 섰나 (좌우 거리) — 양쪽 차이, m
+    w_dnet: float = 0.5           # 앞사람이 네트에 더 가까이 섰나 — 양쪽 차이, m
+    w_form: float = 1.8           # 대형 점수(팀원이 바로 뒤 · 가려짐 포함) 차이
+    w_pose: float = 0.0           # 서브 자세 (바로 뒤에서 찍은 영상에서 안 맞아 끔)
+    w_onset: float = 0.0          # 정지 끝에 손목 먼저 움직인 쪽 (거의 운이라 끔)
     facing_max: float = 0.05      # 가까운 쪽 두 명이 서로 짝 쪽을 보는 정도(코가 어깨 중심에서 짝 쪽으로, 키 대비)가 둘 다 이보다 크면 서브 아님 (쉬며 마주 보고 이야기). 1이면 끔
     rear_drop: float = 0.0        # (실험 중 · 기본 끔) 1이면 팀원과 겹친 뒷사람 위치를 서브 판정에서 버리고 보간 (발 위치가 튀어 가짜 움직임이 생김)
     # 추적 후보: 발이 코트 안(약간의 여유)인 사람만
@@ -479,6 +483,14 @@ def _behind_score(mp, ks, front, occ_tail) -> float:
     return float(np.clip(1.2 - dx, 0, 1) * np.clip(dd / 1.0, 0, 1))
 
 
+def _stance(mp, ks, front) -> dict:
+    """선 자리: 앞사람과 센터라인 거리(xc), 팀원과 앞사람의 좌우 거리(pdx), 앞사람과 네트 거리(dnet). 모르면 중간값."""
+    xc = abs(float(mp[front][0]) - C.W / 2)
+    others = [k for k in ks if k != front and not np.isnan(mp[k][0])]
+    pdx = abs(float(mp[others[0]][0]) - float(mp[front][0])) if others else 1.2
+    return {"xc": xc, "pdx": pdx, "dnet": float(C.dist_to_net(mp[front]))}
+
+
 def _live_checks(p, v, known, still, t, far, near, params) -> dict:
     """매 샘플마다 서브 조건(A 정지 · B 대형)을 검사한 값. 실험 페이지에서 '지금 왜 서브가 아닌지' 보여 주는 용도.
 
@@ -650,7 +662,11 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             onset = 1.0 if on < of else -1.0
         # 서버 쪽 단서 3 (복식): 대형. 서브하는 팀은 팀원이 서버 바로 뒤에 선다(가려지기도 함).
         form = {"far": _behind_score(mp, kf, fi, occ[tail]), "near": _behind_score(mp, kn_, ni, occ[tail])}
-        logit = params.w_pose * (sn - sf) + params.w_onset * onset + params.w_form * (form["near"] - form["far"])
+        # 서버 쪽 단서 4 (선 자리): 서버는 센터라인에 붙어 서고, 팀원은 바로 뒤 일직선에 선다
+        stance = {"far": _stance(mp, kf, fi), "near": _stance(mp, kn_, ni)}
+        st_d = {k: stance["far"][k] - stance["near"][k] for k in ("xc", "pdx", "dnet")}
+        logit = (params.w_pose * (sn - sf) + params.w_onset * onset + params.w_form * (form["near"] - form["far"])
+                 + params.w_xc * st_d["xc"] + params.w_pdx * st_d["pdx"] + params.w_dnet * st_d["dnet"])
         p_near = 1 / (1 + math.exp(-logit))
         cands.append(dict(
             # 서브 시각: 정지가 끝난 때보다 serve_lag 앞 (단, 정지 시작보다 앞으로는 가지 않음)
@@ -665,7 +681,8 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             pos={s: [round(float(x), 2) for x in mp[k]] for k, s in enumerate(slots) if kn[k]},  # 모르는 선수(NaN)는 뺀다
             cues={"pose_far": round(sf, 2), "pose_near": round(sn, 2),
                   "onset": "near" if onset > 0 else ("far" if onset < 0 else None),
-                  "formation": {k: round(v_, 2) for k, v_ in form.items()}},
+                  "formation": {k: round(v_, 2) for k, v_ in form.items()},
+                  "stance": {sd: {k: round(v_, 2) for k, v_ in d_.items()} for sd, d_ in stance.items()}},
         ))
 
     # 랠리 잠금: 앞 후보 뒤에 랠리가 없었으면 같은 서브 준비 → 뒤쪽 유지.
