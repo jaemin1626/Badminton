@@ -622,7 +622,21 @@ function drawPeople(g) {
 
 /* ---------------- 스코어보드 (상대팀 위 / 우리팀 아래) ---------------- */
 function setupNow() { return { ...S.fmt, nameA: S.teams.A.name, nameB: S.teams.B.name }; }
+const titleText = st => [String(st.tournament || "").trim(), [st.event, st.division].map(x => String(x || "").trim()).filter(Boolean).join(" ")].filter(Boolean).join(" / ");
+function drawTitle(g, setup, u) {
+  const text = titleText(setup); if (!text) return;
+  const W = S.meta.width, tg = el("g", {}, g);
+  const t = el("text", { x: 0, y: 24, "font-size": 22, "font-weight": 700, fill: "#fff", "dominant-baseline": "central", style: "font-family:'Noto Sans KR',sans-serif" }, tg);
+  t.textContent = text;
+  const tw = t.getComputedTextLength ? t.getComputedTextLength() : text.length * 20;
+  const bw = tw + 52;
+  tg.setAttribute("transform", `translate(${W - 24 * u - bw * u},${24 * u}) scale(${u})`);
+  const bg = el("rect", { x: 0, y: 0, width: bw, height: 48, rx: 12, class: "sb-bg" }); tg.insertBefore(bg, t);
+  const bar = el("rect", { x: 14, y: 12, width: 6, height: 24, rx: 3, fill: "var(--accent)" }); tg.insertBefore(bar, t);
+  t.setAttribute("x", 30);
+}
 function drawScoreboard(g, state, setup, u, popTeam = null) {
+  drawTitle(g, setup, u);
   const ours = setup.ours || "A", opp = ours === "A" ? "B" : "A";
   const rows = [{ t: opp, label: "상대" }, { t: ours, label: "우리" }];
   if (setup.ours_row === "top") rows.reverse();   // 우리 팀을 윗줄로
@@ -852,6 +866,7 @@ function renderPanel() {
     const seg = (g, opts) => `<div class="seg" data-g="${g}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(f[g]) === String(v) ? "on" : ""}">${esc(l)}</button>`).join("")}</div>`;
     P.innerHTML = `<h2>경기 설정</h2><p class="desc">경기 중간부터 찍은 영상이면 시작 점수와 게임을 맞춰 주세요. 첫 서브 팀은 영상의 첫 서브 기준이에요.</p>
       <div class="field"><label>첫 서브 팀</label>${seg("first", [["A", T.A.name], ["B", T.B.name]])}</div>
+      ${titleFields(f)}
       <div class="field"><label>최종 점수 <small class="opt">알면 넣으세요 · 분석이 이 점수에 맞춰요</small></label>
         <div class="fin-row big"><span class="nm" style="color:var(--teamA)">${esc(T.A.name)}</span><input type="number" id="fA" min="0" max="40" value="${f.final?.A ?? ""}" placeholder="-" aria-label="${esc(T.A.name)} 최종 점수">
           <span>:</span><input type="number" id="fB" min="0" max="40" value="${f.final?.B ?? ""}" placeholder="-" aria-label="${esc(T.B.name)} 최종 점수"><span class="nm" style="color:var(--teamB)">${esc(T.B.name)}</span></div></div>
@@ -872,6 +887,7 @@ function renderPanel() {
       const g = $("#overlay"); g.innerHTML = ""; drawScoreboard(g, { score: { A: f.scoreA, B: f.scoreB }, server: f.first, game: f.game }, setupNow(), U(), b.dataset.k.slice(-1)); saveLocal();
     });
     $("#boardSw").onclick = () => { f.scoreboard = !f.scoreboard; renderPanel(); drawOverlay(); saveLocal(); };
+    bindTitleFields(f, upd => { Object.assign(f, upd); saveLocal(); drawOverlay(); });
     ["fA", "fB"].forEach(id => $("#" + id).oninput = () => {
       const a = $("#fA").value, b = $("#fB").value;
       f.final = a !== "" && b !== "" ? { A: +a, B: +b } : null; saveLocal();
@@ -1092,6 +1108,9 @@ function renderRPanel() {
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
     <button class="cta" id="toSave" style="margin-top:14px">편집 끝 · 저장하러 가기</button>` : `
     <p class="desc">편집한 점수로 영상을 만들어요. 고칠 게 남았으면 <a href="#" id="toEdit">← 편집으로</a></p>
+    <h3>대회 정보</h3>
+    ${titleFields(st)}
+    <p class="desc fname">받을 파일 이름 <b>${esc(saveName(st))}.mp4</b></p>
     <h3>스코어보드</h3>
     <div class="field"><label>우리 팀</label><div class="seg" id="bOurs">${["A", "B"].map(t => `<button data-v="${t}" class="${(st.ours || "A") === t ? "on" : ""}">${nm(t)}</button>`).join("")}</div></div>
     <div class="field"><label>우리 팀 줄</label><div class="seg" id="bRow">${[["top", "윗줄"], ["bottom", "아랫줄"]].map(([v, l]) => `<button data-v="${v}" class="${(st.ours_row || "bottom") === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
@@ -1138,6 +1157,7 @@ function renderRPanel() {
     try { S.result.setup = await api(`/api/videos/${S.vid}/board`, { method: "PATCH", json: upd }); Object.assign(S.fmt, upd); saveLocal(); renderRPanel(); lastStateKey = ""; }
     catch (e) { toast(e.message, true); }
   };
+  if (S.step === 7) bindTitleFields(st, upd => setBoard(upd));
   $$("#bOurs button").forEach(b => b.onclick = () => setBoard({ ours: b.dataset.v }));
   $$("#bRow button").forEach(b => b.onclick = () => setBoard({ ours_row: b.dataset.v }));
   if (S.step !== 7) return;
@@ -1226,6 +1246,30 @@ function renderEvList() {
     });
   });
 }
+/* ---------------- 대회 정보 (오른쪽 위 글 · 저장 파일 이름) ---------------- */
+const EVENTS = ["남복", "여복", "혼복", "남단", "여단"];
+function titleFields(st) {
+  return `<div class="field"><label>대회명</label><input class="sw-in" id="tTour" value="${esc(st.tournament || "")}" maxlength="40" placeholder="예: 한국건강관리협회"></div>
+    <div class="field"><label>종목</label><div class="seg" id="tEvent">${EVENTS.map(x => `<button data-v="${x}" class="${st.event === x ? "on" : ""}">${x}</button>`).join("")}</div></div>
+    <div class="field"><label>급수 · 조</label><input class="sw-in" id="tDiv" value="${esc(st.division || "")}" maxlength="20" placeholder="예: D조"></div>
+    <p class="desc">영상 오른쪽 위에 <b>${esc(titleText(st) || "대회명 / 종목 급수")}</b> 로 나와요</p>`;
+}
+function bindTitleFields(st, save) {
+  const t = $("#tTour"), d = $("#tDiv"); if (!t) return;
+  t.onchange = () => save({ tournament: t.value.trim() });
+  d.onchange = () => save({ division: d.value.trim() });
+  [t, d].forEach(i => i.addEventListener("keydown", e => { if (e.key === "Enter") i.blur(); }));
+  $$("#tEvent button").forEach(b => b.onclick = () => save({ event: st.event === b.dataset.v ? "" : b.dataset.v }));
+}
+// 받을 파일 이름 미리보기 (서버 save_name 과 같은 규칙)
+function saveName(st) {
+  const stem = (S.meta?.name || S.vid || "").replace(/\.[^.]+$/, "");
+  const m = stem.match(/^(\d{8})[_\-\s]*(.*)$/);
+  const d = new Date((S.meta?.created || Date.now() / 1000) * 1000);
+  const date = m ? m[1] : `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  return [date, st.tournament, st.event, m ? m[2] : stem].map(x => String(x || "").trim().replace(/[\\/:*?"<>|\s]+/g, "")).filter(Boolean).join("_");
+}
+
 /* ---------------- 검토: 최종 점수와 개수 비교 · 의심 서브 · 하나씩 고치기 ---------------- */
 // 의심 순서 (사람이 확인·수정한 건 빠짐)
 function suspects() {

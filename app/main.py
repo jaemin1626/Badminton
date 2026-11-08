@@ -749,6 +749,9 @@ def tracks(vid: str, start: int = 0, end: int | None = None):
 class BoardReq(BaseModel):
     ours: str | None = None         # "A" / "B"
     ours_row: str | None = None     # "top" / "bottom"
+    tournament: str | None = None   # 대회명 (오른쪽 위 · 파일 이름)
+    event: str | None = None        # 종목: 남복 · 여복 · 혼복 · 남단 · 여단
+    division: str | None = None     # 급수/조 (예: D조)
 
 
 @app.patch("/api/videos/{vid}/board")
@@ -756,6 +759,10 @@ def patch_board(vid: str, body: BoardReq):
     """스코어보드 표시(우리 팀, 우리 팀 줄 위/아래)만 바꾼다. 점수는 그대로."""
     d = vdir(vid)
     upd = {k: v for k, v in (("ours", body.ours), ("ours_row", body.ours_row)) if v is not None}
+    for k in ("tournament", "event", "division"):
+        v = getattr(body, k)
+        if v is not None:
+            upd[k] = str(v).strip()[:40]
     if upd.get("ours", "A") not in ("A", "B") or upd.get("ours_row", "top") not in ("top", "bottom"):
         raise HTTPException(400, "잘못된 값이에요")
     res, cfg = read_json(d / "result.json"), read_json(d / "match.json")
@@ -854,8 +861,20 @@ def download(vid: str, name: str):
     if name not in allowed or not (d / name).exists():
         raise HTTPException(404, "파일이 없어요")
     meta = read_json(d / "meta.json", {})
-    stem = Path(meta.get("name", vid)).stem
-    return FileResponse(d / name, media_type=allowed[name], filename=f"{stem}_{name}")
+    base = save_name(meta, vid, (read_json(d / "result.json", {}) or {}).get("setup") or (read_json(d / "match.json", {}) or {}).get("match") or {})
+    fn = f"{base}.mp4" if name == "overlay.mp4" else f"{base}_공개용.mp4" if name == "public.mp4" else f"{base}_{name}"
+    return FileResponse(d / name, media_type=allowed[name], filename=fn)
+
+
+def save_name(meta: dict, vid: str, setup: dict) -> str:
+    """받을 파일 이름: 날짜_대회명_종목_영상이름 (예: 20261108_한국건강관리협회_혼복_match1).
+    날짜는 영상 이름 앞 8자리 숫자, 없으면 올린 날."""
+    stem = Path(meta.get("name") or vid).stem
+    m = re.match(r"^(\d{8})[_\-\s]*(.*)$", stem)
+    date, rest = (m.group(1), m.group(2)) if m else (time.strftime("%Y%m%d", time.localtime(meta.get("created") or time.time())), stem)
+    parts = [date, str(setup.get("tournament") or "").strip(), str(setup.get("event") or "").strip(), rest.strip()]
+    clean = [re.sub(r'[\\/:*?"<>|\s]+', "", x) for x in parts]
+    return "_".join(x for x in clean if x) or vid
 
 
 # ---------------------------------------------------------------- 실험 페이지 (/lab)

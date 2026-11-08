@@ -461,3 +461,4 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .rv-dock kbd{font-size:12px}
 @media (max-width:900px){.rv-dock .rv-btns{grid-template-columns:1fr 1fr}}
 .rv-link{margin:0 0 10px}
+.fname{word-break:break-all;margin-top:-4px}

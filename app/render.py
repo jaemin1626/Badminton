@@ -101,6 +101,31 @@ def timeline_states(events: list, setup: dict):
     return keys, states
 
 
+def title_text(setup: dict) -> str:
+    """오른쪽 위 글: '대회명 / 종목 급수' (예: 한국건강관리협회 / 혼복 D조). 없는 건 뺀다."""
+    t = str(setup.get("tournament") or "").strip()
+    g = " ".join(x for x in (str(setup.get("event") or "").strip(), str(setup.get("division") or "").strip()) if x)
+    return " / ".join(x for x in (t, g) if x)
+
+
+def title_card(setup: dict, scale: float):
+    text = title_text(setup)
+    if not text:
+        return None
+    s = scale
+    f = _font("NotoSansKR.ttf", int(22 * s), 700)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    tw = int(probe.textlength(text, font=f))
+    pad, bar, H = int(16 * s), int(6 * s), int(48 * s)
+    W = tw + pad * 2 + bar + int(8 * s)
+    img = Image.new("RGBA", (W + 2, H + 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, W, H], radius=int(12 * s), fill=(8, 14, 11, 220), outline=(255, 255, 255, 30))
+    d.rounded_rectangle([int(12 * s), int(12 * s), int(12 * s) + bar, H - int(12 * s)], radius=int(3 * s), fill=ACCENT)
+    d.text((int(12 * s) + bar + int(10 * s), H // 2), text, font=f, fill=(255, 255, 255), anchor="lm")
+    return img
+
+
 def ffmpeg_exe():
     import imageio_ffmpeg
     return imageio_ffmpeg.get_ffmpeg_exe()
@@ -123,6 +148,18 @@ def render_overlay(src: str, out: str, events: list, setup: dict, progress=None,
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     cache = {}
     pop_frames = int(fps * 0.6)
+
+    title = title_card(setup, scale) if scoreboard_on else None
+    if title is not None:
+        ta = np.asarray(title)
+        t_rgb, t_a = ta[:, :, 2::-1].astype(np.float32), ta[:, :, 3:4].astype(np.float32) / 255.0
+        th, tw = t_rgb.shape[:2]
+        tx = max(0, W - margin - tw)
+
+    def draw_title(img):
+        roi = img[margin:margin + th, tx:tx + tw]
+        h2, w2 = roi.shape[:2]
+        roi[:] = (roi.astype(np.float32) * (1 - t_a[:h2, :w2]) + t_rgb[:h2, :w2] * t_a[:h2, :w2]).astype(np.uint8)
 
     def draw_board(img, f):
         k = bisect.bisect_right(keys, f) - 1
@@ -161,6 +198,8 @@ def render_overlay(src: str, out: str, events: list, setup: dict, progress=None,
             for img, fi in zip(imgs, idx):
                 if scoreboard_on:
                     draw_board(img, fi)
+                if title is not None:
+                    draw_title(img)
                 proc.stdin.write(img.tobytes())
             if progress and (f // batch) % 4 == 0:
                 progress(f / max(total, 1), f"{f:,} / {total:,} 프레임")
