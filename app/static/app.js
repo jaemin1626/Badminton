@@ -851,7 +851,11 @@ function renderPanel() {
     const seg = (g, opts) => `<div class="seg" data-g="${g}">${opts.map(([v, l]) => `<button data-v="${v}" class="${String(f[g]) === String(v) ? "on" : ""}">${esc(l)}</button>`).join("")}</div>`;
     P.innerHTML = `<h2>경기 설정</h2><p class="desc">경기 중간부터 찍은 영상이면 시작 점수와 게임을 맞춰 주세요. 첫 서브 팀은 영상의 첫 서브 기준이에요.</p>
       <div class="field"><label>첫 서브 팀</label>${seg("first", [["A", T.A.name], ["B", T.B.name]])}</div>
-      <div class="field"><label>시작 점수</label><div class="score-in">${sb("A", "scoreA")}<span class="vs">VS</span>${sb("B", "scoreB")}</div></div>
+      <div class="field"><label>최종 점수 <small class="opt">알면 넣으세요 · 분석이 이 점수에 맞춰요</small></label>
+        <div class="fin-row big"><span class="nm" style="color:var(--teamA)">${esc(T.A.name)}</span><input type="number" id="fA" min="0" max="40" value="${f.final?.A ?? ""}" placeholder="-" aria-label="${esc(T.A.name)} 최종 점수">
+          <span>:</span><input type="number" id="fB" min="0" max="40" value="${f.final?.B ?? ""}" placeholder="-" aria-label="${esc(T.B.name)} 최종 점수"><span class="nm" style="color:var(--teamB)">${esc(T.B.name)}</span></div></div>
+      <details class="field more"${f.scoreA || f.scoreB ? " open" : ""}><summary>경기 중간부터 찍은 영상이면 · 시작 점수</summary>
+        <div class="score-in">${sb("A", "scoreA")}<span class="vs">VS</span>${sb("B", "scoreB")}</div></details>
       <div class="field"><label>시작 게임</label>${seg("game", [[1, "1게임"], [2, "2게임"], [3, "3게임"]])}</div>
       <div class="field"><label>우리 팀</label>${seg("ours", [["A", T.A.name], ["B", T.B.name]])}</div>
       <div class="field"><label>스코어보드에서 우리 팀 줄</label>${seg("ours_row", [["top", "윗줄"], ["bottom", "아랫줄"]])}</div>
@@ -867,6 +871,10 @@ function renderPanel() {
       const g = $("#overlay"); g.innerHTML = ""; drawScoreboard(g, { score: { A: f.scoreA, B: f.scoreB }, server: f.first, game: f.game }, setupNow(), U(), b.dataset.k.slice(-1)); saveLocal();
     });
     $("#boardSw").onclick = () => { f.scoreboard = !f.scoreboard; renderPanel(); drawOverlay(); saveLocal(); };
+    ["fA", "fB"].forEach(id => $("#" + id).oninput = () => {
+      const a = $("#fA").value, b = $("#fB").value;
+      f.final = a !== "" && b !== "" ? { A: +a, B: +b } : null; saveLocal();
+    });
     $("#swIn").onchange = e => {
       const out = []; for (const part of e.target.value.split(/[,\s]+/).filter(Boolean)) { const q = part.split(":").map(Number); if (q.some(isNaN)) { toast("3:50 처럼 분:초로 적어 주세요", true); return; } out.push(q.reduce((a, b) => a * 60 + b, 0)); }
       f.switch_manual = out; saveLocal();
