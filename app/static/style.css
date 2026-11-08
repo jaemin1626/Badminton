@@ -424,3 +424,19 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .fin-row input{width:56px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center;font:700 18px "Barlow Condensed",sans-serif;color:var(--ink)}
 .fin-row .nm{font-weight:700;font-size:13px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fin-fit .desc{margin:6px 0 0;font-size:12px}
+/* 검토 */
+.review{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:0 0 12px}
+.review.on{border-color:var(--accent)}
+.rv-head{margin:0 0 8px;font-size:13px;line-height:1.5}
+.warn-t{color:var(--warn)}
+.sus{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:4px}
+.sus li{display:grid;grid-template-columns:20px 44px 1fr 30px;gap:6px;align-items:center;font-size:12px;background:var(--panel);border-radius:8px;padding:6px 8px;cursor:pointer;border:1px solid transparent}
+.sus li:hover{border-color:var(--accent)}
+.sus .rk{color:var(--muted);text-align:right}.sus .tm{font-weight:700;font-variant-numeric:tabular-nums}
+.sus .wy{color:var(--muted)}.sus .sv{text-align:right;font-variant-numeric:tabular-nums;color:var(--warn)}
+.cta.sm{height:40px;font-size:14px}
+.rv-top{display:flex;align-items:baseline;gap:10px;margin-bottom:4px}.rv-top b{font-size:22px;font-variant-numeric:tabular-nums}.rv-top .st{margin-left:auto;font-size:12px;color:var(--muted)}
+.rv-btns{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}
+.rv-btns .icon-btn{justify-content:center}
+.rv-nav{display:flex;gap:6px;flex-wrap:wrap}
+.review kbd{font-size:10px;border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-left:4px;color:var(--muted)}

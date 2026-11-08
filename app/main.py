@@ -637,7 +637,7 @@ def result(vid: str):
 
 class EventPatch(BaseModel):
     id: str | None = None
-    action: str                     # set_server | clear | remove | restore | add_serve | add_point
+    action: str                     # set_server | clear | remove | restore | add_serve | add_point | confirm | unconfirm
     team: str | None = None
     t: float | None = None
     frame: int | None = None
@@ -651,13 +651,13 @@ def patch_events(vid: str, body: list[EventPatch]):
     if res is None or cfg is None:
         raise HTTPException(404, "아직 분석 결과가 없어요")
     keep = ("id", "t", "frame", "t_still", "frame_still", "box", "boxes", "p_near", "view", "seen", "front", "pos", "cues",
-            "override", "removed", "kind", "winner", "look", "pre_rally")
+            "override", "removed", "kind", "winner", "look", "pre_rally", "confirmed", "manual")
     evs = [{k: e[k] for k in keep if k in e} for e in res["events"]]
     by = {e["id"]: e for e in evs}
     fps = cfg.get("fps") or 30
     for p in body:
         e = by.get(p.id) if p.id else None
-        if p.action in {"set_server", "clear", "remove", "restore"} and e is None:
+        if p.action in {"set_server", "clear", "remove", "restore", "confirm", "unconfirm"} and e is None:
             raise HTTPException(404, f"이벤트 {p.id} 없음")
         if p.action == "set_server":
             if p.team not in {"A", "B"}:
@@ -671,6 +671,10 @@ def patch_events(vid: str, body: list[EventPatch]):
             e["removed"] = True
         elif p.action == "restore":
             e.pop("removed", None)
+        elif p.action == "confirm":     # 사람이 보고 '진짜 서브 맞음' (최종 점수 맞추기에서 빼지 않고, 의심 목록에서도 내림)
+            e["confirmed"] = True; e.pop("removed", None)
+        elif p.action == "unconfirm":
+            e.pop("confirmed", None)
         elif p.action in {"add_serve", "add_point"}:
             t = p.t if p.t is not None else (p.frame or 0) / fps
             fr = p.frame if p.frame is not None else int(round(t * fps))

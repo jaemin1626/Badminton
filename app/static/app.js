@@ -388,7 +388,7 @@ function upload(f) {
 async function openVideo(id, step) {
   try {
     const meta = await api(`/api/videos/${id}`);
-    Object.assign(S, { vid: id, meta, suggest: null, result: null, people: [], detFrame: -1, assign: {}, job: null, renderJob: null, selEvent: null,
+    Object.assign(S, { vid: id, meta, suggest: null, result: null, review: null, people: [], detFrame: -1, assign: {}, job: null, renderJob: null, selEvent: null,
       cpts: [], clines: [], pick: null, sel: null, drag: null, fit: null });
     S.config = meta.config || null;
     const loc = loadLocal(id);
@@ -1000,6 +1000,7 @@ function loop() {
     if (st.ev) $("#flag").textContent = st.ev.flags?.[0] || "";
     markCurrent(st.ev?.id);
   }
+  if (S.review?.t != null && video && !video.paused && t > S.review.t + 3) seek(S.review.t - 3, true);
   const head = $("#wormHead");
   if (head && S._worm) { const x = S._worm.x(t); head.setAttribute("x1", x); head.setAttribute("x2", x); }
   rafId = requestAnimationFrame(loop);
@@ -1074,6 +1075,7 @@ function renderRPanel() {
         <button class="icon-btn sm" id="finFit">맞추기</button>${st.final ? `<button class="icon-btn sm" id="finClear">해제</button>` : ""}</div>
       ${st.final ? `<p class="desc">${all.filter(e => e.skipped).length ? `가짜로 본 서브 ${all.filter(e => e.skipped).map(e => fmtTime(e.t)).join(", ")}를 빼고 맞췄어요. 틀렸으면 그 서브를 '서브 아님'이나 팀으로 직접 고치세요` : "그대로 맞았어요"}</p>` : ""}
     </div>
+    ${reviewHtml()}
     <div class="tabs seg" id="evFilter"><button data-f="all" class="${(S.evFilter || "all") === "all" ? "on" : ""}">전체</button><button data-f="flag" class="${S.evFilter === "flag" ? "on" : ""}">확인 필요</button></div>
     <ul class="evlist" id="evlist"></ul>
     <div class="btn-row"><button class="icon-btn sm" id="addServe">지금 시점에 서브 추가</button><button class="icon-btn sm" id="addPoint">마지막 랠리 승자 추가</button></div>
@@ -1099,6 +1101,7 @@ function renderRPanel() {
       <a class="icon-btn pub-dl ${S.meta.has_public ? "" : "hidden"}" id="dlPublic" href="/api/videos/${S.vid}/download/public.mp4">공개용 영상 받기${S.meta.public ? ` · 머리 ${S.meta.public.masked_heads.toLocaleString()}개 가림` : ""}</a>
     </section>`;
   $$("#evFilter button").forEach(b => b.onclick = () => { S.evFilter = b.dataset.f; renderRPanel(); });
+  bindReview();
   const setFinal = async (A, B) => {
     try { S.result = await api(`/api/videos/${S.vid}/final`, { method: "PATCH", json: { A, B } }); lastStateKey = ""; renderWorm(); renderRPanel(); toast(A == null ? "최종 점수를 해제했어요" : `${A}:${B}에 맞춰 다시 계산했어요`); }
     catch (e) { toast(e.message, true); }
@@ -1207,6 +1210,74 @@ function renderEvList() {
     });
   });
 }
+/* ---------------- 검토: 최종 점수와 개수 비교 · 의심 서브 · 하나씩 고치기 ---------------- */
+// 의심 순서 (사람이 확인·수정한 건 빠짐)
+function suspects() {
+  return (S.result?.events || []).filter(e => !e.removed && e.kind !== "point" && (e.suspect || 0) > 0)
+    .sort((a, b) => b.suspect - a.suspect);
+}
+function reviewHtml() {
+  const r = S.result, c = r.summary.count || {}, nm = t => esc(t === "A" ? r.setup.nameA : r.setup.nameB);
+  const sus = suspects(), extra = c.extra;
+  let head;
+  if (c.expected == null) head = `찾은 서브 <b>${c.found ?? "-"}</b>개 · 위에 실제 최종 점수를 넣으면 개수가 맞는지 확인하고 의심 서브를 골라 드려요`;
+  else if (extra > 0) head = `최종 ${r.setup.final.A}:${r.setup.final.B} → 랠리 <b>${c.expected}</b>개인데 서브 <b>${c.found}</b>개 · <b class="warn-t">${extra}개 더 셈</b>. 아래 의심 순서대로 보고 가짜는 '서브 아님'`;
+  else if (extra < 0) head = `최종 ${r.setup.final.A}:${r.setup.final.B} → 랠리 <b>${c.expected}</b>개인데 서브 <b>${c.found}</b>개 · <b class="warn-t">${-extra}개 덜 셈</b>. 아래 빈 구간에서 빠진 서브를 찾아 '지금 시점에 서브 추가'`;
+  else head = `최종 ${r.setup.final.A}:${r.setup.final.B} → 랠리 ${c.expected}개 = 서브 ${c.found}개 · 개수 맞음${sus.length ? ". 서브 팀이 의심스러운 것만 확인해 보세요" : ""}`;
+  const show = sus.slice(0, Math.max(5, (extra > 0 ? extra : 0) + 3));
+  const list = show.map((e, k) => `<li data-id="${e.id}"><span class="rk">${k + 1}</span><span class="tm">${fmtTime(e.t)}</span>
+      <span class="wy">${e.skipped ? '<b class="warn-t">뺀 서브</b> · ' : e.server ? `${nm(e.server)} 서브 · ` : ""}${esc((e.why || []).join(" · "))}</span><span class="sv">${e.suspect.toFixed(1)}</span></li>`).join("");
+  const gaps = extra != null && extra < 0 && c.gaps?.length ? `<p class="desc">서브가 빠졌을 만한 긴 빈 구간: ${c.gaps.map(([a, b]) => `<a href="#" class="gap" data-t="${a}">${fmtTime(a)}~${fmtTime(b)}</a>`).join(" · ")}</p>` : "";
+  if (S.review) return reviewCard();
+  return `<div class="review">
+    <p class="rv-head">${head}</p>
+    ${show.length ? `<ol class="sus">${list}</ol><button class="cta sm" id="rvStart">검토 시작 · 의심 순서대로 ${show.length}개 보기</button>` : ""}
+    ${gaps}</div>`;
+}
+function reviewCard() {
+  const rv = S.review, r = S.result, e = r.events.find(x => x.id === rv.ids[rv.i]);
+  const nm = t => esc(t === "A" ? r.setup.nameA : r.setup.nameB);
+  if (!e) return `<div class="review on"><p class="rv-head">검토할 서브가 없어요</p><button class="icon-btn sm" id="rvEnd">검토 끝내기</button></div>`;
+  const st = e.removed ? "서브 아님으로 바꿈" : e.confirmed ? "맞음으로 확인함" : e.override ? `${nm(e.override)} 서브로 고침` : e.skipped ? "지금은 뺀 상태" : `지금 판정: ${nm(e.server)} 서브`;
+  return `<div class="review on">
+    <div class="rv-top"><span>${rv.i + 1} / ${rv.ids.length}</span><b>${fmtTime(e.t)}</b><span class="st">${st}</span></div>
+    <p class="desc">${esc((e.why || []).join(" · ")) || "의심 이유 없음"}</p>
+    <p class="desc">장면을 앞뒤 3초씩 반복해서 보여 줘요. 서브가 맞는지, 누가 넣었는지 보고 고르세요.</p>
+    <div class="rv-btns">
+      <button class="icon-btn" data-r="remove">서브 아님 <kbd>X</kbd></button>
+      <button class="icon-btn" data-r="confirm">맞음 <kbd>Enter</kbd></button>
+      <button class="icon-btn" data-r="A" style="border-color:var(--teamA)">${nm("A")} 서브 <kbd>A</kbd></button>
+      <button class="icon-btn" data-r="B" style="border-color:var(--teamB)">${nm("B")} 서브 <kbd>B</kbd></button>
+    </div>
+    <div class="rv-nav"><button class="icon-btn sm" data-r="prev">이전</button><button class="icon-btn sm" data-r="next">다음 <kbd>N</kbd></button><button class="icon-btn sm" id="rvEnd">검토 끝내기</button></div>
+  </div>`;
+}
+function reviewGo(i) {
+  const rv = S.review; if (!rv) return;
+  rv.i = Math.max(0, Math.min(rv.ids.length - 1, i));
+  const e = S.result.events.find(x => x.id === rv.ids[rv.i]);
+  if (e) { rv.t = e.t; seek(e.t - 3, true); selectEvent(e.id, false); }
+  renderRPanel();
+}
+async function reviewAct(a) {
+  const rv = S.review; if (!rv) return;
+  const id = rv.ids[rv.i];
+  if (a === "next") return reviewGo(rv.i + 1);
+  if (a === "prev") return reviewGo(rv.i - 1);
+  if (a === "A" || a === "B") await patch([{ id, action: "restore" }, { id, action: "set_server", team: a }, { id, action: "confirm" }]);
+  else if (a === "confirm") await patch([{ id, action: "confirm" }]);
+  else if (a === "remove") await patch([{ id, action: "remove" }]);
+  if (rv.i + 1 < rv.ids.length) reviewGo(rv.i + 1);
+  else { toast("검토를 마쳤어요. 개수와 점수를 확인하세요"); S.review = null; renderRPanel(); }
+}
+function bindReview() {
+  $("#rvStart")?.addEventListener("click", () => { S.review = { ids: suspects().slice(0, Math.max(5, (S.result.summary.count?.extra > 0 ? S.result.summary.count.extra : 0) + 3)).map(e => e.id), i: 0 }; reviewGo(0); });
+  $("#rvEnd")?.addEventListener("click", () => { S.review = null; renderRPanel(); });
+  $$(".review [data-r]").forEach(b => b.onclick = () => reviewAct(b.dataset.r));
+  $$(".sus li").forEach(li => li.onclick = () => { const ids = $$(".sus li").map(x => x.dataset.id); S.review = { ids, i: ids.indexOf(li.dataset.id) }; reviewGo(S.review.i); });
+  $$(".review .gap").forEach(a => a.onclick = ev => { ev.preventDefault(); seek(+a.dataset.t, true); });
+}
+
 async function patch(body) {
   try {
     S.result = await api(`/api/videos/${S.vid}/events`, { method: "PATCH", json: body });
@@ -1248,6 +1319,12 @@ function pollRender() {
 /* ---------------- 키보드 ---------------- */
 document.addEventListener("keydown", e => {
   if (e.target.matches("input:not([type=range]), textarea") || e.target.closest(".handle")) return;
+  if (S.step === 6 && S.review) {
+    const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const a = { x: "remove", ㅌ: "remove", Enter: "confirm", a: "A", ㅁ: "A", b: "B", ㅠ: "B", n: "next", ㅜ: "next" }[k];
+    if (a) { e.preventDefault(); reviewAct(a); return; }
+    if (e.key === "Escape") { S.review = null; renderRPanel(); return; }
+  }
   if (S.step === 2) {
     if (e.key === "Escape" && (S.pick || S.sel)) {
       if (S.guide != null && S.pick?.kind === "l") { skipGuide(); return; }   // 안내 중 라인: Esc = 이 라인 끝내고 다음

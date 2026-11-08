@@ -888,6 +888,51 @@ def detect_switch(events: list, setup: dict, sides: dict) -> dict:
     return {"mode": "auto", "times": [round(float(t_sw), 2)], **info}
 
 
+def suspect_of(ev: dict, prev_t: float | None) -> tuple[float, list]:
+    """이 서브가 잘못 판정됐을 가능성 (클수록 의심). 사람이 확인·수정한 것은 0."""
+    if ev.get("confirmed") or ev.get("override") or ev.get("kind") == "point" or ev.get("manual"):
+        return 0.0, []
+    sc, why = 0.0, []
+    if ev.get("skipped"):
+        sc += 3.0; why.append("최종 점수에 맞추려고 뺀 서브")
+    pr = float(ev.get("pre_rally") or 0)
+    if pr > 0.3:
+        sc += 2.0 * min((pr - 0.3) / 0.3, 1.0); why.append(f"멈추기 직전까지 랠리 중 ({round(pr * 100)}%)")
+    c = ev.get("conf")
+    if c is not None and c < 0.9 and not ev.get("skipped"):
+        sc += 2.0 * (1 - c); why.append(f"서브 팀 불확실 ({round(c * 100)}%)")
+    if "서브 위치가 점수 짝/홀과 다름" in (ev.get("flags") or []):
+        sc += 1.0; why.append("서브 위치가 점수 짝/홀과 다름")
+    v = float(ev.get("view", 1.0))
+    if v < 1.0:
+        sc += 0.8 * (1 - v); why.append("선수 일부가 안 보임")
+    if prev_t is not None and ev["t"] - prev_t < 8.5:
+        sc += 1.0; why.append(f"직전 서브와 {ev['t'] - prev_t:.1f}초")
+    if prev_t is None:
+        sc += 0.5; why.append("첫 서브 (경기 전 장면일 수 있음)")
+    return round(sc, 2), why
+
+
+def count_check(out: list, fin: dict | None) -> dict:
+    """찾은 서브 수와 최종 점수로 본 랠리 수 비교 + 서브마다 의심 점수(suspect·why)를 매긴다."""
+    serves = [e for e in out if not e.get("removed") and e.get("kind", "serve") == "serve"]
+    prev = None
+    for e in serves:
+        e["suspect"], e["why"] = suspect_of(e, prev)
+        if not e.get("skipped"):
+            prev = e["t"]
+    found = len(serves)
+    res = {"found": found, "expected": None, "extra": None, "gaps": []}
+    if fin:
+        res["expected"] = fin["A"] + fin["B"]
+        res["extra"] = found - res["expected"]
+    # 서브가 빠졌을 만한 긴 빈 구간 (덜 셌을 때 보려고)
+    live = [e["t"] for e in serves if not e.get("skipped")]
+    gaps = sorted(((b - a, a, b) for a, b in zip(live, live[1:]) if b - a >= 22), reverse=True)[:6]
+    res["gaps"] = [[round(a, 2), round(b, 2)] for _, a, b in gaps]
+    return res
+
+
 SKIP_COST = 4.0      # 최종 점수에 맞추려고 서브 하나를 '가짜'로 뺄 때 log-확률 감점 (짝/홀 어긋남 하나보다 크게)
 PARITY_PENALTY = 2.2   # 서브 위치가 점수 짝/홀과 다를 때 log-확률 감점
 BEAM = 64
@@ -930,7 +975,8 @@ def score_events(events: list, setup: dict, sides: dict):
     """
     evs = sorted((dict(e) for e in events), key=lambda e: e["t"])
     for e in evs:
-        e.pop("skipped", None); e.pop("fit_won", None)
+        for k in ("skipped", "fit_won", "suspect", "why"):
+            e.pop(k, None)
     active = [i for i, e in enumerate(evs) if not e.get("removed")]
     sw = detect_switch(evs, setup, sides)
     setup = {**setup, "switch_times": sw.get("times")}
@@ -956,7 +1002,7 @@ def score_events(events: list, setup: dict, sides: dict):
                 teams = [ev.get("override") or m.server]
             else:
                 teams = [ev["override"]] if ev.get("override") else ["A", "B"]
-            if fin and kind == "serve" and not ev.get("override"):
+            if fin and kind == "serve" and not ev.get("override") and not ev.get("confirmed"):
                 teams = teams + ["X"]
             for team in teams:
                 if team == "X":   # 이 서브는 가짜로 보고 건너뜀. 직전까지 랠리가 이어지던 정지면 덜 감점
@@ -1083,6 +1129,7 @@ def score_events(events: list, setup: dict, sides: dict):
                "rallies": len(live), "last_rally": None if not last else ("known" if last.get("kind") == "point" or last.get("last_won") or last.get("fit_won") else
                                                                          "guess" if last.get("won_guess") else "unknown")}
     summary["switch"] = sw   # 코트 교대: manual(설정) · auto(옷 색) · score(점수 규칙)
+    summary["count"] = count_check(out, fin)
     if m.over and m.games:   # 경기가 끝났으면 마지막 게임 점수를 보여 준다
         summary["score"] = {"A": m.games[-1]["A"], "B": m.games[-1]["B"]}
     return out, summary
