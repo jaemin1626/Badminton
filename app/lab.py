@@ -816,7 +816,7 @@ class FromOpReq(BaseModel):
 
 @router.post("/api/lab/{vid}/truth/from-op")
 def lab_truth_from_op(vid: str, req: FromOpReq):
-    """운영 페이지 편집 결과(남은 서브와 서브 팀, 최종 점수)를 실험 페이지 정답으로 보낸다.
+    """운영 페이지 편집 결과(남은 서브와 서브 팀, 최종 점수)를 실험 페이지 정답(최종 저장 상태)으로 보낸다.
     실험 설정이 없으면 운영 설정(코트·선수·심판·경기 설정)으로 만들고, 실험 추적이 없으면 추적을 시작한다."""
     d = vdir(vid)
     op = read_json(d / "match.json")
@@ -842,7 +842,8 @@ def lab_truth_from_op(vid: str, req: FromOpReq):
         write_json(L / f"truth.bak-{time.strftime('%Y%m%d-%H%M%S')}.json", cur)
     live = [e for e in res["events"] if not e.get("removed") and not e.get("skipped") and e.get("server")]
     fin = (res.get("setup") or {}).get("final") or op.get("match", {}).get("final")
-    data = lab_put_truth(vid, TruthReq(marks=[{"t": e["t"], "server": e["server"]} for e in live], final=fin, finalized=False))
+    # 운영에서 사람이 검토·편집한 결과라 바로 정답(최종 저장 상태)으로 둔다
+    data = lab_put_truth(vid, TruthReq(marks=[{"t": e["t"], "server": e["server"]} for e in live], final=fin, finalized=True))
     job = None
     if not (L / "tracks.npz").exists():
         job = lab_track(vid)
