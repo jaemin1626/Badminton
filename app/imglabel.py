@@ -38,6 +38,7 @@ router = APIRouter()
 IMG = DATA.parent / "images"
 CONV = IMG / "converted"
 LOG = CONV / "serve.jsonl"
+PSEUDO = CONV / "serve_pseudo.jsonl"   # tools/pseudo_server.py 가 만든 서버 가짜 라벨 (사람 라벨로 학습한 모델)
 STATUSES = ("serve", "not_serve", "unsure", "skip")
 _cache: dict = {"mtime": None}
 _sugg: dict = {}
@@ -79,6 +80,18 @@ def _labels() -> dict:
                 r = json.loads(line)
                 out[r["clip"]] = r
     return out
+
+
+_pseudo: dict = {"mtime": None, "map": {}}
+
+
+def _pseudos() -> dict:
+    if not PSEUDO.exists():
+        return {}
+    m = PSEUDO.stat().st_mtime
+    if _pseudo["mtime"] != m:
+        _pseudo.update(mtime=m, map={r["clip"]: r for r in map(json.loads, open(PSEUDO, encoding="utf-8"))})
+    return _pseudo["map"]
 
 
 def _eff(c, lb):
@@ -190,7 +203,10 @@ def clip_detail(clip: str) -> dict:
     meta = {k: c[k] for k in ("clip", "view", "yaw", "match", "cam", "org", "date", "action", "ok", "code_serve")}
     lb = _labels().get(clip)
     st, src = _eff(c, lb)
-    return {**meta, "frames": frames, "tracks": tracks, "suggest": sugg, "label": lb, "status": st, "status_src": src}
+    ps = _pseudos().get(clip)
+    pseudo = {k: ps[k] for k in ("server_track", "prob", "probs", "model", "n_train")} if ps else None
+    return {**meta, "frames": frames, "tracks": tracks, "suggest": sugg, "pseudo": pseudo, "label": lb,
+            "status": st, "status_src": src}
 
 
 # ---------------------------------------------------------------- API
@@ -311,6 +327,7 @@ class LabelReq(BaseModel):
     server_track: str | None = None
     servers: dict[str, str] | None = None    # 장마다 서버 pid (장 사이 잇기가 틀려 장별로 고친 것 포함)
     note: str | None = None
+    pseudo: bool | None = None               # 가짜 라벨을 그대로 받아들인 것인지 (바꿨으면 False)
 
 
 class LabelsReq(BaseModel):
@@ -337,6 +354,8 @@ def _write(reqs: list[LabelReq]) -> list[dict]:
                "action": c["action"], "frames": [f[1] for f in c["frames"]],
                "note": req.note if req.note is not None else prev.get("note"),
                "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        if req.pseudo is not None and req.status == "serve":
+            rec["from_pseudo"] = req.pseudo
         if rec["server_track"]:
             sg = _sugg.get(req.clip) or clip_detail(req.clip)["suggest"]
             rec["suggest_track"] = (sg or {}).get("track")

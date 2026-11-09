@@ -72,6 +72,8 @@ async function openClip(i) {
   S.cur = d;
   const lb = d.label || {};
   S.sel = { status: d.status, track: lb.server_track || null, over: {} }; S.dirty = false;
+  // 사람 라벨이 없고 가짜 라벨이 있으면 그 서버를 미리 골라 둠 → 맞으면 Enter·D 로 그대로 저장
+  if (!lb.status && d.pseudo && d.status === "serve") { S.sel.track = d.pseudo.server_track; S.dirty = true; S.fromPseudo = true; } else S.fromPseudo = false;
   // 저장된 장별 서버 중 track 과 다른 것 = 장별로 고친 것
   if (lb.servers) for (const f of d.frames) {
     const pid = lb.servers[f.id], p = f.players.find(p => p.pid === pid);
@@ -142,7 +144,8 @@ function render() {
     const lb = c.label;
     $("#sState").textContent = lb?.server_track ? `저장됨 · 서버 ${lb.server_track}` : lb?.status ? `저장됨 · ${STATUS_KO[lb.status]}` : `AI-Hub · ${STATUS_KO[c.status]}`;
     const sg = c.suggest;
-    $("#sugg").innerHTML = sg ? `추천 <b style="color:${TCOL(sg.track)}">${esc(sg.track)}</b> (${TRACK_KO[sg.track] || ""}) · 확신 ${Math.round(sg.conf * 100)}%${sg.conf < 0.3 ? " · <span class='warn'>낮음</span>" : ""}` : "추천 없음 (한쪽 선수 위치를 모름)";
+    const ps = c.pseudo;
+    $("#sugg").innerHTML = (ps ? `가짜 라벨 <b style="color:${TCOL(ps.server_track)}">${esc(ps.server_track)}</b> · 확률 ${Math.round(ps.prob * 100)}%${ps.prob < 0.8 ? " · <span class='warn'>낮음</span>" : ""}<br>` : "") + (sg ? `알고리즘 추천 <b style="color:${TCOL(sg.track)}">${esc(sg.track)}</b> (${TRACK_KO[sg.track] || ""}) · 확신 ${Math.round(sg.conf * 100)}%${sg.conf < 0.3 ? " · <span class='warn'>낮음</span>" : ""}` : "추천 없음 (한쪽 선수 위치를 모름)");
     $("#srvBtns").innerHTML = c.tracks.map((t, i) => `<button data-t="${t}" class="${st === "serve" && S.sel.track === t ? "on" : ""}" style="color:${TCOL(t)}"><b>${i + 1}</b>${esc(t)} <span style="color:var(--muted)">${TRACK_KO[t] || ""}</span>${sg?.track === t ? `<span class="sg">추천</span>` : ""}</button>`).join("");
     $("#bNot").className = "btn" + (st === "not_serve" ? " on-not" : "");
     $("#bUnsure").className = "btn" + (st === "unsure" ? " on-uns" : "");
@@ -163,7 +166,7 @@ function showFrame(k) {
   $$("#strip button").forEach(el => el.classList.toggle("on", +el.dataset.k === S.fsel));
   drawMini();
 }
-function pickTrack(t) { S.sel.status = "serve"; S.sel.track = t; S.dirty = true; render(); }
+function pickTrack(t) { S.sel.status = "serve"; S.sel.track = t; S.dirty = true; if (S.cur?.pseudo && t !== S.cur.pseudo.server_track) S.fromPseudo = false; render(); }
 /* 묶음 이동 (A D ← → · 버튼): 서버를 골라 놓고 Enter 없이 넘어가도 저장하고 넘어감 */
 function go(step) {
   if (S.dirty && S.cur && S.sel.status === "serve" && (S.sel.track || Object.keys(S.sel.over).length)) return saveSrv(null, step);
@@ -215,6 +218,7 @@ async function saveSrv(status, step = 1) {
     for (const f of c.frames) { const p = serverPid(f); if (p) servers[f.id] = p; }
     if (!S.sel.track && !Object.keys(servers).length) { toast("서버를 골라 주세요 (1~4 또는 선수 클릭)", true); return; }
     body.server_track = S.sel.track; body.servers = servers;
+    if (S.cur.pseudo) body.pseudo = S.fromPseudo && !Object.keys(S.sel.over).length && S.sel.track === S.cur.pseudo.server_track;
   }
   try {
     const rec = await api("/api/img/label", { body });
