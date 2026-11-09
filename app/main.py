@@ -909,3 +909,5 @@ def save_name(meta: dict, vid: str, setup: dict) -> str:
 from .lab import router as lab_router  # noqa: E402  (main의 함수들을 쓰므로 마지막에 불러온다)
 
 app.include_router(lab_router)
+from .imglabel import router as img_router  # noqa: E402  (/label: 비디오·이미지 서브 라벨)
+app.include_router(img_router)

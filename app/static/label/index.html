@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smash Label · 서브 라벨</title>
+<script>
+  // 예전 주소(/label#영상@시각)는 실험 페이지 정답 입력으로
+  (() => { const h = decodeURIComponent(location.hash.slice(1)); if (h && !h.startsWith("img")) { const [v, at] = h.split("@"); location.replace("/lab#" + v + "/truth" + (at ? "@" + at : "")); } })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/lab/lab.css">
+<link rel="stylesheet" href="/static/label/label.css">
+</head>
+<body class="lbl">
+<header class="top">
+  <a class="brand" href="/label">Smash <b>Label</b></a>
+  <div class="seg kind" role="group" aria-label="라벨 종류">
+    <a class="segb" id="toVideo" href="/lab#/truth" title="영상에서 서브 시각·서브 팀 정답 입력 (실험 페이지)">비디오</a>
+    <span class="segb on" aria-current="page">이미지</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-mode="serve" title="AI-Hub 가 서브라고 한 묶음 · 서브가 아닌 것만 눌러 빼요">1 · 서브 확인</button>
+    <button role="tab" data-mode="all" title="모든 묶음 · 서브인데 아니라고 된 것을 눌러 바꿔요">2 · 전체 확인</button>
+    <button role="tab" data-mode="server" title="서브 묶음에서 서브하는 선수를 골라요">3 · 서버 지정</button>
+  </nav>
+  <div class="spacer"></div>
+  <span class="num" id="prog"></span>
+  <a class="link" href="/lab">실험 화면</a>
+  <a class="link" href="/">운영 화면</a>
+</header>
+
+<div class="filters">
+  <div class="fgroup" id="fView" aria-label="시점">
+    <span class="flab">시점</span>
+    <button data-v="end" class="on" title="엔드라인 뒤에서 (우리 match2 같은 시점)">뒤</button>
+    <button data-v="diag" class="on" title="대각선 (우리 match1·3·4 같은 시점)">대각선</button>
+    <button data-v="side" title="옆(사이드라인 쪽)에서">옆</button>
+  </div>
+  <div class="fgroup" id="fMatch" aria-label="경기">
+    <span class="flab">경기</span>
+    <button data-v="MD" class="on">남자복식</button>
+    <button data-v="WD" class="on">여자복식</button>
+    <button data-v="XD" class="on">혼합복식</button>
+  </div>
+  <label class="fsel hidden" id="fActWrap"><span class="flab">동작</span>
+    <select id="fAct">
+      <option value="">전체</option>
+      <option value="SRV">서브 (SRV)</option>
+      <option value="HPN">헤어핀 (HPN)</option>
+      <option value="PSH">푸시 (PSH)</option>
+      <option value="DRV">드라이브 (DRV)</option>
+      <option value="CLR">클리어 (CLR)</option>
+      <option value="SMS">스매시 (SMS)</option>
+      <option value="DRP">드롭 (DRP)</option>
+      <option value="CUT">컷 (CUT)</option>
+      <option value="UNI">기타 (UNI)</option>
+    </select>
+  </label>
+  <label class="sw"><input type="checkbox" id="fTodo"> <span id="fTodoLab">아직 확인 안 한 것만</span></label>
+  <div class="spacer"></div>
+  <span class="hint small" id="modeHint"></span>
+</div>
+
+<!-- ============ 1·2 격자 ============ -->
+<main id="gridView" class="gridview hidden">
+  <div class="grid" id="grid"></div>
+  <footer class="pager">
+    <button class="btn" id="pPrev">‹ 이전</button>
+    <span class="num" id="pNum"></span>
+    <button class="btn" id="pNext">다음 ›</button>
+    <div class="spacer"></div>
+    <span class="hint small">카드를 누르면 서브 ↔ 서브 아님 · 더블클릭은 크게 보기 · Enter = 이 페이지 확인하고 다음</span>
+    <button class="btn primary" id="pConfirm">이 페이지 확인하고 다음 ⏎</button>
+  </footer>
+</main>
+
+<!-- ============ 3 서버 지정 ============ -->
+<main id="srvView" class="srvview hidden">
+  <section class="frames" id="frames" aria-label="서브 묶음 이미지"></section>
+  <aside class="side">
+    <section class="box">
+      <h2>묶음 <span class="tag" id="cPos"></span></h2>
+      <p class="cid" id="cId"></p>
+      <p class="hint small" id="cMeta"></p>
+      <p class="warn hidden" id="cWarn"></p>
+    </section>
+    <section class="box">
+      <h2>서버 <span class="tag" id="sState">미지정</span></h2>
+      <p class="hint" id="sugg"></p>
+      <div class="srvbtns" id="srvBtns"></div>
+      <p class="hint small">이미지에서 선수를 눌러도 돼요. 같은 선수를 장마다 자동으로 이어요.<br>이어 붙이기가 틀린 장은 <b>Shift+클릭</b>으로 그 장만 고쳐요.</p>
+      <div class="row2">
+        <button class="btn" id="bNot" title="N">서브 아님</button>
+        <button class="btn" id="bUnsure" title="U">애매</button>
+      </div>
+      <button class="btn primary wide" id="bSave">저장하고 다음 ⏎</button>
+      <div class="row2">
+        <button class="btn" id="bPrev">‹ 이전 묶음</button>
+        <button class="btn" id="bNext">다음 묶음 ›</button>
+      </div>
+    </section>
+    <section class="box">
+      <h2>코트 <span class="tag" id="mapTag"></span></h2>
+      <svg id="mini" viewBox="-1.6 -1.6 9.3 16.6" aria-label="선수 코트 위치"></svg>
+      <label class="sw"><input type="checkbox" id="zoomChk" checked> 선수 쪽 확대</label>
+      <label class="sw"><input type="checkbox" id="linesChk" checked> 이미지에 코트 라인</label>
+      <label class="sw"><input type="checkbox" id="kpChk" checked> 관절</label>
+    </section>
+    <section class="box keys">
+      <h2>단축키</h2>
+      <p class="hint small"><b>1~4</b> 서버 (f1 f2 n1 n2) · <b>A</b> 추천 고르기 · <b>Enter</b> 저장하고 다음 · <b>N</b> 서브 아님 · <b>U</b> 애매 · <b>← →</b> 묶음 이동 · <b>Esc</b> 크게 보기 닫기</p>
+    </section>
+  </aside>
+</main>
+
+<!-- 크게 보기 (격자에서 더블클릭) -->
+<div class="lightbox hidden" id="lb" role="dialog" aria-modal="true" aria-label="묶음 크게 보기">
+  <div class="lbin">
+    <div class="lbhead"><span id="lbTitle"></span><div class="spacer"></div>
+      <button class="btn" id="lbServe">서브</button><button class="btn" id="lbNot">서브 아님</button><button class="btn" id="lbClose">닫기 Esc</button></div>
+    <div class="lbgrid" id="lbGrid"></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script src="/static/label/label.js"></script>
+</body>
+</html>

@@ -788,15 +788,6 @@ def lab_patch_teams(vid: str, req: TeamsReq):
     return {"config": cfg, "truth": read_json(L / "truth.json") or {"marks": [], "final": None}}
 
 
-@router.get("/label")
-def label_page():
-    """예전 정답 입력 페이지 주소. 실험 페이지 '3 · 정답 입력' 탭으로 합쳤다 (#영상@시각 유지)."""
-    return HTMLResponse("""<!doctype html><meta charset="utf-8"><title>Smash Lab</title><script>
-const [v, at] = decodeURIComponent(location.hash.slice(1)).split("@");
-location.replace("/lab#" + (v ? v + "/truth" + (at ? "@" + at : "") : ""));
-</script>""")
-
-
 @router.get("/api/lab/{vid}/truth")
 def lab_get_truth(vid: str):
     """정답 서브. 이 영상에 아직 없으면 같은 이름으로 저장된 정답(data/labels)을 돌려준다 (from_name=True)."""
