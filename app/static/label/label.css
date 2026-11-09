@@ -1,4 +1,4 @@
-/* Smash Label — 이미지 서브 라벨. 기본 색·버튼·상단은 lab.css 를 그대로 쓰고 여기서는 격자·서버 지정 화면만. */
+/* Smash Label — 이미지 서브 라벨. 기본 색·버튼·상단은 lab.css 를 그대로 쓰고 여기서는 한 장 보기 화면만. */
 body.lbl{--srv:#3ecf8e;--not:#7d8a84;--chg:#ffa63d;
   --t-f1:var(--far0);--t-f2:var(--far1);--t-n1:var(--near0);--t-n2:var(--near1)}
 
@@ -17,53 +17,58 @@ body.lbl{--srv:#3ecf8e;--not:#7d8a84;--chg:#ffa63d;
 .fsel{display:flex;align-items:center;gap:6px}
 .fsel select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
 
-/* 1·2 격자 */
-.gridview{padding:14px 18px 90px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
-.card{background:var(--panel);border:2px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;position:relative;
-  transition:border-color .12s}
-.card:hover{border-color:var(--muted)}
-.card:focus-visible{outline:2px solid var(--wood);outline-offset:2px}
-.card.serve{border-color:var(--srv)}
-.card.not_serve{border-color:var(--line)}
-body[data-mode=serve] .card.not_serve .thumbs{opacity:.45}
-.card.unsure{border-color:var(--chg);border-style:dashed}
-/* 칸은 항상 2×2 (각 칸 16:9 = 썸네일과 같은 비율이라 잘리지 않음). 1장이면 한 칸을 크게 */
-.thumbs{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:1px;background:#000;aspect-ratio:16/9}
-.thumbs img{width:100%;height:100%;object-fit:contain;display:block;background:#0f1312}
-.thumbs.n1 img{grid-column:1/-1;grid-row:1/-1}
-.cfoot{display:flex;align-items:center;gap:6px;padding:6px 9px;font-size:12px;color:var(--muted)}
-.cfoot .act{font:12px var(--mono);color:var(--text)}
-.badge{font-size:11.5px;font-weight:700;border-radius:5px;padding:1px 7px;margin-left:auto;white-space:nowrap}
-.badge.serve{background:var(--srv);color:#0d1a14}
-.badge.not_serve{background:var(--panel2);color:var(--muted)}
-.badge.unsure{background:var(--chg);color:#1c1611}
-.chg{font-size:11px;color:var(--chg);font-weight:700}
-.mine{width:7px;height:7px;border-radius:50%;background:var(--wood);display:inline-block}
-.pager{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;gap:12px;padding:10px 18px;
-  background:#141917ee;border-top:1px solid var(--line);backdrop-filter:blur(4px)}
-.empty{grid-column:1/-1;color:var(--muted);padding:60px 0;text-align:center}
+/* 한 장 보기 */
+.view{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;padding:12px 18px;align-items:start}
+.stagecol{display:flex;flex-direction:column;gap:8px;min-width:0}
+.stage{position:relative;background:#0f1312;border-radius:10px;overflow:hidden;border:3px solid var(--line);
+  display:flex;justify-content:center;align-items:center}
+.stage.serve{border-color:var(--srv)}
+.stage.unsure{border-color:var(--chg);border-style:dashed}
+.stage svg{display:block;width:100%;height:auto;max-height:calc(100vh - 230px)}
+.stage .fr{display:none;width:100%}
+.stage .fr.on{display:block}
+.stage .flabel{position:absolute;left:10px;top:8px;font:13px var(--mono);background:#000b;border-radius:5px;padding:2px 8px;pointer-events:none}
+.stage .fwarn{position:absolute;right:10px;top:8px;font-size:12px;background:#ff5d6ccc;color:#fff;border-radius:5px;padding:1px 7px;pointer-events:none}
+.stage .verdict{position:absolute;left:10px;bottom:10px;font:700 15px "Noto Sans KR",sans-serif;border-radius:6px;padding:3px 12px;pointer-events:none}
+.verdict.serve{background:var(--srv);color:#0d1a14}
+.verdict.not_serve{background:#000b;color:var(--muted)}
+.verdict.unsure{background:var(--chg);color:#1c1611}
+.empty{color:var(--muted);padding:80px 0;text-align:center;width:100%}
 
-/* 3 서버 지정 */
-.srvview{display:grid;grid-template-columns:1fr 330px;gap:14px;padding:14px 18px;align-items:start}
-.frames{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.frames.n1{grid-template-columns:1fr}
-.fr{position:relative;background:#0f1312;border-radius:10px;overflow:hidden;border:2px solid transparent}
-.fr.sel{border-color:var(--wood)}
-.fr svg{display:block;width:100%;height:auto}
-.fr .flabel{position:absolute;left:8px;top:6px;font:12px var(--mono);background:#000a;border-radius:5px;padding:1px 7px;pointer-events:none}
-.fr .fwarn{position:absolute;right:8px;top:6px;font-size:12px;background:#ff5d6ccc;color:#fff;border-radius:5px;padding:1px 7px;pointer-events:none}
+.strip{display:flex;align-items:center;gap:10px}
+.strip .thumbs{display:flex;gap:6px;flex:1;min-width:0}
+.strip .thumbs button{padding:0;border:2px solid transparent;border-radius:6px;overflow:hidden;background:#000;cursor:pointer;width:160px;position:relative}
+.strip .thumbs button.on{border-color:var(--wood)}
+.strip .thumbs img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+.strip .thumbs span{position:absolute;left:4px;bottom:2px;font:11px var(--mono);background:#000a;padding:0 4px;border-radius:3px}
+.btn.play{width:42px;font-size:14px}
+
+/* 오른쪽 */
+.cact{font:700 22px "Barlow Condensed",sans-serif;margin:0 0 2px}
+.cact small{font:500 13px "Noto Sans KR",sans-serif;color:var(--muted);margin-left:6px}
+.cid{font:11px var(--mono);word-break:break-all;margin:6px 0 0;color:var(--muted)}
+.warn{color:var(--rejC);font-size:12.5px;margin:6px 0 0}
+.judge{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 6px}
+.jbtn{border:2px solid var(--line);background:var(--panel2);border-radius:10px;padding:16px 6px;font-size:16px;font-weight:700;cursor:pointer;color:var(--text)}
+.jbtn kbd{display:block;font:600 12px var(--mono);color:var(--muted);margin-bottom:4px}
+.jbtn.serve:hover,.jbtn.serve.on{border-color:var(--srv);color:var(--srv)}
+.jbtn.not_serve:hover,.jbtn.not_serve.on{border-color:var(--rejB);color:var(--rejB)}
+.jbtn.on{background:var(--panel)}
+#jUnsure kbd,#jKeep kbd{font:600 12px var(--mono);color:var(--muted)}
+#jUnsure.on{border-color:var(--chg);color:var(--chg)}
+.opts{display:flex;flex-direction:column;gap:2px;margin-top:10px}
+
 .pbox{fill:transparent;stroke-width:3;cursor:pointer}
 .pbox:hover{stroke-width:6}
 .pbox.server{stroke-width:9}
 .pbox.override{stroke-dasharray:14 6}
+.pbox.ghost{stroke-opacity:0}
+.pbox.ghost:hover{stroke-opacity:.6}
 .ptag{font:700 30px "Barlow Condensed",sans-serif;paint-order:stroke;stroke:#000;stroke-width:5px;pointer-events:none}
 .sug-ring{fill:none;stroke:#fff;stroke-width:3;stroke-dasharray:6 8;pointer-events:none}
 .cline{stroke:#9ff0c6;stroke-width:2;opacity:.55;pointer-events:none}
 .netl{stroke:#ff7ad9;stroke-width:3;opacity:.7;pointer-events:none}
 .skel{stroke-width:2.5;opacity:.85;pointer-events:none;fill:none}
-.cid{font:12px var(--mono);word-break:break-all;margin:0 0 4px}
-.warn{color:var(--rejC);font-size:12.5px;margin:6px 0 0}
 .srvbtns{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0 10px}
 .srvbtns button{border:2px solid var(--line);background:var(--panel2);border-radius:8px;padding:8px 6px;cursor:pointer;text-align:left;font-size:13px}
 .srvbtns button b{font:700 18px "Barlow Condensed",sans-serif;margin-right:6px}
@@ -74,14 +79,7 @@ body[data-mode=serve] .card.not_serve .thumbs{opacity:.45}
 .btn.on-not{background:var(--panel);border-color:var(--rejB);color:var(--rejB)}
 .btn.on-uns{background:var(--panel);border-color:var(--chg);color:var(--chg)}
 #mini{width:100%;max-width:170px;display:block;margin:4px auto 8px;background:#2b6b55;border-radius:6px}
-.keys p{margin:0}
+.keys p{margin:0;line-height:1.7}
 
-/* 크게 보기 */
-.lightbox{position:fixed;inset:0;background:#000c;z-index:20;display:flex;align-items:center;justify-content:center;padding:20px}
-.lbin{background:var(--panel);border-radius:12px;padding:12px;width:min(1500px,100%);max-height:100%;overflow:auto}
-.lbhead{display:flex;align-items:center;gap:8px;margin-bottom:10px;font:13px var(--mono)}
-.lbgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.lbgrid img{width:100%;display:block;border-radius:6px}
-
-@media (max-width:1100px){.srvview{grid-template-columns:1fr}.frames{grid-template-columns:1fr}}
-@media (max-width:700px){.filters{gap:10px}.pager .hint{display:none}}
+@media (max-width:1100px){.view{grid-template-columns:1fr}.strip .thumbs button{width:110px}}
+@media (max-width:700px){.filters{gap:10px}.strip .hint{display:none}}
