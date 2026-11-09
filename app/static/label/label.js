@@ -23,7 +23,7 @@ const HINT = {
   all: "모든 묶음이에요. 서브 장면이면 서브하는 선수를 고르고 Enter, 아니면 N(또는 Enter). 동작으로 좁혀 보면 빨라요.",
   server: "지금 서브인 묶음이에요. 서브하는 선수를 고르고 Enter. 점선 = 알고리즘 추천.",
 };
-const KEYS = "<b>1~4</b> 서버 고르기 (f1 f2 n1 n2, 고르면 서브) · <b>A</b> 추천 고르기 · <b>Enter</b> 저장하고 다음<br><b>N</b> 서브 아님 · <b>U</b> 애매 (바로 저장하고 다음)<br><b>← →</b> 이전/다음 묶음 · <b>↑ ↓</b> 장 넘기기 · <b>Space</b> 자동 넘기기 멈춤/재생";
+const KEYS = "<b>1~4</b> 서버 고르기 (f1 f2 n1 n2, 고르면 서브) · <b>R</b> 추천 고르기 · <b>Enter</b> 저장하고 다음<br><b>N</b> 서브 아님 · <b>U</b> 애매 (바로 저장하고 다음)<br><b>A D</b> 또는 <b>← →</b> 이전/다음 묶음 · <b>↑ ↓</b> 장 넘기기 · <b>Space</b> 자동 넘기기 멈춤/재생";
 const S = {
   mode: "serve", views: new Set(store.get("views", ["end", "diag"])), matches: new Set(store.get("matches", ["MD", "WD", "XD"])),
   act: store.get("act", ""), todo: store.get("todo", false), play: store.get("play", true),
@@ -244,15 +244,15 @@ function bindFilters() {
 function bindKeys() {
   document.addEventListener("keydown", e => {
     if (e.target.matches("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-    const k = e.key.toLowerCase();
-    if (e.key === "ArrowRight") { e.preventDefault(); openClip(S.idx + 1); return; }
-    if (e.key === "ArrowLeft") { e.preventDefault(); openClip(S.idx - 1); return; }
+    const k = e.code?.startsWith("Key") ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();   // 한글 입력 상태에서도 같은 자판
+    if (e.key === "ArrowRight" || k === "d") { e.preventDefault(); openClip(S.idx + 1); return; }
+    if (e.key === "ArrowLeft" || k === "a") { e.preventDefault(); openClip(S.idx - 1); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); stopPlay(); showFrame(S.fsel + 1); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); stopPlay(); showFrame(S.fsel - 1); return; }
     if (e.key === " ") { e.preventDefault(); togglePlay(); return; }
     if (!S.cur) return;
     if (/^[1-4]$/.test(e.key) && S.cur.tracks[+e.key - 1]) pickTrack(S.cur.tracks[+e.key - 1]);
-    else if (k === "a" && S.cur.suggest?.track) pickTrack(S.cur.suggest.track);
+    else if (k === "r" && S.cur.suggest?.track) pickTrack(S.cur.suggest.track);
     else if (e.key === "Enter") { e.preventDefault(); saveSrv(); }
     else if (k === "n") saveSrv("not_serve");
     else if (k === "u") saveSrv("unsure");
