@@ -365,9 +365,9 @@ def frame(vid: str, idx: int, w: int | None = None):
 
 @app.get("/api/videos/{vid}/stream")
 def stream(vid: str, request: Request, kind: str = "auto"):
-    """영상 재생 (Range 지원). kind: auto | source | preview | overlay"""
+    """영상 재생 (Range 지원). kind: auto | source | preview | overlay | public | truth_overlay(정답 라벨 기준 점수)"""
     d = vdir(vid)
-    if kind in ("overlay", "public"):
+    if kind in ("overlay", "public", "truth_overlay"):
         p = d / f"{kind}.mp4"
     elif kind == "preview" or (kind == "auto" and (d / "preview.mp4").exists()):
         p = d / "preview.mp4"
@@ -885,12 +885,13 @@ def render(vid: str, req: RenderReq | None = None):
 def download(vid: str, name: str):
     d = vdir(vid)
     allowed = {"result.json": "application/json", "events.csv": "text/csv", "players.csv": "text/csv",
-               "match.json": "application/json", "overlay.mp4": "video/mp4", "public.mp4": "video/mp4"}
+               "match.json": "application/json", "overlay.mp4": "video/mp4", "public.mp4": "video/mp4",
+               "truth_overlay.mp4": "video/mp4"}
     if name not in allowed or not (d / name).exists():
         raise HTTPException(404, "파일이 없어요")
     meta = read_json(d / "meta.json", {})
     base = save_name(meta, vid, (read_json(d / "result.json", {}) or {}).get("setup") or (read_json(d / "match.json", {}) or {}).get("match") or {})
-    fn = f"{base}.mp4" if name == "overlay.mp4" else f"{base}_공개용.mp4" if name == "public.mp4" else f"{base}_{name}"
+    fn = f"{base}.mp4" if name == "overlay.mp4" else f"{base}_정답.mp4" if name == "truth_overlay.mp4" else f"{base}_공개용.mp4" if name == "public.mp4" else f"{base}_{name}"
     return FileResponse(d / name, media_type=allowed[name], filename=fn)
 
 
