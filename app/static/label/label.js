@@ -71,7 +71,7 @@ async function openClip(i) {
   if (S.clips[S.idx]?.clip !== clip) return;   // 그 사이 다른 묶음으로 넘어감
   S.cur = d;
   const lb = d.label || {};
-  S.sel = { status: d.status, track: lb.server_track || null, over: {} };
+  S.sel = { status: d.status, track: lb.server_track || null, over: {} }; S.dirty = false;
   // 저장된 장별 서버 중 track 과 다른 것 = 장별로 고친 것
   if (lb.servers) for (const f of d.frames) {
     const pid = lb.servers[f.id], p = f.players.find(p => p.pid === pid);
@@ -149,9 +149,9 @@ function render() {
     $$("#srvBtns button").forEach(b => b.onclick = () => pickTrack(b.dataset.t));
     $$("#stage .pbox").forEach(r => r.onclick = e => {
       const f = c.frames[+r.closest(".fr").dataset.k], p = f.players.find(p => p.pid === r.dataset.pid);
-      if (e.shiftKey) { S.sel.status = "serve"; if (S.sel.over[f.id] === p.pid) delete S.sel.over[f.id]; else S.sel.over[f.id] = p.pid; render(); }
+      if (e.shiftKey) { S.sel.status = "serve"; if (S.sel.over[f.id] === p.pid) delete S.sel.over[f.id]; else S.sel.over[f.id] = p.pid; S.dirty = true; render(); }
       else if (p.track) pickTrack(p.track);
-      else { S.sel.status = "serve"; S.sel.over[f.id] = p.pid; render(); }
+      else { S.sel.status = "serve"; S.sel.over[f.id] = p.pid; S.dirty = true; render(); }
     });
   }
   showFrame(S.fsel);
@@ -163,7 +163,12 @@ function showFrame(k) {
   $$("#strip button").forEach(el => el.classList.toggle("on", +el.dataset.k === S.fsel));
   drawMini();
 }
-function pickTrack(t) { S.sel.status = "serve"; S.sel.track = t; render(); }
+function pickTrack(t) { S.sel.status = "serve"; S.sel.track = t; S.dirty = true; render(); }
+/* 묶음 이동 (A D ← → · 버튼): 서버를 골라 놓고 Enter 없이 넘어가도 저장하고 넘어감 */
+function go(step) {
+  if (S.dirty && S.cur && S.sel.status === "serve" && (S.sel.track || Object.keys(S.sel.over).length)) return saveSrv(null, step);
+  openClip(S.idx + step);
+}
 function drawMini() {
   const c = S.cur; if (!c) return;
   const f = c.frames[S.fsel] || c.frames[0], W = 6.1, L = 13.4, s = 0.46, ss = 1.98, ls = 0.76, N = L / 2;
@@ -193,14 +198,15 @@ function stopPlay() { clearInterval(playT); playT = null; }
 function togglePlay() { S.play = !S.play; store.set("play", S.play); startPlay(); }
 
 /* ---------------- 저장 ---------------- */
-async function afterSave(st, rec) {
+async function afterSave(st, rec, step = 1) {
   const e = S.clips[S.idx];
   if (e) { e.status = st; e.src = "human"; e.server_track = rec.server_track; }
   detail.delete(e?.clip);
   refreshMeta();
-  if (S.todo) { S.clips.splice(S.idx, 1); openClip(S.idx); } else openClip(S.idx + 1);
+  S.dirty = false;
+  if (S.todo) { S.clips.splice(S.idx, 1); openClip(step > 0 ? S.idx : S.idx - 1); } else openClip(S.idx + step);
 }
-async function saveSrv(status) {     // 3: 서버
+async function saveSrv(status, step = 1) {
   const c = S.cur; if (!c) return;
   const st = status || S.sel.status || "serve";
   const body = { clip: c.clip, status: st };
@@ -213,7 +219,7 @@ async function saveSrv(status) {     // 3: 서버
   try {
     const rec = await api("/api/img/label", { body });
     toast(st === "serve" ? `서버 ${rec.server_track || "장별"} 저장` : `${STATUS_KO[st]}로 저장`);
-    afterSave(st, rec);
+    afterSave(st, rec, step);
   } catch (err) { toast(err.message, true); }
 }
 
@@ -245,8 +251,8 @@ function bindKeys() {
   document.addEventListener("keydown", e => {
     if (e.target.matches("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
     const k = e.code?.startsWith("Key") ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();   // 한글 입력 상태에서도 같은 자판
-    if (e.key === "ArrowRight" || k === "d") { e.preventDefault(); openClip(S.idx + 1); return; }
-    if (e.key === "ArrowLeft" || k === "a") { e.preventDefault(); openClip(S.idx - 1); return; }
+    if (e.key === "ArrowRight" || k === "d") { e.preventDefault(); go(1); return; }
+    if (e.key === "ArrowLeft" || k === "a") { e.preventDefault(); go(-1); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); stopPlay(); showFrame(S.fsel + 1); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); stopPlay(); showFrame(S.fsel - 1); return; }
     if (e.key === " ") { e.preventDefault(); togglePlay(); return; }
@@ -262,7 +268,7 @@ function boot() {
   $("#toVideo").href = "/lab#" + (store.get("vid", "") || "") + "/truth";
   $$(".tabs button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
   $("#bNot").onclick = () => saveSrv("not_serve"); $("#bUnsure").onclick = () => saveSrv("unsure"); $("#bSave").onclick = () => saveSrv();
-  $("#bPrev").onclick = () => openClip(S.idx - 1); $("#bNext").onclick = () => openClip(S.idx + 1);
+  $("#bPrev").onclick = () => go(-1); $("#bNext").onclick = () => go(1);
   $("#bPlay").onclick = togglePlay;
   $("#zoomChk").checked = store.get("zoom", true);
   $("#boxChk").checked = store.get("box", false);
