@@ -221,13 +221,17 @@ KINDS = ("serve", "all", "server")
 
 @router.get("/api/img/clips")
 def list_clips(kind: str = "serve", views: str = "end,diag", match: str = "", action: str = "", only_ok: int = 1,
-               todo: int = 0):
+               todo: int = 0, label: str = ""):
     """kind: serve = AI-Hub 가 서브라고 한 묶음 · all = 전체 · server = 지금 서브로 정해진 묶음(서버 지정용).
-    todo=1: 아직 손 안 댄 것만 (serve/all: 사람이 확인 안 함, server: 서버 미지정)."""
+    label: '' 전체 · todo 검수 필요(사람이 아직 확인 안 함, 가짜 라벨만 있거나 라벨 없음) · done 정답(사람이 확인).
+      정답 기준 — serve/all: 사람이 서브 여부를 저장, server: 사람이 서버까지 저장. (todo=1 은 label=todo 와 같음)"""
+    if todo and not label:
+        label = "todo"
     if kind not in KINDS:
         raise HTTPException(400, f"kind 는 {KINDS} 중 하나")
     lst, _ = _clips()
     labs = _labels()
+    pse = _pseudos()
     vs = {v for v in views.split(",") if v}
     ms = {m for m in match.split(",") if m}
     acts = {a for a in action.split(",") if a}
@@ -243,11 +247,17 @@ def list_clips(kind: str = "serve", views: str = "end,diag", match: str = "", ac
             continue
         if kind == "server" and st != "serve":
             continue
-        if todo and (lb.get("server_track") if kind == "server" else src == "human"):
-            continue
+        done = bool(lb.get("server_track")) if kind == "server" else src == "human"
+        ps = pse.get(c["clip"])
         out.append({"clip": c["clip"], "view": c["view"], "match": c["match"], "cam": c["cam"], "action": c["action"],
                     "code_serve": c["code_serve"], "status": st, "src": src, "server_track": lb.get("server_track"),
+                    "done": done, "pseudo": ps["server_track"] if ps and not done else None,
                     "ids": [f[1] for f in c["frames"]]})
+    n_done = sum(1 for c in out if c["done"])
+    n_pseudo = sum(1 for c in out if c["pseudo"])
+    total = len(out)
+    if label in ("todo", "done"):
+        out = [c for c in out if c["done"] == (label == "done")]
     agree = {}
     for lb in labs.values():
         if lb.get("status") == "serve" and lb.get("server_track") and lb.get("suggest_track"):
@@ -262,8 +272,7 @@ def list_clips(kind: str = "serve", views: str = "end,diag", match: str = "", ac
                 flipped["서브→아님"] += 1
             elif not c["code_serve"] and lb["status"] == "serve":
                 flipped["아님→서브"] += 1
-    return {"clips": out, "total": len(out),
-            "checked": sum(1 for c in out if (c["server_track"] if kind == "server" else c["src"] == "human")),
+    return {"clips": out, "total": total, "checked": n_done, "done": n_done, "todo": total - n_done, "todo_pseudo": n_pseudo,
             "labels": len(labs), "flipped": flipped, "with_server": sum(1 for lb in labs.values() if lb.get("server_track")),
             "agree": {v: {"same": a[0], "n": a[1]} for v, a in agree.items()}}
 

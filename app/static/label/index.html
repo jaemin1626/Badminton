@@ -59,7 +59,12 @@
       <option value="UNI">기타 (UNI)</option>
     </select>
   </label>
-  <label class="sw"><input type="checkbox" id="fTodo"> <span id="fTodoLab">아직 확인 안 한 것만</span></label>
+  <div class="fgroup labf" id="fLab" aria-label="라벨">
+    <span class="flab">라벨</span>
+    <button data-v="todo" title="사람이 아직 확인 안 한 것 (가짜 라벨만 있거나 라벨 없음). 확인하면 정답으로 옮겨가요">검수 필요 <b id="nTodo"></b></button>
+    <button data-v="done" title="사람이 라벨링했거나 확인한 것 = 정답">정답 <b id="nDone"></b></button>
+    <button data-v="" title="둘 다">전체</button>
+  </div>
   <div class="spacer"></div>
   <span class="hint small" id="modeHint"></span>
 </div>

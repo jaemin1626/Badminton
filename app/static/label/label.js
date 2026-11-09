@@ -26,25 +26,25 @@ const HINT = {
 const KEYS = "<b>1~4</b> 서버 고르기 (f1 f2 n1 n2, 고르면 서브) · <b>R</b> 추천 고르기 · <b>Enter</b> 저장하고 다음<br><b>N</b> 서브 아님 · <b>U</b> 애매 (바로 저장하고 다음)<br><b>A D</b> 또는 <b>← →</b> 이전/다음 묶음 · <b>↑ ↓</b> 장 넘기기 · <b>Space</b> 자동 넘기기 멈춤/재생";
 const S = {
   mode: "serve", views: new Set(store.get("views", ["end", "diag"])), matches: new Set(store.get("matches", ["MD", "WD", "XD"])),
-  act: store.get("act", ""), todo: store.get("todo", false), play: store.get("play", true),
+  act: store.get("act", ""), lab: store.get("lab", "todo"), play: store.get("play", true),
   clips: [], meta: {}, idx: 0, cur: null, sel: null, fsel: 0, crop: null,
 };
 const detail = new Map();   // 묶음 상세 캐시 (다음 묶음 미리 받기)
 
 /* ---------------- 목록 ---------------- */
 const listQ = todo => new URLSearchParams({ kind: S.mode, views: [...S.views].join(","), match: [...S.matches].join(","),
-  action: S.mode === "all" ? S.act : "", todo: todo ? 1 : 0 });
+  action: S.mode === "all" ? S.act : "", label: todo || "" });
 async function load() {
-  const r = await api("/api/img/clips?" + listQ(S.todo));
-  S.clips = r.clips; S.meta = r;
-  if (S.todo) await refreshMeta(); else prog();
+  const r = await api("/api/img/clips?" + listQ(S.lab));
+  S.clips = r.clips; S.meta = r; prog();
 }
 async function refreshMeta() {
-  try { const r = await api("/api/img/clips?" + listQ(false)); S.meta = { ...r, clips: undefined }; prog(); } catch { }
+  try { const r = await api("/api/img/clips?" + listQ("done")); S.meta = { ...r, clips: undefined }; prog(); } catch { }
 }
 function prog() {
   const m = S.meta, f = m.flipped || {};
-  let s = S.mode === "server" ? `서버 지정 ${m.checked ?? 0} / ${m.total ?? 0}` : `확인 ${m.checked ?? 0} / ${m.total ?? 0}`;
+  $("#nTodo").textContent = (m.todo ?? 0).toLocaleString(); $("#nDone").textContent = (m.done ?? 0).toLocaleString();
+  let s = `정답 ${m.done ?? 0} / ${m.total ?? 0} · 검수 필요 ${m.todo ?? 0}${m.todo_pseudo ? ` (가짜 라벨 ${m.todo_pseudo})` : ""}`;
   s += ` · 바꾼 것 서브→아님 ${f["서브→아님"] || 0} · 아님→서브 ${f["아님→서브"] || 0}`;
   const ag = Object.entries(m.agree || {}).map(([v, a]) => `${VIEW_KO[v] || v} ${Math.round(100 * a.same / a.n)}%(${a.n})`);
   if (S.mode === "server" && ag.length) s += ` · 추천 일치 ${ag.join(" ")}`;
@@ -123,14 +123,17 @@ function render() {
   $("#cPos").textContent = S.clips.length ? `${S.idx + 1} / ${S.clips.length}` : "0";
   if (!c) {
     $("#stage").className = "stage";
-    $("#stage").innerHTML = `<p class="empty">${S.todo ? "남은 묶음이 없어요 👍" : "조건에 맞는 묶음이 없어요"}</p>`;
+    $("#stage").innerHTML = `<p class="empty">${S.lab === "todo" ? "검수할 묶음이 없어요 👍" : "조건에 맞는 묶음이 없어요"}</p>`;
     $("#strip").innerHTML = ""; $("#cAct").textContent = ""; $("#cId").textContent = ""; $("#cMeta").textContent = "";
     $("#srvBtns").innerHTML = ""; $("#sugg").textContent = ""; $("#cWarn").classList.add("hidden");
     return;
   }
   const st = S.sel.status, code = c.action.split("-")[0];
   $("#stage").className = "stage " + st;
-  $("#stage").innerHTML = c.frames.map(frameSvg).join("") + `<span class="verdict ${st}">${STATUS_KO[st]}${st === "serve" ? (S.sel.track ? " · 서버 " + S.sel.track : " · 서버를 고르세요") : ""}</span>`;
+  // 정답 = 사람이 저장한 것 (서버 지정 단계는 서버까지 저장해야 정답). 나머지 = 검수 필요 (가짜 라벨이 미리 골라져 있을 수 있음)
+  const done = S.mode === "server" ? !!c.label?.server_track : !!c.label?.status;
+  const srcTag = done ? `<span class="src">정답</span>` : `<span class="src todo">검수 필요${c.pseudo && S.fromPseudo ? " · 가짜 라벨" : ""}</span>`;
+  $("#stage").innerHTML = c.frames.map(frameSvg).join("") + `<span class="verdict ${st}">${srcTag}${STATUS_KO[st]}${st === "serve" ? (S.sel.track ? " · 서버 " + S.sel.track : " · 서버를 고르세요") : ""}</span>`;
   $("#strip").innerHTML = c.frames.map((f, k) => `<button data-k="${k}" title="${k + 1}장"><img alt="" src="/api/img/thumb/${encodeURIComponent(f.id)}"><span>${k + 1}</span></button>`).join("");
   $$("#strip button").forEach(b => b.onclick = () => { stopPlay(); showFrame(+b.dataset.k); });
   $("#cAct").innerHTML = `${esc(c.action)}<small>${ACT_KO[code] || ""}${c.code_serve ? "" : " · AI-Hub 는 서브 아님"}</small>`;
@@ -142,7 +145,9 @@ function render() {
 
   {
     const lb = c.label;
-    $("#sState").textContent = lb?.server_track ? `저장됨 · 서버 ${lb.server_track}` : lb?.status ? `저장됨 · ${STATUS_KO[lb.status]}` : `AI-Hub · ${STATUS_KO[c.status]}`;
+    $("#sState").textContent = done ? (lb.server_track ? `정답 · 서버 ${lb.server_track}` : `정답 · ${STATUS_KO[lb.status]}`)
+      : c.pseudo ? `검수 필요 · 가짜 라벨 ${c.pseudo.server_track}` : "검수 필요";
+    $("#sState").style.color = done ? "var(--srv)" : "var(--chg)";
     const sg = c.suggest;
     const ps = c.pseudo;
     $("#sugg").innerHTML = (ps ? `가짜 라벨 <b style="color:${TCOL(ps.server_track)}">${esc(ps.server_track)}</b> · 확률 ${Math.round(ps.prob * 100)}%${ps.prob < 0.8 ? " · <span class='warn'>낮음</span>" : ""}<br>` : "") + (sg ? `알고리즘 추천 <b style="color:${TCOL(sg.track)}">${esc(sg.track)}</b> (${TRACK_KO[sg.track] || ""}) · 확신 ${Math.round(sg.conf * 100)}%${sg.conf < 0.3 ? " · <span class='warn'>낮음</span>" : ""}` : "추천 없음 (한쪽 선수 위치를 모름)");
@@ -207,7 +212,7 @@ async function afterSave(st, rec, step = 1) {
   detail.delete(e?.clip);
   refreshMeta();
   S.dirty = false;
-  if (S.todo) { S.clips.splice(S.idx, 1); openClip(step > 0 ? S.idx : S.idx - 1); } else openClip(S.idx + step);
+  if (S.lab === "todo") { S.clips.splice(S.idx, 1); openClip(step > 0 ? S.idx : S.idx - 1); } else openClip(S.idx + step);   // 검수하면 정답으로 옮겨가 목록에서 빠짐
 }
 async function saveSrv(status, step = 1) {
   const c = S.cur; if (!c) return;
@@ -234,7 +239,6 @@ async function setMode(m, at) {
   const srvMode = m === "server";
   $$(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
   $("#fActWrap").classList.toggle("hidden", m !== "all");
-  $("#fTodoLab").textContent = srvMode ? "서버 아직 안 고른 것만" : "아직 확인 안 한 것만";
   $("#modeHint").textContent = HINT[m];
   $("#keysTxt").innerHTML = KEYS;
   detail.clear();
@@ -249,7 +253,10 @@ function bindFilters() {
   });
   chips("#fView", S.views, "views"); chips("#fMatch", S.matches, "matches");
   $("#fAct").value = S.act; $("#fAct").onchange = e => { S.act = e.target.value; store.set("act", S.act); setMode(S.mode); };
-  $("#fTodo").checked = S.todo; $("#fTodo").onchange = e => { S.todo = e.target.checked; store.set("todo", S.todo); setMode(S.mode); };
+  $$("#fLab button").forEach(b => {
+    b.classList.toggle("on", b.dataset.v === S.lab);
+    b.onclick = () => { S.lab = b.dataset.v; store.set("lab", S.lab); $$("#fLab button").forEach(x => x.classList.toggle("on", x === b)); setMode(S.mode); };
+  });
 }
 function bindKeys() {
   document.addEventListener("keydown", e => {

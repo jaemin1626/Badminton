@@ -14,6 +14,9 @@ body.lbl{--srv:#3ecf8e;--not:#7d8a84;--chg:#ffa63d;
 .flab{color:var(--muted);font-size:12px;margin-right:4px}
 .fgroup button{border:1px solid var(--line);background:none;border-radius:999px;padding:3px 11px;font-size:13px;color:var(--muted);cursor:pointer}
 .fgroup button.on{background:var(--panel2);border-color:var(--wood);color:var(--text)}
+.labf button b{font:600 12px var(--mono);margin-left:3px}
+.labf button[data-v=todo].on{border-color:var(--chg);color:var(--chg)}
+.labf button[data-v=done].on{border-color:var(--srv);color:var(--srv)}
 .fsel{display:flex;align-items:center;gap:6px}
 .fsel select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
 
@@ -33,6 +36,8 @@ body.lbl{--srv:#3ecf8e;--not:#7d8a84;--chg:#ffa63d;
 .verdict.serve{background:var(--srv);color:#0d1a14}
 .verdict.not_serve{background:#000b;color:var(--muted)}
 .verdict.unsure{background:var(--chg);color:#1c1611}
+.verdict .src{display:inline-block;font-size:12.5px;border-radius:4px;padding:0 6px;margin-right:8px;background:#0d1a14;color:var(--srv)}
+.verdict .src.todo{color:var(--chg)}
 .empty{color:var(--muted);padding:80px 0;text-align:center;width:100%}
 
 .strip{display:flex;align-items:center;gap:10px}
