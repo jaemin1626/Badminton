@@ -1,7 +1,6 @@
 /* Smash Label — 이미지 서브 라벨 (AI-Hub 변환 데이터). 모든 단계가 묶음 하나를 크게 한 장씩 본다.
-   1 서브 확인: AI-Hub 서브(SRV) 묶음 → S 서브 / N 서브 아님 (누르면 저장하고 다음)
-   2 전체 확인: 모든 묶음 → 서브인데 아니라고 된 것을 S 로 바꿈
-   3 서버 지정: 지금 서브인 묶음 → 서버 선수를 누름 */
+   어느 단계든 서브면 서버 선수(1~4·클릭)를 고르고 Enter, 아니면 N. 단계는 보여 줄 묶음만 다름:
+   1 서브 확인: AI-Hub 서브(SRV) 묶음 · 2 전체 확인: 모든 묶음 · 3 서버 지정: 서브인데 서버가 안 정해진 것 */
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 async function api(url, opt) {
@@ -20,14 +19,11 @@ const ACT_KO = { SRV: "서브", HPN: "헤어핀", PSH: "푸시", DRV: "드라이
 const TRACK_KO = { f1: "먼 쪽 1", f2: "먼 쪽 2", n1: "가까운 쪽 1", n2: "가까운 쪽 2" };
 const TCOL = t => `var(--t-${t || "x"}, #c5ccc8)`;
 const HINT = {
-  serve: "AI-Hub 가 서브라고 한 묶음이에요. 서브면 S, 아니면 N.",
-  all: "모든 묶음이에요. 서브 장면이면 S, 아니면 N. 동작으로 좁혀 보면 빨라요.",
-  server: "서브하는 선수를 고르세요. 점선 테두리 = 알고리즘 추천.",
+  serve: "AI-Hub 가 서브라고 한 묶음이에요. 서브하는 선수를 고르고 Enter, 서브가 아니면 N. 점선 = 알고리즘 추천.",
+  all: "모든 묶음이에요. 서브 장면이면 서브하는 선수를 고르고 Enter, 아니면 N(또는 Enter). 동작으로 좁혀 보면 빨라요.",
+  server: "지금 서브인 묶음이에요. 서브하는 선수를 고르고 Enter. 점선 = 알고리즘 추천.",
 };
-const KEYS = {
-  check: "<b>S</b> 서브 · <b>N</b> 서브 아님 · <b>U</b> 애매 · <b>Enter</b> 지금 상태 그대로 맞음<br><b>← →</b> 이전/다음 묶음 · <b>↑ ↓</b> 장 넘기기 · <b>Space</b> 자동 넘기기 멈춤/재생",
-  server: "<b>1~4</b> 서버 (f1 f2 n1 n2) · <b>A</b> 추천 고르기 · <b>Enter</b> 저장하고 다음 · <b>N</b> 서브 아님 · <b>U</b> 애매<br><b>← →</b> 이전/다음 묶음 · <b>↑ ↓</b> 장 넘기기 · <b>Space</b> 자동 넘기기 멈춤/재생",
-};
+const KEYS = "<b>1~4</b> 서버 고르기 (f1 f2 n1 n2, 고르면 서브) · <b>A</b> 추천 고르기 · <b>Enter</b> 저장하고 다음<br><b>N</b> 서브 아님 · <b>U</b> 애매 (바로 저장하고 다음)<br><b>← →</b> 이전/다음 묶음 · <b>↑ ↓</b> 장 넘기기 · <b>Space</b> 자동 넘기기 멈춤/재생";
 const S = {
   mode: "serve", views: new Set(store.get("views", ["end", "diag"])), matches: new Set(store.get("matches", ["MD", "WD", "XD"])),
   act: store.get("act", ""), todo: store.get("todo", false), play: store.get("play", true),
@@ -102,10 +98,10 @@ function serverPid(f) {
 }
 const SKEL = [[5, 7], [7, 9], [6, 8], [8, 10], [5, 6], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [0, 5], [0, 6]];
 function frameSvg(f, k) {
-  const W = f.w, H = f.h, srvMode = S.mode === "server";
+  const W = f.w, H = f.h;
   const vb = $("#zoomChk").checked && S.crop ? S.crop.join(" ") : `0 0 ${W} ${H}`;
-  const showBox = srvMode || $("#boxChk").checked, showKp = $("#boxChk").checked;
-  const sug = srvMode ? S.cur.suggest?.track : null, srv = srvMode && S.sel.status === "serve" ? serverPid(f) : null;
+  const showKp = $("#boxChk").checked;
+  const sug = S.cur.suggest?.track, srv = S.sel.status === "serve" ? serverPid(f) : null;
   let g = `<image href="${fileUrl(f)}" width="${W}" height="${H}"/>`;
   if ($("#linesChk").checked && f.court.lines_px) g += f.court.lines_px.map(l => `<line class="cline" x1="${l[0][0]}" y1="${l[0][1]}" x2="${l[1][0]}" y2="${l[1][1]}"/>`).join("");
   if ($("#linesChk").checked && f.net) g += `<line class="netl" x1="${f.net[0][0]}" y1="${f.net[0][1]}" x2="${f.net[1][0]}" y2="${f.net[1][1]}"/>`;
@@ -113,27 +109,26 @@ function frameSvg(f, k) {
     const [x1, y1, x2, y2] = p.bbox, col = TCOL(p.track);
     if (showKp && p.kpts) g += SKEL.filter(([a, b]) => p.kpts[a][2] && p.kpts[b][2]).map(([a, b]) => `<line class="skel" stroke="${col}" x1="${p.kpts[a][0]}" y1="${p.kpts[a][1]}" x2="${p.kpts[b][0]}" y2="${p.kpts[b][1]}"/>`).join("");
     if (sug && p.track === sug) g += `<rect class="sug-ring" x="${x1 - 14}" y="${y1 - 14}" width="${x2 - x1 + 28}" height="${y2 - y1 + 28}" rx="10"/>`;
-    if (!showBox) continue;
     const isS = srv === p.pid, over = isS && S.sel.over[f.id];
     g += `<rect class="pbox ${isS ? "server" : ""} ${over ? "override" : ""}" data-pid="${p.pid}" stroke="${col}" x="${x1}" y="${y1}" width="${x2 - x1}" height="${y2 - y1}"><title>${TRACK_KO[p.track] || p.pid}</title></rect>`;
     g += `<text class="ptag" fill="${col}" x="${x1}" y="${y1 - 8}">${esc(p.track || p.pid)}${isS ? " ★" : ""}</text>`;
   }
-  const warn = f.checks?.length ? `<span class="fwarn">${esc(f.checks.join(" · "))}</span>` : (srvMode && f.players.some(p => !p.track) ? `<span class="fwarn">선수 잇기 실패</span>` : "");
+  const warn = f.checks?.length ? `<span class="fwarn">${esc(f.checks.join(" · "))}</span>` : (f.players.some(p => !p.track) ? `<span class="fwarn">선수 잇기 실패</span>` : "");
   return `<div class="fr" data-k="${k}"><svg viewBox="${vb}">${g}</svg><span class="flabel">${k + 1} / ${S.cur.frames.length}장 · 프레임 ${f.frame}</span>${warn}</div>`;
 }
 function render() {
-  const c = S.cur, srvMode = S.mode === "server";
+  const c = S.cur;
   $("#cPos").textContent = S.clips.length ? `${S.idx + 1} / ${S.clips.length}` : "0";
   if (!c) {
     $("#stage").className = "stage";
     $("#stage").innerHTML = `<p class="empty">${S.todo ? "남은 묶음이 없어요 👍" : "조건에 맞는 묶음이 없어요"}</p>`;
     $("#strip").innerHTML = ""; $("#cAct").textContent = ""; $("#cId").textContent = ""; $("#cMeta").textContent = "";
-    $("#srvBtns").innerHTML = ""; $("#sugg").textContent = ""; $("#kState").textContent = ""; $("#cWarn").classList.add("hidden");
+    $("#srvBtns").innerHTML = ""; $("#sugg").textContent = ""; $("#cWarn").classList.add("hidden");
     return;
   }
   const st = S.sel.status, code = c.action.split("-")[0];
-  $("#stage").className = "stage " + (srvMode ? "" : st);
-  $("#stage").innerHTML = c.frames.map(frameSvg).join("") + (srvMode ? "" : `<span class="verdict ${st}">${STATUS_KO[st]}${c.status_src === "human" ? " · 확인함" : ""}</span>`);
+  $("#stage").className = "stage " + st;
+  $("#stage").innerHTML = c.frames.map(frameSvg).join("") + `<span class="verdict ${st}">${STATUS_KO[st]}${st === "serve" ? (S.sel.track ? " · 서버 " + S.sel.track : " · 서버를 고르세요") : ""}</span>`;
   $("#strip").innerHTML = c.frames.map((f, k) => `<button data-k="${k}" title="${k + 1}장"><img alt="" src="/api/img/thumb/${encodeURIComponent(f.id)}"><span>${k + 1}</span></button>`).join("");
   $$("#strip button").forEach(b => b.onclick = () => { stopPlay(); showFrame(+b.dataset.k); });
   $("#cAct").innerHTML = `${esc(c.action)}<small>${ACT_KO[code] || ""}${c.code_serve ? "" : " · AI-Hub 는 서브 아님"}</small>`;
@@ -143,14 +138,9 @@ function render() {
   $("#cWarn").textContent = bad.length ? "주의: " + [...new Set(bad)].join(" · ") : "";
   $("#cWarn").classList.toggle("hidden", !bad.length);
 
-  // 1·2
-  $("#kState").textContent = c.status_src === "human" ? `확인함 · ${STATUS_KO[c.status]}` : `AI-Hub · ${STATUS_KO[c.status]}`;
-  $("#jServe").classList.toggle("on", st === "serve"); $("#jNot").classList.toggle("on", st === "not_serve"); $("#jUnsure").classList.toggle("on", st === "unsure");
-
-  // 3
-  if (srvMode) {
+  {
     const lb = c.label;
-    $("#sState").textContent = lb?.server_track ? `저장됨 · ${lb.server_track}` : lb?.status && lb.status !== "serve" ? `저장됨 · ${STATUS_KO[lb.status]}` : "미지정";
+    $("#sState").textContent = lb?.server_track ? `저장됨 · 서버 ${lb.server_track}` : lb?.status ? `저장됨 · ${STATUS_KO[lb.status]}` : `AI-Hub · ${STATUS_KO[c.status]}`;
     const sg = c.suggest;
     $("#sugg").innerHTML = sg ? `추천 <b style="color:${TCOL(sg.track)}">${esc(sg.track)}</b> (${TRACK_KO[sg.track] || ""}) · 확신 ${Math.round(sg.conf * 100)}%${sg.conf < 0.3 ? " · <span class='warn'>낮음</span>" : ""}` : "추천 없음 (한쪽 선수 위치를 모름)";
     $("#srvBtns").innerHTML = c.tracks.map((t, i) => `<button data-t="${t}" class="${st === "serve" && S.sel.track === t ? "on" : ""}" style="color:${TCOL(t)}"><b>${i + 1}</b>${esc(t)} <span style="color:var(--muted)">${TRACK_KO[t] || ""}</span>${sg?.track === t ? `<span class="sg">추천</span>` : ""}</button>`).join("");
@@ -171,7 +161,7 @@ function showFrame(k) {
   S.fsel = ((k % n) + n) % n;
   $$("#stage .fr").forEach(el => el.classList.toggle("on", +el.dataset.k === S.fsel));
   $$("#strip button").forEach(el => el.classList.toggle("on", +el.dataset.k === S.fsel));
-  if (S.mode === "server") drawMini();
+  drawMini();
 }
 function pickTrack(t) { S.sel.status = "serve"; S.sel.track = t; render(); }
 function drawMini() {
@@ -210,15 +200,6 @@ async function afterSave(st, rec) {
   refreshMeta();
   if (S.todo) { S.clips.splice(S.idx, 1); openClip(S.idx); } else openClip(S.idx + 1);
 }
-async function saveCheck(status) {   // 1·2: 서브인지
-  const c = S.cur; if (!c) return;
-  const st = status || S.sel.status;
-  try {
-    const rec = await api("/api/img/label", { body: { clip: c.clip, status: st } });
-    toast(`${STATUS_KO[st]}${st !== c.status ? " (바꿈)" : ""}`);
-    afterSave(st, rec);
-  } catch (err) { toast(err.message, true); }
-}
 async function saveSrv(status) {     // 3: 서버
   const c = S.cur; if (!c) return;
   const st = status || S.sel.status || "serve";
@@ -242,14 +223,10 @@ async function setMode(m, at) {
   S.mode = m; document.body.dataset.mode = m;
   const srvMode = m === "server";
   $$(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
-  $("#boxCheck").classList.toggle("hidden", srvMode);
-  $("#boxSrv").classList.toggle("hidden", !srvMode);
-  $("#boxCourt").classList.toggle("hidden", !srvMode);
   $("#fActWrap").classList.toggle("hidden", m !== "all");
   $("#fTodoLab").textContent = srvMode ? "서버 아직 안 고른 것만" : "아직 확인 안 한 것만";
-  $("#boxChk").parentElement.lastChild.textContent = srvMode ? " 관절" : " 선수 박스·관절";
   $("#modeHint").textContent = HINT[m];
-  $("#keysTxt").innerHTML = srvMode ? KEYS.server : KEYS.check;
+  $("#keysTxt").innerHTML = KEYS;
   detail.clear();
   await load();
   const i = at ? S.clips.findIndex(c => c.clip === at) : -1;
@@ -274,13 +251,6 @@ function bindKeys() {
     if (e.key === "ArrowUp") { e.preventDefault(); stopPlay(); showFrame(S.fsel - 1); return; }
     if (e.key === " ") { e.preventDefault(); togglePlay(); return; }
     if (!S.cur) return;
-    if (S.mode !== "server") {
-      if (k === "s" || k === "y") saveCheck("serve");
-      else if (k === "n") saveCheck("not_serve");
-      else if (k === "u") saveCheck("unsure");
-      else if (e.key === "Enter") { e.preventDefault(); saveCheck(); }
-      return;
-    }
     if (/^[1-4]$/.test(e.key) && S.cur.tracks[+e.key - 1]) pickTrack(S.cur.tracks[+e.key - 1]);
     else if (k === "a" && S.cur.suggest?.track) pickTrack(S.cur.suggest.track);
     else if (e.key === "Enter") { e.preventDefault(); saveSrv(); }
@@ -291,8 +261,6 @@ function bindKeys() {
 function boot() {
   $("#toVideo").href = "/lab#" + (store.get("vid", "") || "") + "/truth";
   $$(".tabs button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
-  $("#jServe").onclick = () => saveCheck("serve"); $("#jNot").onclick = () => saveCheck("not_serve");
-  $("#jUnsure").onclick = () => saveCheck("unsure"); $("#jKeep").onclick = () => saveCheck();
   $("#bNot").onclick = () => saveSrv("not_serve"); $("#bUnsure").onclick = () => saveSrv("unsure"); $("#bSave").onclick = () => saveSrv();
   $("#bPrev").onclick = () => openClip(S.idx - 1); $("#bNext").onclick = () => openClip(S.idx + 1);
   $("#bPlay").onclick = togglePlay;

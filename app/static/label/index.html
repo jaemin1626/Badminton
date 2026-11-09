@@ -22,9 +22,9 @@
     <span class="segb on" aria-current="page">이미지</span>
   </div>
   <nav class="tabs" role="tablist">
-    <button role="tab" data-mode="serve" title="AI-Hub 가 서브라고 한 묶음을 한 장씩 보고 서브인지 판정">1 · 서브 확인</button>
-    <button role="tab" data-mode="all" title="모든 묶음을 한 장씩 보고 서브인지 판정 (서브인데 아니라고 된 것 바꾸기)">2 · 전체 확인</button>
-    <button role="tab" data-mode="server" title="서브 묶음에서 서브하는 선수를 골라요">3 · 서버 지정</button>
+    <button role="tab" data-mode="serve" title="AI-Hub 가 서브라고 한 묶음 · 서버를 고르거나 서브 아님">1 · 서브 확인</button>
+    <button role="tab" data-mode="all" title="모든 묶음 · 서브인데 아니라고 된 것은 서버를 골라 서브로">2 · 전체 확인</button>
+    <button role="tab" data-mode="server" title="서브인데 서버가 안 정해진 묶음">3 · 서버 지정</button>
   </nav>
   <div class="spacer"></div>
   <span class="num" id="prog"></span>
@@ -83,21 +83,8 @@
       <p class="warn hidden" id="cWarn"></p>
     </section>
 
-    <!-- 1·2: 서브인지 -->
-    <section class="box" id="boxCheck">
-      <h2>서브인가요? <span class="tag" id="kState"></span></h2>
-      <div class="judge">
-        <button class="jbtn serve" id="jServe"><kbd>S</kbd>서브</button>
-        <button class="jbtn not_serve" id="jNot"><kbd>N</kbd>서브 아님</button>
-      </div>
-      <button class="btn wide" id="jUnsure"><kbd>U</kbd> 애매</button>
-      <button class="btn primary wide" id="jKeep">지금 상태 그대로 맞음 · 다음 ⏎</button>
-      <p class="hint small">누르면 저장하고 바로 다음 묶음으로 넘어가요.</p>
-    </section>
-
-    <!-- 3: 서버 -->
-    <section class="box hidden" id="boxSrv">
-      <h2>서버 <span class="tag" id="sState">미지정</span></h2>
+    <section class="box" id="boxSrv">
+      <h2>누가 서브하나요? <span class="tag" id="sState"></span></h2>
       <p class="hint" id="sugg"></p>
       <div class="srvbtns" id="srvBtns"></div>
       <p class="hint small">이미지에서 선수를 눌러도 돼요. 같은 선수를 장마다 자동으로 이어요.<br>이어 붙이기가 틀린 장은 <b>Shift+클릭</b>으로 그 장만 고쳐요.</p>
@@ -115,12 +102,12 @@
       </div>
       <div class="opts">
         <label class="sw"><input type="checkbox" id="zoomChk" checked> 선수 쪽 확대</label>
-        <label class="sw"><input type="checkbox" id="boxChk"> 선수 박스·관절</label>
+        <label class="sw"><input type="checkbox" id="boxChk"> 관절</label>
         <label class="sw"><input type="checkbox" id="linesChk"> 코트 라인</label>
       </div>
     </section>
 
-    <section class="box hidden" id="boxCourt">
+    <section class="box" id="boxCourt">
       <h2>코트 <span class="tag" id="mapTag"></span></h2>
       <svg id="mini" viewBox="-1.6 -1.6 9.3 16.6" aria-label="선수 코트 위치"></svg>
     </section>
