@@ -1,4 +1,4 @@
-"""정답 라벨(data/labels/<영상>.json) 기준 스코어보드 영상 만들기 → data/videos/<영상>/truth_overlay.mp4
+"""정답 라벨(data/labels/<영상>.json) 기준 스코어보드 영상 만들기 → data/videos/<영상>/<영상>.mp4 (예: 20261108_match1/20261108_match1.mp4)
 
 정답 라벨 = 서브마다 {t: 서브 시각, server: 이 서브를 넣은 팀(= 직전 랠리 득점 팀)} + 최종 점수.
   j번 서브 때 점수 = 2~j번 서브의 서버 팀 수 (첫 서브는 0:0).
@@ -60,7 +60,7 @@ def main(vids):
         fin = events[-1]["score"]
         print(f"{vid}: 서브 {len(events) - 1}개 · 첫 서버 {setup['first']} · 최종 {fin['A']}:{fin['B']}", flush=True)
         src = d / json.load(open(d / "meta.json", encoding="utf-8")).get("file", "source.mp4")
-        tmp, out = d / "truth_overlay.tmp.mp4", d / "truth_overlay.mp4"
+        tmp, out = d / f"{vid}.tmp.mp4", d / f"{vid}.mp4"
         t0 = time.time()
         last = [0.0]
 
