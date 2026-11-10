@@ -345,3 +345,10 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .teams .tname:focus{outline:none;border-bottom-color:var(--wood)}
 .swl{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);margin-top:8px}
 .swl input{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px;color:var(--text);font:13px var(--mono)}
+
+/* 영상 정답 라벨 (/label/video): 정답 입력 탭만 */
+.lblv .top .up, .lblv .top .tabs{display:none}
+.lblv .seg.kind{display:flex;gap:2px}
+.lblv .segb{padding:5px 14px;border-radius:6px;font-size:13px;color:var(--muted);text-decoration:none;cursor:pointer}
+.lblv .segb:hover{color:var(--text)}
+.lblv .segb.on{background:var(--line);color:var(--text);font-weight:700;cursor:default}

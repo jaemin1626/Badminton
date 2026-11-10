@@ -47,6 +47,16 @@ const S = {
   view: { t0: 0, span: 40 }, jobTimer: null, truth: [],
 };
 
+// /label/video 로 열면 '영상 정답 라벨' 화면: 정답 입력 탭만 쓰고, 머리말은 라벨 페이지(비디오 | 이미지)
+const LABEL = location.pathname.startsWith("/label");
+function labelChrome() {
+  document.body.classList.add("lblv");
+  document.title = "Smash Label · 영상 정답";
+  const br = $(".top .brand"); br.innerHTML = "Smash <b>Label</b>"; br.href = "/label/video";
+  br.insertAdjacentHTML("afterend", `<div class="seg kind" role="group" aria-label="라벨 종류"><span class="segb on" aria-current="page">비디오</span><a class="segb" href="/label#img/serve" title="AI-Hub 이미지 서브·서버 라벨">이미지</a></div>`);
+  $$('.top a.link[href^="/label"]').forEach(a => a.parentNode.removeChild(a));
+}
+
 /* ---------------- 공통 ---------------- */
 async function api(url, opt = {}) {
   const o = { method: opt.method || "GET", headers: {} };
@@ -121,6 +131,7 @@ function iou(a, b) {
 
 /* ---------------- 시작 ---------------- */
 async function boot() {
+  if (LABEL) labelChrome();
   const list = await api("/api/videos");
   const sel = $("#vidSel");
   sel.innerHTML = list.map(m => `<option value="${m.id}">${m.name} · ${fmt(m.duration || 0)}</option>`).join("") || `<option value="">영상 없음 · 운영 화면에서 올려 주세요</option>`;
@@ -187,6 +198,11 @@ async function openVideo(vid, mode) {
   $("#tabView").disabled = $("#tabTruth").disabled = !S.info.has_tracks;
   $("#tabTruth").title = S.info.has_tracks ? "실제 서브 시각과 서브 팀(정답)을 기록해요" : "추적을 먼저 실행하면 열려요 (서브 후보·타임라인을 같이 써요)";
   watchJob(S.info.job);
+  if (LABEL) {   // 정답 입력만. 추적이 없으면 열 수 없음
+    if (S.info.has_tracks) setMode("truth");
+    else { stopVideo(); $("#setup").classList.add("hidden"); $("#view").classList.add("hidden"); toast("이 영상은 아직 선수 추적이 없어서 정답을 넣을 수 없어요", true); }
+    return;
+  }
   setMode(["view", "truth"].includes(mode) && S.info.has_tracks ? mode : (S.info.has_tracks && !mode ? "view" : "setup"));
   clearTimeout(draftT); S.baseSig = stateSig();   // 서버 설정 상태를 기준으로
   if (applyDraft(c)) { toast("저장하지 않은 작업을 이어서 불러왔어요. 저장 버튼을 눌러야 설정 파일에 들어가요"); if (S.mode === "setup") { buildStage(); loadFrame(S.frame); renderSetupPanel(); refit(true); } }
@@ -213,6 +229,7 @@ function askSameName(p) {
 
 function setMode(m) {
   if (m !== "setup" && $("#tabView").disabled) return;
+  if (LABEL && m !== "truth") return;
   S.mode = m;
   $$(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
   $("#setup").classList.toggle("hidden", m !== "setup");

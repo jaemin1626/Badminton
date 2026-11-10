@@ -276,7 +276,7 @@ function bindKeys() {
   });
 }
 function boot() {
-  $("#toVideo").href = "/lab#" + (store.get("vid", "") || "") + "/truth";
+  $("#toVideo").href = "/label/video#" + (store.get("vid", "") || "") + "/truth";
   $$(".tabs button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
   $("#bNot").onclick = () => saveSrv("not_serve"); $("#bUnsure").onclick = () => saveSrv("unsure"); $("#bSave").onclick = () => saveSrv();
   $("#bPrev").onclick = () => go(-1); $("#bNext").onclick = () => go(1);

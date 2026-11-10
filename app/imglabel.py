@@ -216,6 +216,12 @@ def label_page():
     return FileResponse(STATIC / "label" / "index.html")
 
 
+@router.get("/label/video")
+def label_video_page():
+    """영상 정답 라벨 (서브 시각·서브 팀). 화면은 실험 페이지의 정답 입력을 라벨 모양으로 띄운 것 (lab.js 가 주소로 알아봄)"""
+    return FileResponse(STATIC / "lab" / "index.html")
+
+
 KINDS = ("serve", "all", "server")
 
 

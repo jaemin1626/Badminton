@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Smash Label · 서브 라벨</title>
 <script>
-  // 예전 주소(/label#영상@시각)는 실험 페이지 정답 입력으로
-  (() => { const h = decodeURIComponent(location.hash.slice(1)); if (h && !h.startsWith("img")) { const [v, at] = h.split("@"); location.replace("/lab#" + v + "/truth" + (at ? "@" + at : "")); } })();
+  // 예전 주소(/label#영상@시각)는 영상 정답 라벨로
+  (() => { const h = decodeURIComponent(location.hash.slice(1)); if (h && !h.startsWith("img")) { const [v, at] = h.split("@"); location.replace("/label/video#" + v.split("/")[0] + "/truth" + (at ? "@" + at : "")); } })();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,7 +18,7 @@
 <header class="top">
   <a class="brand" href="/label">Smash <b>Label</b></a>
   <div class="seg kind" role="group" aria-label="라벨 종류">
-    <a class="segb" id="toVideo" href="/lab#/truth" title="영상에서 서브 시각·서브 팀 정답 입력 (실험 페이지)">비디오</a>
+    <a class="segb" id="toVideo" href="/label/video" title="영상에서 서브 시각·서브 팀 정답 입력">비디오</a>
     <span class="segb on" aria-current="page">이미지</span>
   </div>
   <nav class="tabs" role="tablist">
@@ -28,7 +28,6 @@
   </nav>
   <div class="spacer"></div>
   <span class="num" id="prog"></span>
-  <a class="link" href="/lab">실험 화면</a>
   <a class="link" href="/">운영 화면</a>
 </header>
 
