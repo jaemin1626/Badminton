@@ -105,7 +105,7 @@ def _read_samples(cap, total: int, step: int, batch: int, stop=None):
         yield imgs, idx
 
 
-def track(video_path: str, cfg: dict, models, progress=None, params: Params = Params(), stop=None, cache=None):
+def track(video_path: str, cfg: dict, models, progress=None, params: Params = Params(), stop=None, cache=None, cam=None):
     """선수 추적. 반환: dict(frames, t, pos[S,N,2], box[S,N,4], conf[S,N], kps[S,N,17,3], occ[S,N],
     slots, fps, step, off_box[S,K,4]).
 
@@ -117,7 +117,10 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
 
     occ=1 은 '가려짐' 추정값: 직접 보이지 않지만 마지막 박스가 다른 사람 박스에 덮여 있어
     그 자리에 그대로 서 있다고 본 것 (예: 복식 서브 때 서버 뒤에 선 팀원).
+
+    cam = camera.load_or_solve 결과: 중간에 카메라가 움직였으면 구간마다 다른 화면→코트 변환을 쓴다.
     """
+    from . import camera as CAM
     det, pose = models
     H = np.array(cfg["homography"], np.float64)
     mode = cfg.get("match", {}).get("mode", "doubles")
@@ -165,8 +168,8 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
             ds = det(imgs, conf=params.det_conf, iou=params.det_iou)
             # Pose는 코트 근처(넉넉히)에 발이 있는 사람만 (관중석 사람까지 돌리면 느리다). 묶음 전체를 한 번에 추론
             nears = []
-            for d in ds:
-                cxy = C.to_court(H, np.c_[(d[:, 0] + d[:, 2]) / 2, d[:, 3]]) if len(d) else np.zeros((0, 2))
+            for d, Hf in zip(ds, CAM.homography_for(cam, idx, H)):
+                cxy = C.to_court(Hf, np.c_[(d[:, 0] + d[:, 2]) / 2, d[:, 3]]) if len(d) else np.zeros((0, 2))
                 nears.append([j for j in range(len(d)) if C.in_play(cxy[j])])
             kps_b = pose.multi([(img, d[nr]) for img, d, nr in zip(imgs, ds, nears)])
             for d, nr, kb in zip(ds, nears, kps_b):
@@ -189,10 +192,11 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
     cap.release()
     frames = list(data["frames"])
     starts = np.searchsorted(data["det_si"], np.arange(len(frames) + 1))
+    Hs = CAM.homography_for(cam, np.array(frames), H)   # 샘플마다 화면→코트 (카메라가 움직였으면 구간별)
     dets = []
     for si in range(len(frames)):
         d = data["det"][starts[si]:starts[si + 1]]
-        cxy = C.to_court(H, np.c_[(d[:, 0] + d[:, 2]) / 2, d[:, 3]]) if len(d) else np.zeros((0, 2))
+        cxy = C.to_court(Hs[si], np.c_[(d[:, 0] + d[:, 2]) / 2, d[:, 3]]) if len(d) else np.zeros((0, 2))
         dets.append((d, cxy))
     S, N = len(frames), len(slots)
     frames = np.array(frames, np.int32)
@@ -309,7 +313,7 @@ def track(video_path: str, cfg: dict, models, progress=None, params: Params = Pa
             kk = data["kp"][g].astype(np.float32)
             kps[si, k] = kk
             fx, fy = C.foot_point(box[si, k], kk)
-            pos[si, k] = C.to_court(H, [[fx, fy]])[0]
+            pos[si, k] = C.to_court(Hs[si], [[fx, fy]])[0]
     prog(1.0, "추적 완료")
     # 가려짐 추정 위치도 발목 보정이 끝난 위치로 맞춘다 (경계에서 가짜 속도가 생기지 않게)
     for s_i, k in zip(*np.nonzero(occ)):

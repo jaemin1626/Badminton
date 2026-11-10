@@ -594,7 +594,9 @@ def analyze(vid: str):
             eta = el / max(p, 1e-3) * (1 - p)
             job.stage(1, p, f"{msg} · 남은 시간 약 {int(eta // 60)}분 {int(eta % 60)}초")
 
-        tr = A.track(str(source_path(d)), cfg, ms, prog, stop=job.stop)
+        from . import camera as CAM   # 중간에 카메라가 움직였으면 구간마다 코트를 다시 맞춘다 (camera.json)
+        cam = CAM.load_or_solve(str(source_path(d)), cfg, d / "camera.json", lambda p, m: prog(0.02 * p, m))
+        tr = A.track(str(source_path(d)), cfg, ms, prog, stop=job.stop, cam=cam)
         A.save_tracks(tr, d / "tracks.npz")
         A.write_players_csv(tr, d / "players.csv")
         job.finish_stage(1, f"{len(tr['frames']):,}개 프레임 분석")

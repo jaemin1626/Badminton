@@ -324,7 +324,9 @@ def lab_track(vid: str):
             job.stage(1, p, f"{msg} · 남은 시간 약 {int(eta // 60)}분 {int(eta % 60)}초")
 
         # 검출·관절 결과를 lab/detections.npz 에 저장해 두고, 다음 추적부터는 영상을 다시 읽지 않는다
-        tr = A.track(str(source_path(d)), cfg, ms, prog, stop=job.stop, cache=L / "detections.npz")
+        from . import camera as CAM   # 중간에 카메라가 움직였으면 구간마다 코트를 다시 맞춘다 (lab/camera.json)
+        cam = CAM.load_or_solve(str(source_path(d)), cfg, L / "camera.json", lambda p, m: prog(0.02 * p, m))
+        tr = A.track(str(source_path(d)), cfg, ms, prog, stop=job.stop, cache=L / "detections.npz", cam=cam)
         A.save_tracks(tr, L / "tracks.npz")
         write_json(L / "tracks_meta.json", {"config_saved": cfg.get("saved"), "config_name": cfg.get("name"),
                                             "finished": time.time()})
