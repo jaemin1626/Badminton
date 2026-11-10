@@ -171,19 +171,25 @@ def _frame_players(tr: dict, i: int) -> dict:
     return out
 
 
-def event_proba(ev: dict, tr: dict):
-    """영상 서브 하나 → {p_near, server(slot), prob} (못 하면 None). 서브 준비 정지 시작 장(frame_still)부터 4장."""
+def event_feats(ev: dict, tr: dict):
+    """영상 서브 하나 → (선수별 특징 {slot: {...}}, slot 순서). 서브 준비 정지 시작 장(frame_still)부터 4장. 못 하면 (None, None)"""
     f0 = ev.get("frame_still", ev.get("frame"))
     if f0 is None or not len(tr["frames"]):
-        return None
+        return None, None
     fr = tr["frames"]
     idx = [int(np.clip(np.searchsorted(fr, f0 + d), 0, len(fr) - 1)) for d in STEP_FRAMES]
     seqs = [_frame_players(tr, i) for i in idx]
     pn = ev.get("p_near_alg", ev.get("p_near", 0.5))
     front = ev.get("front") or {}
     sugg = {"p_near": pn, "front": front, "track_key": front.get("near" if pn >= 0.5 else "far")}
-    feats = player_feats(seqs[0], seqs, sugg)
-    order = [str(s) for s in tr["slots"]]   # far0 far1 near0 near1 ↔ f1 f2 n1 n2
+    return player_feats(seqs[0], seqs, sugg), [str(s) for s in tr["slots"]]   # far0 far1 near0 near1 ↔ f1 f2 n1 n2
+
+
+def event_proba(ev: dict, tr: dict):
+    """영상 서브 하나 → {p_near, server(slot), prob} (못 하면 None)."""
+    feats, order = event_feats(ev, tr)
+    if feats is None:
+        return None
     p = proba(feats, order)
     if p is None:
         return None

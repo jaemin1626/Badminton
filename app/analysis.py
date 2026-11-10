@@ -24,6 +24,17 @@ from scipy.optimize import linear_sum_assignment
 from . import court as C
 
 # ---------------------------------------------------------------- 파라미터
+def _saved_weights() -> dict:
+    """서브 팀 판단 가중치: tools/video_train.py --save 가 영상 정답 라벨로 맞춘 값 (app/assets/serve_weights.json). 없으면 {}"""
+    try:
+        return json.loads((Path(__file__).parent / "assets" / "serve_weights.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+_SW = _saved_weights()
+
+
 @dataclass
 class Params:
     sample_fps: float = 15.0      # 분석 프레임레이트 (원본보다 크면 원본 사용)
@@ -45,13 +56,14 @@ class Params:
     occ_overlap: float = 0.3      # 마지막 박스가 지금 검출 박스에 이만큼(자기 면적 대비) 덮이면 가려짐
     occ_reappear: float = 1.0     # m, 다시 나온 위치가 이보다 멀면 가려진 동안 움직인 것 → 추정 취소
     rally_min: float = 0.5        # s, 두 정지 구간 사이 빠른 움직임이 이보다 짧으면 랠리가 아니라 서브 준비 중 자리 잡기
-    # 서버 쪽(가까운/먼) 판단 가중치. 라벨 있는 영상 3개(대각선 2 · 바로 뒤 1)에서 한 영상씩 빼고 맞춰 검증한 값
-    w_xc: float = 1.8             # 앞사람이 센터라인에 붙어 섰나 (서버는 센터라인 가까이) — 양쪽 차이, m
-    w_pdx: float = 1.2            # 팀원이 앞사람 바로 뒤 일직선에 섰나 (좌우 거리) — 양쪽 차이, m
-    w_dnet: float = 0.5           # 앞사람이 네트에 더 가까이 섰나 — 양쪽 차이, m
-    w_form: float = 1.8           # 대형 점수(팀원이 바로 뒤 · 가려짐 포함) 차이
-    w_pose: float = 0.0           # 서브 자세 (바로 뒤에서 찍은 영상에서 안 맞아 끔)
-    w_onset: float = 0.0          # 정지 끝에 손목 먼저 움직인 쪽 (거의 운이라 끔)
+    # 서버 쪽(가까운/먼) 판단 가중치. serve_weights.json 이 있으면 그 값 (영상 정답 라벨로 로지스틱 회귀, 영상 하나씩 빼고 검증)
+    # 괄호 안 기본값 = 예전에 라벨 영상 3개로 손으로 맞춘 값
+    w_xc: float = _SW.get("w_xc", 1.8)          # 앞사람이 센터라인에 붙어 섰나 (서버는 센터라인 가까이) — 양쪽 차이, m
+    w_pdx: float = _SW.get("w_pdx", 1.2)        # 팀원이 앞사람 바로 뒤 일직선에 섰나 (좌우 거리) — 양쪽 차이, m
+    w_dnet: float = _SW.get("w_dnet", 0.5)      # 앞사람이 네트에 더 가까이 섰나 — 양쪽 차이, m
+    w_form: float = _SW.get("w_form", 1.8)      # 대형 점수(팀원이 바로 뒤 · 가려짐 포함) 차이
+    w_pose: float = _SW.get("w_pose", 0.0)      # 서브 자세
+    w_onset: float = _SW.get("w_onset", 0.0)    # 정지 끝에 손목 먼저 움직인 쪽
     short_still: float = 0.6      # s, 서브 사이가 너무 가까울 때 앞 정지가 이보다 짧고 뒤 정지가 2배 넘게 길면 뒤쪽을 서브로
     facing_max: float = 0.05      # 가까운 쪽 두 명이 서로 짝 쪽을 보는 정도(코가 어깨 중심에서 짝 쪽으로, 키 대비)가 둘 다 이보다 크면 서브 아님 (쉬며 마주 보고 이야기). 1이면 끔
     rear_drop: float = 0.0        # (실험 중 · 기본 끔) 1이면 팀원과 겹친 뒷사람 위치를 서브 판정에서 버리고 보간 (발 위치가 튀어 가짜 움직임이 생김)
