@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from . import analysis as A
 from . import court as C
+from . import server_model as SM
 from .render import make_preview, render_overlay
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -550,7 +551,10 @@ def _setup_from(cfg: dict) -> tuple[dict, dict]:
 
 def _rescore(d: Path, events: list, cfg: dict) -> dict:
     setup, sides = _setup_from(cfg)
+    judge = setup.get("server_judge") if setup.get("server_judge") in SM.JUDGES else "algorithm"
+    SM.apply(events, judge, lambda: A.load_tracks(d / "tracks.npz") if (d / "tracks.npz").exists() else None)
     scored, summary = A.score_events(events, setup, sides)
+    summary["judge"] = judge
     res = {"events": scored, "summary": summary, "setup": setup, "sides": sides,
            "fps": cfg.get("fps"), "updated": time.time()}
     write_json(d / "result.json", res)
@@ -721,6 +725,27 @@ def patch_final(vid: str, body: FinalReq):
         if body.A < 0 or body.B < 0 or body.A > 40 or body.B > 40:
             raise HTTPException(400, "점수가 이상해요")
         m["final"] = {"A": body.A, "B": body.B}
+    write_json(d / "match.json", cfg)
+    return _rescore(d, res["events"], cfg)
+
+
+class JudgeReq(BaseModel):
+    judge: str   # "algorithm" | "model" | "both"
+
+
+@app.patch("/api/videos/{vid}/judge")
+def patch_judge(vid: str, body: JudgeReq):
+    """서브 팀 판단 방법: 알고리즘 / 모델(이미지로 학습한 서버 고르기) / 둘 다(같으면 강하게, 다르면 보류). 추적은 그대로 두고 점수만 다시."""
+    if body.judge not in SM.JUDGES:
+        raise HTTPException(400, "판단 방법이 이상해요")
+    if body.judge != "algorithm" and SM.load() is None:
+        raise HTTPException(400, "모델 파일이 없어요 (tools/pseudo_server.py --save-model)")
+    d = vdir(vid)
+    cfg = read_json(d / "match.json")
+    res = read_json(d / "result.json")
+    if res is None or cfg is None:
+        raise HTTPException(404, "아직 분석 결과가 없어요")
+    cfg.setdefault("match", {})["server_judge"] = body.judge
     write_json(d / "match.json", cfg)
     return _rescore(d, res["events"], cfg)
 

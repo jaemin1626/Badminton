@@ -12,6 +12,7 @@
 
   .venv/bin/python tools/pseudo_server.py            # 특징 뽑기(캐시) + 검증 + 가짜 라벨 쓰기
   .venv/bin/python tools/pseudo_server.py --eval     # 검증만
+  .venv/bin/python tools/pseudo_server.py --save-model   # 앱 서브 팀 판단용 모델 저장 (app/assets/server_chooser.json)
 """
 from __future__ import annotations
 
@@ -37,39 +38,8 @@ HALF_W, NET_Y, SSL = 6.1 / 2, 13.4 / 2, 1.98
 # ---------------------------------------------------------------- 특징
 
 def _pose(k, bbox):
-    """관절(17×3, COCO) → 자세 특징. 없으면 0 + 있음 표시 0."""
-    k = np.asarray(k, float)
-    h = max(bbox[3] - bbox[1], 1.0)
-    ok = lambda i: k[i, 2] > 0
-    out = {}
-    sh = [i for i in (5, 6) if ok(i)]
-    hp = [i for i in (11, 12) if ok(i)]
-    if not sh or not hp:
-        return {"pose_ok": 0.0}
-    sy = k[sh, 1].mean(); hy = k[hp, 1].mean(); cx = k[sh + hp, 0].mean()
-    tor = max(hy - sy, h * 0.15)
-    wr = [(k[i, 0], k[i, 1]) for i in (9, 10) if ok(i)]
-    el = [(k[i, 0], k[i, 1]) for i in (7, 8) if ok(i)]
-    if wr:
-        ys = sorted((y - sy) / tor for _, y in wr)          # 어깨=0, 엉덩이=1 (아래가 +)
-        out["wr_hi"] = ys[0]; out["wr_lo"] = ys[-1]
-        out["wr_spread"] = max(abs(x - cx) for x, _ in wr) / tor
-        out["wr_above_sh"] = float(ys[0] < 0)
-        out["wr_near_hip"] = float(min(abs(y - 1.0) for y in ys) < 0.35)
-        if len(wr) == 2:
-            out["wr_gap"] = math.hypot(wr[0][0] - wr[1][0], wr[0][1] - wr[1][1]) / tor
-    if el:
-        out["el_hi"] = min((y - sy) / tor for _, y in el)
-    kn = [i for i in (13, 14) if ok(i)]; ak = [i for i in (15, 16) if ok(i)]
-    if kn and ak:
-        ky = k[kn, 1].mean(); ay = k[ak, 1].mean()
-        out["leg_ratio"] = (ay - hy) / tor                    # 무릎 굽히면 작아짐
-        out["knee_ratio"] = (ky - hy) / max(ay - hy, 1.0)
-        out["stance_w"] = abs(k[ak, 0].max() - k[ak, 0].min()) / tor if len(ak) == 2 else 0.0
-    out["lean"] = (k[sh, 0].mean() - k[hp, 0].mean()) / tor
-    out["box_h"] = h
-    out["pose_ok"] = 1.0
-    return out
+    from app.server_model import pose_feats   # 영상 판단(app/server_model.py)과 같은 자세 특징
+    return pose_feats(k, bbox)
 
 
 def clip_feats(clip: str):
@@ -283,11 +253,34 @@ def calib(P, y):
             print(f"  {th:5.2f}   {s.mean() * 100:8.1f}%   {ok[s].mean() * 100:6.1f}%")
 
 
+def save_model(workers=12):
+    """앱(app/server_model.py)이 쓰는 모델 파일 app/assets/server_chooser.json 만들기 (선형)."""
+    from app.server_model import MODEL
+    rows = [r for r in build_cache(workers) if "error" not in r and r["feats"]]
+    labs = {}
+    for l in open(CONV / "serve.jsonl", encoding="utf-8"):
+        r = json.loads(l); labs[r["clip"]] = r
+    ok = lambda lb: lb and lb.get("status") == "serve" and not lb.get("bulk")
+    lab_rows = [r for r in rows if ok(labs.get(r["clip"])) and labs[r["clip"]].get("server_track") in r["feats"]]
+    y = np.array([TRACKS.index(labs[r["clip"]]["server_track"]) for r in lab_rows])
+    X, M, names = to_arrays(lab_rows)
+    m = Chooser(0, l2=3e-3, lr=0.05, epochs=500).fit(X, M, y)
+    acc = float((m.proba(X, M).argmax(1) == y).mean())
+    MODEL.parent.mkdir(parents=True, exist_ok=True)
+    json.dump({"names": names, "mu": m.mu.tolist(), "sd": m.sd.tolist(), "w": m.w.tolist(), "n_train": len(lab_rows),
+               "train_acc": round(acc, 4), "kind": "linear conditional logit (4명 중 서버)", "at": time.strftime("%Y-%m-%dT%H:%M:%S")},
+              open(MODEL, "w", encoding="utf-8"), ensure_ascii=False)
+    print(f"모델 저장 {MODEL} · 학습 {len(lab_rows)}개 · 학습 정확도 {acc:.1%}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval", action="store_true")
     ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--save-model", action="store_true", help="사람이 라벨링·확인한 것(한꺼번에 받아들인 것 제외)으로 학습해 앱 판단용 모델 저장")
     a = ap.parse_args()
+    if a.save_model:
+        return save_model(a.workers)
     rows = build_cache(a.workers)
     bad = [r for r in rows if "error" in r]
     rows = [r for r in rows if "error" not in r and r["feats"]]

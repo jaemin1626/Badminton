@@ -1133,6 +1133,10 @@ function renderRPanel() {
     ${sm.switch ? `<p class="desc sw-note">${sm.switch.mode === "manual" ? `코트 교대 <b>${sm.switch.times.map(fmtTime).join(", ")}</b> · 설정에서 지정` : sm.switch.mode === "auto" ? `코트 교대 <b>${fmtTime(sm.switch.times[0])}</b> · 선수 옷 색으로 자동 감지. 틀렸으면 경기 설정에서 시각을 적어 다시 분석하세요` : "코트 교대 · 점수 규칙으로 (옷 색으로는 확실하지 않았어요)"}</p>` : ""}
     <p class="desc" style="margin-bottom:10px">서브 ${all.filter(e => !e.removed).length}개${flagged ? ` · <b style="color:var(--warn)">확인 필요 ${flagged}개</b>` : ""}. 서브를 누르면 고칠 수 있어요. 하나를 고치면 뒤쪽 점수가 다시 계산돼요.</p>
     <div class="fin-fit">
+      <label>서브 팀 판단 <small>누가 서브했는지(= 직전 랠리 득점 팀) 정하는 방법. 바꾸면 점수를 다시 계산해요</small></label>
+      <div class="seg" id="judgeSeg">${[["algorithm", "알고리즘", "선수 위치·대형 규칙 (이 앱 영상들로 맞춘 것)"], ["model", "모델", "AI-Hub 이미지 1,826장으로 학습한 서버 고르기 모델"], ["both", "둘 다", "둘이 같은 팀이면 더 확신, 다르면 판단 보류(점수 규칙·서브 위치로 정함)"]].map(([v, l, t]) => `<button data-v="${v}" title="${t}" class="${(sm.judge || st.server_judge || "algorithm") === v ? "on" : ""}">${l}</button>`).join("")}</div>
+    </div>
+    <div class="fin-fit">
       <label>실제 최종 점수 <small>알면 넣으세요. 그 점수에 맞게 서브를 다시 맞춰요</small></label>
       <div class="fin-row"><span class="nm" style="color:var(--teamA)">${nm("A")}</span><input type="number" id="finA" min="0" max="40" value="${st.final?.A ?? ""}" aria-label="${nm("A")} 최종 점수">
         <span>:</span><input type="number" id="finB" min="0" max="40" value="${st.final?.B ?? ""}" aria-label="${nm("B")} 최종 점수"><span class="nm" style="color:var(--teamB)">${nm("B")}</span>
@@ -1198,6 +1202,13 @@ function renderRPanel() {
   };
   if ($("#finFit")) $("#finFit").onclick = () => { const a = $("#finA").value, b = $("#finB").value; if (a === "" || b === "") { toast("두 팀 점수를 모두 넣어 주세요", true); return; } setFinal(+a, +b); };
   $("#finClear")?.addEventListener("click", () => setFinal(null, null));
+  $$("#judgeSeg button").forEach(b => b.onclick = async () => {
+    if (b.classList.contains("on")) return;
+    const names = { algorithm: "알고리즘", model: "모델", both: "알고리즘 + 모델" };
+    toast(`${names[b.dataset.v]}으로 다시 계산 중…`);
+    try { S.result = await api(`/api/videos/${S.vid}/judge`, { method: "PATCH", json: { judge: b.dataset.v } }); lastStateKey = ""; renderWorm(); renderRPanel(); toast(`서브 팀을 ${names[b.dataset.v]}으로 판단해 다시 계산했어요`); }
+    catch (e) { toast(e.message, true); }
+  });
   const setStart = async t => {
     try { S.result = await api(`/api/videos/${S.vid}/start`, { method: "PATCH", json: { t } }); lastStateKey = ""; renderWorm(); renderRPanel(); toast(t == null ? "첫 서브 시각을 해제했어요" : `첫 서브 ${fmtTime(t)}부터로 다시 계산했어요`); }
     catch (e) { toast(e.message, true); }
