@@ -1141,7 +1141,7 @@ function renderRPanel() {
       <div class="fin-row"><span class="nm" style="color:var(--teamA)">${nm("A")}</span><input type="number" id="finA" min="0" max="40" value="${st.final?.A ?? ""}" aria-label="${nm("A")} 최종 점수">
         <span>:</span><input type="number" id="finB" min="0" max="40" value="${st.final?.B ?? ""}" aria-label="${nm("B")} 최종 점수"><span class="nm" style="color:var(--teamB)">${nm("B")}</span>
         <button class="icon-btn sm" id="finFit">맞추기</button>${st.final ? `<button class="icon-btn sm" id="finClear">해제</button>` : ""}</div>
-      ${st.final && sm.final_failed ? `<p class="desc warn-t">넣은 최종 점수에 맞는 흐름을 못 찾았어요 (서브가 너무 적거나 점수가 다른 경기 것). 최종 점수 없이 계산한 결과예요</p>` : st.final ? `<p class="desc">${all.filter(e => e.skipped).length ? `가짜로 본 서브 ${all.filter(e => e.skipped).map(e => fmtTime(e.t)).join(", ")}를 빼고 맞췄어요. 틀렸으면 그 서브를 '서브 아님'이나 팀으로 직접 고치세요` : "그대로 맞았어요"}</p>` : ""}
+      ${st.final && sm.final_failed ? `<p class="desc warn-t">넣은 최종 점수에 맞는 흐름을 못 찾았어요 (서브가 너무 적거나 점수가 다른 경기 것). 최종 점수 없이 계산한 결과예요</p>` : st.final ? `<p class="desc">${all.filter(e => e.skipped && !e.no_rally).length ? `가짜로 본 서브 ${all.filter(e => e.skipped && !e.no_rally).map(e => fmtTime(e.t)).join(", ")}를 빼고 맞췄어요. 틀렸으면 그 서브를 '서브 아님'이나 팀으로 직접 고치세요` : "그대로 맞았어요"}</p>` : ""}
     </div>
     <div class="fin-fit">
       <label>첫 서브 시각 <small>경기 시작 서브. 그 전 장면(준비 중)은 서브에서 빼요</small></label>
@@ -1333,7 +1333,7 @@ function renderEvList() {
       btns = `<button class="icon-btn sm" data-a="${it.kind === "last" ? "last" : "set"}" data-team="${other}">${nm(other)} 득점으로 바꾸기</button>`
         + (it.kind === "point" ? `<button class="icon-btn sm" data-a="remove" title="이 랠리가 없었던 것으로 (서브 아님)">득점 아님</button>` : "");
     } else {
-      const why = e.removed ? "지운 장면" : e.rescued ? "놓쳤을 수 있는 서브" : "최종 점수에 맞추려고 뺀 장면";
+      const why = e.removed ? "지운 장면" : e.no_rally ? "서브 시도 · 뒤에 랠리 없음 (서브 실수?)" : e.rescued ? "놓쳤을 수 있는 서브" : "최종 점수에 맞추려고 뺀 장면";
       what = `<span class="nm cand-why">${why}</span>`;
       btns = `<button class="icon-btn sm" data-a="add" data-team="A">${nm("A")} 득점으로 넣기</button><button class="icon-btn sm" data-a="add" data-team="B">${nm("B")} 득점으로 넣기</button>`
         + (!e.removed ? `<button class="icon-btn sm" data-a="remove">아님</button>` : "");
@@ -1419,9 +1419,10 @@ function reviewHtml() {
   const gaps = extra != null && extra < 0 && c.gaps?.length ? `<p class="desc">서브가 빠졌을 만한 긴 빈 구간: ${c.gaps.map(([a, b]) => `<a href="#" class="gap" data-t="${a}">${fmtTime(a)}~${fmtTime(b)}</a>`).join(" · ")}</p>` : "";
   if (S.review) return reviewCard();
   // 예비 서브: 서브 사이가 길게 빈 곳에서 '1명 흔들림 허용'으로 다시 찾은 후보. 확인하면 정식 서브가 된다
-  const spares = r.events.filter(e => e.rescued && e.skipped && !e.removed);
+  // 서브 시도: 서브 대형은 맞는데 뒤에 랠리가 없음 (서브 실수 · 다시 서브). 서브 실수였으면 서브한 팀을 눌러 넣는다
+  const spares = r.events.filter(e => (e.rescued || e.no_rally) && e.skipped && !e.removed);
   const spareHtml = spares.length ? `<div class="spare"><p class="rv-head">놓쳤을 수 있는 서브 <b>${spares.length}</b>개 · 장면을 보고 서브면 넣은 팀을, 아니면 '아님'</p>
-    <ol class="sus spare-list">${spares.map(e => `<li data-id="${e.id}"><span class="tm">${fmtTime(e.t)}</span>
+    <ol class="sus spare-list">${spares.map(e => `<li data-id="${e.id}"><span class="tm">${fmtTime(e.t)}${e.no_rally ? ` <small title="서브 대형은 맞는데 뒤에 랠리가 없어요. 서브 실수였으면 서브한 팀을 누르세요">서브 실수?${e.retry ? ` · ${e.retry}번 시도` : ""}</small>` : ""}</span>
       <span class="sp-btns"><button class="icon-btn sm" data-sa="watch">보기</button><button class="icon-btn sm" data-sa="A">${nm("A")} 서브</button><button class="icon-btn sm" data-sa="B">${nm("B")} 서브</button><button class="icon-btn sm" data-sa="remove">아님</button></span></li>`).join("")}</ol></div>` : "";
   return `<div class="review">
     <div class="rv-title">검토 · 수동 수정</div>

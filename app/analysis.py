@@ -64,6 +64,8 @@ class Params:
     gate_max: float = 4.0         # m, 오래 놓쳐도 한 번에 이보다 멀리 건너뛰지 않음 (2초 넘게 놓치면 다시 찾기)
     still_allow: float = 0.0      # 정지 판단에서 빨라도 되는 사람 수 (기본 0 · 다시 찾기 단계에서만 1)
     rescue_gap: float = 15.0      # s, 서브 사이가 이보다 길게 비면 그 안에서 1명 흔들림을 허용해 다시 찾기 (0이면 끔)
+    no_rally: float = 1.0         # 1이면 서브 대형은 맞는데 뒤에 랠리가 없는 정지도 '서브 시도'로 남김 (서브 실수 · 다시 서브). 0이면 버림
+    retry_gap: float = 8.0        # s, 랠리 없는 서브 시도 뒤 이 안에 다시 서브 대형이면 같은 서브를 다시 한 것 → 앞 시도 하나로 묶음
     front_amb: float = 0.5        # m, 한쪽 두 명의 네트 거리 차이가 이보다 작으면 앞사람이 애매 → 반대쪽 앞사람과 대각선인 사람을 앞사람으로 (0이면 끔)
     still_occ: float = 0.0        # 1이면 가려진 선수와 다시 나타난 직후는 정지 판단에서 뺌 (실험 중)
     still_px: float = 0.0         # 1이면 정지 판단에 화면 속 움직임(키 대비)도 써서 먼 쪽 위치 흔들림을 무시 (실험 중)
@@ -503,6 +505,57 @@ def _stance(mp, ks, front) -> dict:
     return {"xc": xc, "pdx": pdx, "dnet": float(C.dist_to_net(mp[front]))}
 
 
+TRY_LAG = 0.5   # s, 랠리 없는 서브 시도의 서브 시각 = 정지 시작 + 이만큼
+
+
+def _insert_tries(out: list, tries: list, fast, dt: float, params, note) -> list:
+    """랠리 없는 서브 시도(서브 대형은 맞는데 뒤에 랠리가 없음)를 서브 목록에 끼워 넣는다.
+
+    1) retry_gap 안에 랠리 없이 이어진 시도들은 한 묶음 (옆 코트 셔틀 · 준비 안 됨으로 다시 서브).
+    2) 묶음 바로 뒤(retry_gap 안, 사이 랠리 없음)에 랠리 있는 서브가 오면 같은 서브를 다시 한 것 → 뒤쪽 서브 하나로.
+    3) 앞 서브 뒤에 랠리 없이 이어진 시도면 앞 랠리 끝나고 서 있는 것 → 버림.
+    4) 나머지는 '서브 시도'(no_rally) 로 남김 → 서브 실수 후보. 묶음이면 가장 오래 멈춘 시도(실제 서브)의 자세·시각을 쓴다.
+       점수 계산이 최종 점수로 셀지 정한다.
+    """
+    if not tries:
+        return out
+
+    def moved(i_a, i_b):
+        return i_b > i_a and float(fast[i_a:i_b].sum()) * dt >= params.rally_min
+    groups = []
+    for n in tries:
+        g = groups[-1] if groups else None
+        if g and n["t_still"] - g[-1]["t_end"] <= params.retry_gap and not moved(g[-1]["i1"], n["i0"]):
+            g.append(n)
+        else:
+            groups.append([n])
+    add = []
+    for g in groups:
+        n, last = g[0], g[-1]
+        if any(s_["t_still"] < last["t_end"] and s_["t_end"] > n["t_still"] for s_ in out):
+            continue
+        nxt = next((s_ for s_ in out if s_["t_still"] >= last["t_end"]), None)
+        prv = next((s_ for s_ in reversed(out) if s_["t_end"] <= n["t_still"]), None)
+        if nxt is not None and nxt["t_still"] - last["t_end"] <= params.retry_gap and not moved(last["i1"], nxt["i0"]):
+            # 서브 준비 중 한 번 멈췄다가 다시 자리 잡은 것도 여기에 든다 (아주 흔함) → 서브 시각은 랠리가 시작된 뒤쪽 그대로
+            note(n["i0"], last["i1"], "C", f"서브 시도 뒤 {nxt['t_still']:.1f}초에 다시 서브 → 뒤쪽 서브 하나로 묶음")
+            nxt["retry"] = len(g) + 1
+            continue
+        if prv is not None and (not moved(prv["i1"], n["i0"]) or n["t_still"] - prv["t_end"] < params.min_serve_gap):
+            note(n["i0"], last["i1"], "C", f"끝나고 {params.rally_window}초 안에 랠리 없음 · 앞 서브 랠리 끝나고 서 있음")
+            continue
+        # 실제 서브 = 묶음에서 가장 오래 멈춘 시도 (중단된 시도는 짧고, 서브 실수 뒤에는 다들 멈춰서 봐서 길다).
+        # 서브 실수면 서브 뒤에도 서 있어서 '정지 끝 = 서브'가 늦으므로 서브 시각은 그 시도의 정지 시작 조금 뒤
+        n = dict(max(g, key=lambda x: x["t_end"] - x["t_still"]))
+        ts = min(n["t_still"] + TRY_LAG, n["t_end"])
+        n.update(t=ts, frame=int(round(n["frame"] + (ts - n["t"]) * (n["frame"] - n["frame_still"]) / max(n["t"] - n["t_still"], 1e-6)))
+                 if n["t"] > n["t_still"] else n["frame_still"])
+        if len(g) > 1:
+            n["retry"] = len(g)
+        add.append(n)
+    return sorted(out + add, key=lambda c: c["t"])
+
+
 def _serve_changed(a: dict, b: dict) -> bool:
     """두 서브 후보 사이에 점수가 났다고 볼 만한가: 서브하는 쪽이 확실히 바뀌었거나, 양쪽 앞사람이 모두 다른 칸으로 옮겼다."""
     pa, pb = a.get("p_near", .5), b.get("p_near", .5)
@@ -651,7 +704,8 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
     cands = []
     for a, b in runs:
         # 서브 직후 2.5초 안에 랠리(빠른 움직임)가 시작돼야 서브다. 랠리 뒤 잠깐 멈춘 장면을 거른다.
-        if not fast[b:min(len(t), b + int(params.rally_window / dt) + 1)].any():
+        no_rally = not fast[b:min(len(t), b + int(params.rally_window / dt) + 1)].any()
+        if no_rally and params.no_rally < 0.5:
             note(a, b, "C", f"끝나고 {params.rally_window}초 안에 랠리 없음")
             continue
         # 자세는 정지 구간 안쪽(끝 0.3초 전까지)에서 읽는다. 서브 동작이 섞이지 않게.
@@ -662,7 +716,10 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         kn = ~np.isnan(mp[:, 0])
         kf, kn_ = [k for k in far if kn[k]], [k for k in near if kn[k]]
         if not kf or not kn_:
-            note(a, b, "B", "한쪽 코트 선수 위치를 모름")
+            if no_rally:
+                note(a, b, "C", f"끝나고 {params.rally_window}초 안에 랠리 없음")
+            else:
+                note(a, b, "B", "한쪽 코트 선수 위치를 모름")
             continue
         # 앞사람(서버/리시버) = 각 쪽에서 네트에 가장 가까운 사람. 슬롯 번호와 무관.
         # 앞사람은 직접 보이는 사람 중에서 (가려짐 추정 위치는 다른 사람에게 옮겨 붙었을 수 있다). 다 가려졌으면 전체에서
@@ -721,6 +778,9 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
         fc = _facing_partner(tr, near, tail)
         if fc is not None and fc > params.facing_max:
             ok = False; reasons.append(f"가까운 쪽 두 명이 서로 마주 봄 ({fc:.3f})")
+        if not ok and no_rally:   # 랠리도 없고 서브 대형도 아님 → 예전처럼 C 로 기록
+            note(a, b, "C", f"끝나고 {params.rally_window}초 안에 랠리 없음 · " + " · ".join(reasons))
+            continue
         if not ok:
             note(a, b, "B", " · ".join(reasons), front={"far": slots[fi], "near": slots[ni]},
                  pos={s_: [round(float(x), 2) for x in mp[k]] for k, s_ in enumerate(slots) if kn[k]})
@@ -763,8 +823,12 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
                   "formation": {k: round(v_, 2) for k, v_ in form.items()},
                   "stance": {sd: {k: round(v_, 2) for k, v_ in d_.items()} for sd, d_ in stance.items()},
                   "boxq": boxq},
+            **({"no_rally": True} if no_rally else {}),
         ))
 
+    # 랠리 없는 서브 시도는 따로 두고, 랠리가 있는 서브부터 예전 규칙대로 정리한다
+    tries = [c for c in cands if c.get("no_rally")]
+    cands = [c for c in cands if not c.get("no_rally")]
     # 랠리 잠금: 앞 후보 뒤에 랠리가 없었으면 같은 서브 준비 → 뒤쪽 유지.
     # 랠리가 있었는데 너무 가까우면 랠리 중 멈춤 → 앞쪽 유지.
     out = []
@@ -799,8 +863,10 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
                      **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front")})
                 continue
         out.append(c)
+    out = _insert_tries(out, tries, fast, dt, params, note)
     for c in out:
-        note(c["i0"], c["i1"], "OK", "서브", **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front", "seen", "pos")})
+        why = "서브 시도 · 뒤에 랠리 없음 (서브 실수 후보)" if c.get("no_rally") else "서브" + (" (다시 서브)" if c.get("retry") else "")
+        note(c["i0"], c["i1"], "OK", why, **{k: c[k] for k in ("box", "boxes", "p_near", "view", "cues", "front", "seen", "pos")})
     for c in out:
         # 정지 직전 4초 동안 누군가 랠리 속도로 뛰던 비율. 높으면 랠리 도중 잠깐 멈춘 것일 수 있다 (최종 점수 맞추기에서 빼기 쉬운 쪽)
         w0 = max(0, c["i0"] - int(round(4.0 / dt)))
@@ -818,6 +884,8 @@ def find_serves(tr: dict, mode: str = "doubles", params: Params = Params(), debu
             if hi - lo < params.rescue_gap:
                 continue
             for c in rel:
+                if c.get("no_rally"):
+                    continue
                 if lo + params.min_serve_gap <= c["t_still"] and c["t_end"] + params.min_serve_gap <= hi:
                     c = dict(c, rescued=True)
                     add.append(c)
@@ -1053,7 +1121,8 @@ def suspect_of(ev: dict, prev_t: float | None) -> tuple[float, list]:
 
 def count_check(out: list, fin: dict | None) -> dict:
     """찾은 서브 수와 최종 점수로 본 랠리 수 비교 + 서브마다 의심 점수(suspect·why)를 매긴다."""
-    serves = [e for e in out if not e.get("removed") and e.get("kind", "serve") == "serve" and not (e.get("rescued") and e.get("skipped"))]
+    serves = [e for e in out if not e.get("removed") and e.get("kind", "serve") == "serve"
+              and not ((e.get("rescued") or e.get("no_rally")) and e.get("skipped"))]
     prev = None
     for e in serves:
         e["suspect"], e["why"] = suspect_of(e, prev)
@@ -1074,6 +1143,8 @@ def count_check(out: list, fin: dict | None) -> dict:
 START_TOL = 3.0      # s, 첫 서브 시각과 이만큼 안이면 같은 서브로 본다
 SPARE_ALWAYS = False   # True면 최종 점수가 있을 때 예비 서브를 늘 후보로 (진짜 서브를 대신 빼는 경우가 생겨 끔)
 RESCUE_SKIP = 0.3    # 예비 서브를 쓰지 않을 때 감점 (작게: 모자랄 때만 꺼내 쓰도록)
+NO_RALLY_SKIP = 0.3  # 랠리 없는 서브 시도를 서브로 안 셀 때 감점 (작게)
+NO_RALLY_USE = 2.0   # 랠리 없는 서브 시도를 서브(실수)로 셀 때 감점 (match1~5 로 맞춤)
 BOX_PX = 12.0        # 칸 판정 위치 오차 (픽셀). 0이면 끔(예전처럼 늘 같은 감점)
 SRV_BOX_W = 0.0      # 서버 쪽 칸 감점 비중 (0이면 리시버 쪽만)
 ODD_REL = 0.3        # 이상한 박스(평소 키와 크게 다름)일 때 칸 판정 믿음 배율
@@ -1164,10 +1235,14 @@ def score_events(events: list, setup: dict, sides: dict):
     # 예비 서브(긴 빈 구간에서 느슨하게 다시 찾은 것): 최종 점수가 있고 서브가 모자랄 때만 쓴다. 사람이 고른 것은 그대로
     def spare(e):
         return e.get("rescued") and not e.get("override") and not e.get("confirmed")
-    n_main = sum(1 for e in evs if not e.get("removed") and e.get("kind", "serve") == "serve" and not spare(e))
+
+    # 랠리 없는 서브 시도(서브 실수 후보): 최종 점수를 알 때만 맞춰 보고 쓴다. 안 써도 감점 거의 없음
+    def weak(e):
+        return e.get("no_rally") and not e.get("override") and not e.get("confirmed")
+    n_main = sum(1 for e in evs if not e.get("removed") and e.get("kind", "serve") == "serve" and not spare(e) and not weak(e))
     use_spare = bool(fin) and (SPARE_ALWAYS or n_main < fin["A"] + fin["B"])
-    active = [i for i, e in enumerate(evs) if not e.get("removed") and (use_spare or not spare(e))]
-    sw = detect_switch([e for e in evs if not spare(e)], setup, sides)
+    active = [i for i, e in enumerate(evs) if not e.get("removed") and (use_spare or not spare(e)) and (fin or not weak(e))]
+    sw = detect_switch([e for e in evs if not spare(e) and not weak(e)], setup, sides)
     setup = {**setup, "switch_times": sw.get("times")}
     width = BEAM * 4 if fin else BEAM
 
@@ -1210,6 +1285,8 @@ def score_events(events: list, setup: dict, sides: dict):
                     l2 = lp - SKIP_COST + 3.0 * min(max((float(ev.get("pre_rally") or 0) - 0.3) / 0.3, 0.0), 1.0)
                     if spare(ev):   # 예비 서브는 원래 안 세는 게 기본이라, 빼도 거의 감점 없음
                         l2 = lp - RESCUE_SKIP
+                    elif weak(ev):
+                        l2 = lp - NO_RALLY_SKIP
                     k = _state_key(m) + (len(ch),)
                     if not feasible(m, left):
                         continue
@@ -1224,7 +1301,7 @@ def score_events(events: list, setup: dict, sides: dict):
                         mm.point(team)
                     mm.started = True
                     mm.server = team
-                    l2 = lp + (_ev_loglik(ev, mm, team) if not ev.get("override") else 0.0)
+                    l2 = lp + (_ev_loglik(ev, mm, team) if not ev.get("override") else 0.0) - (NO_RALLY_USE if weak(ev) else 0.0)
                 k = _state_key(mm) + ((len(ch),) if fin else ())
                 if not feasible(mm, left):
                     continue
@@ -1274,19 +1351,20 @@ def score_events(events: list, setup: dict, sides: dict):
     for i, ev in enumerate(evs):
         ev["flags"] = []
         m.at_time(ev["t"])
-        if ev.get("removed") or (spare(ev) and i not in choice):
+        if ev.get("removed") or ((spare(ev) or weak(ev)) and i not in choice):
             ev.update(server=None, auto=None, conf=None, score=dict(m.score), game=m.game, games=list(m.games),
                       sides=dict(m.side))
-            if not ev.get("removed"):   # 예비 서브인데 이번에 안 씀
+            if not ev.get("removed"):   # 예비 서브 · 서브 시도인데 이번에 안 씀
                 ev["skipped"] = True
-                ev["flags"].append("예비 서브 (서브가 모자랄 때만 씀 · 최종 점수를 넣으면 맞춰 봐요)")
+                ev["flags"].append("서브 시도 · 뒤에 랠리 없음 (최종 점수를 넣으면 서브 실수인지 맞춰 봐요)" if weak(ev)
+                                   else "예비 서브 (서브가 모자랄 때만 씀 · 최종 점수를 넣으면 맞춰 봐요)")
             if ev.get("pre_start"):
                 ev["flags"].append("입력한 첫 서브 시각 전 (경기 전 준비)")
             out.append(ev); continue
         if choice.get(i) == "X":   # 최종 점수에 맞추려고 서브에서 뺌
             ev.update(server=None, auto=None, conf=round(cmap[i], 3), score=dict(m.score), game=m.game, games=list(m.games),
                       sides=dict(m.side), skipped=True)
-            ev["flags"].append("최종 점수에 맞추려고 서브에서 뺌")
+            ev["flags"].append("서브 시도 · 뒤에 랠리 없음 · 서브로 안 셈" if weak(ev) else "최종 점수에 맞추려고 서브에서 뺌")
             out.append(ev); continue
         if m.over:
             ev["flags"].append("경기 종료 후")
@@ -1304,6 +1382,8 @@ def score_events(events: list, setup: dict, sides: dict):
                 ev["box"] = ob
             if ob and ob != m.expected_box(team):
                 ev["flags"].append("서브 위치가 점수 짝/홀과 다름")
+        if weak(ev):
+            ev["flags"].append("뒤에 랠리 없음 → 서브 실수로 봄")
         c = 1.0 if (ev.get("override") or kind == "point") else round(cmap[i], 3)
         if c < 0.75:
             ev["flags"].append("서버 판단 불확실")

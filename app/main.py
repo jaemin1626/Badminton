@@ -658,7 +658,8 @@ def patch_events(vid: str, body: list[EventPatch]):
     res = read_json(d / "result.json")
     if res is None or cfg is None:
         raise HTTPException(404, "아직 분석 결과가 없어요")
-    keep = ("id", "t", "frame", "t_still", "frame_still", "box", "boxes", "p_near", "view", "seen", "front", "pos", "cues",
+    keep = ("id", "t", "frame", "t_still", "frame_still", "box", "boxes", "p_near", "view", "seen", "front", "pos", "cues", "no_rally", "retry",
+            "p_near_alg", "box_alg", "p_near_model", "model_server",   # 서브 팀 판단: 원래 알고리즘 값을 잃지 않게
             "override", "removed", "kind", "winner", "look", "pre_rally", "confirmed", "manual", "rescued", "t_end", "last_won")
     evs = [{k: e[k] for k in keep if k in e} for e in res["events"]]
     by = {e["id"]: e for e in evs}
