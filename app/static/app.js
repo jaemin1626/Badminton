@@ -870,7 +870,7 @@ function renderPanel() {
       </div>
       <div class="team-card A"><input value="${esc(S.teams.A.name)}" data-n="A" maxlength="12" aria-label="팀 A 이름"><div class="members">${mem("A")}</div></div>
       <div class="team-card B"><input value="${esc(S.teams.B.name)}" data-n="B" maxlength="12" aria-label="팀 B 이름"><div class="members">${mem("B")}</div></div>
-      <div class="btn-row"><button class="icon-btn sm" id="autoBtn">위/아래로 자동 배정</button><button class="icon-btn sm" id="swapBtn">팀 바꾸기</button><button class="icon-btn sm" id="redetBtn">다시 찾기</button></div>
+      <div class="btn-row"><button class="icon-btn sm" id="autoBtn">위/아래로 자동 배정</button><button class="icon-btn sm" id="redetBtn">다시 찾기</button></div>
       <div class="toggle-row">관절(자세) 표시<button class="switch ${S.showPose ? "on" : ""}" id="poseSw" role="switch" aria-checked="${S.showPose}" aria-label="관절 표시"></button></div>
       <ul class="checks" style="margin-top:12px">
         <li class="${c.okCount ? "ok" : "bad"}"><i>${c.okCount ? "✓" : "!"}</i>팀당 ${c.max}명 선택</li>
@@ -882,7 +882,6 @@ function renderPanel() {
     $$(".team-tab", P).forEach(b => b.onclick = () => { S.activeTeam = b.dataset.t; renderPanel(); });
     $$("input[data-n]", P).forEach(i => i.oninput = () => { S.teams[i.dataset.n].name = i.value.trim() || ("팀 " + i.dataset.n); drawOverlay(); saveLocal(); chip.innerHTML = `<span class="dot" style="background:var(--team${S.activeTeam})"></span>${esc(S.activeTeam === "R" ? "심판" : S.teams[S.activeTeam].name)} 선택 중`; });
     $("#autoBtn").onclick = () => autoAssign(false);
-    $("#swapBtn").onclick = () => { for (const k in S.assign) if (S.assign[k] !== "R") S.assign[k] = S.assign[k] === "A" ? "B" : "A"; drawOverlay(); renderPanel(); saveLocal(); };
     $("#redetBtn").onclick = runDetect;
     $("#poseSw").onclick = () => { S.showPose = !S.showPose; drawOverlay(); renderPanel(); saveLocal(); };
     $("#next").onclick = () => go(4);
@@ -946,6 +945,12 @@ async function startAnalyze() {
     const officials = Object.keys(S.assign).filter(k => S.assign[k] === "R").map(box).filter(Boolean);
     const { scoreboard, ...match } = S.fmt;
     S.config = await api(`/api/videos/${S.vid}/config`, { method: "PUT", json: { ref_frame: S.detFrame >= 0 ? S.detFrame : S.frame, corners: S.corners, points: S.cpts, lines: goodLines(), teams, officials, match: { ...match, scoreboard } } });
+    if (teams.A.bboxes.length && JSON.stringify(S.config.teams["2"].bboxes) === JSON.stringify(teams.A.bboxes)) {   // 서버가 팀 A = 위 코트로 맞바꿈 → 화면도
+      for (const k in S.assign) if (S.assign[k] === "A" || S.assign[k] === "B") S.assign[k] = S.assign[k] === "A" ? "B" : "A";
+      S.teams.A.name = S.config.teams["1"].name; S.teams.B.name = S.config.teams["2"].name;
+      for (const k of ["first", "ours", "scoreA", "scoreB", "final"]) if (k in S.config.match) S.fmt[k] = S.config.match[k];
+      saveLocal(); toast("팀 A는 위 코트(먼 쪽)로 정해져 있어 두 팀을 맞바꿨어요");
+    }
     S.job = await api(`/api/videos/${S.vid}/analyze`, { method: "POST" });
     go(5);
   } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = "분석 시작"; }

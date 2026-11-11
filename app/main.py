@@ -516,6 +516,7 @@ def put_config(vid: str, body: ConfigIn):
         raise HTTPException(400, "두 팀이 네트의 같은 쪽에 있어요. 선수 선택을 확인해 주세요")
     match = {"mode": "doubles", "first": "A", "scoreA": 0, "scoreB": 0, "target": 21, "ours": "A", "scoreboard": True, "game": 1}
     match.update(body.match)
+    teams_far_first(teams, match)   # 팀 A = 처음 위 코트(먼 쪽), 팀 B = 아래 코트(가까운 쪽)
     cfg = {
         "video": f"data/videos/{vid}/{meta.get('file')}",
         "fps": meta.get("fps"), "frame_size": [meta.get("width"), meta.get("height")],
@@ -539,6 +540,23 @@ def get_config(vid: str):
     if cfg is None:
         raise HTTPException(404, "아직 설정이 없어요")
     return cfg
+
+
+def teams_far_first(teams: dict, match: dict) -> bool:
+    """팀 A = 경기 시작 때 카메라에서 먼 쪽(위 코트), 팀 B = 가까운 쪽으로 고정한다.
+    A 로 고른 선수가 가까운 쪽이면 두 팀(선수·이름)을 맞바꾸고, 팀 글자를 쓰는 경기 설정(첫 서브·시작 점수·우리 팀·최종 점수)도 같이 바꾼다.
+    바꿨으면 True."""
+    if teams["1"]["side"] != "near":
+        return False
+    teams["1"], teams["2"] = teams["2"], teams["1"]
+    ab = {"A": "B", "B": "A"}
+    for k in ("first", "ours"):
+        if match.get(k) in ab:
+            match[k] = ab[match[k]]
+    match["scoreA"], match["scoreB"] = match.get("scoreB", 0), match.get("scoreA", 0)
+    if isinstance(match.get("final"), dict):
+        match["final"] = {"A": match["final"].get("B"), "B": match["final"].get("A")}
+    return True
 
 
 # ---------------------------------------------------------------- 분석

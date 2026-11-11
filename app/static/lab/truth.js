@@ -45,15 +45,14 @@ function renderTeams() {
   list.innerHTML = [["1", "A"], ["2", "B"]].map(([no, k]) => `
     <div class="team ${k}"><div class="tn"><span><kbd>${k}</kbd> <input class="tname" data-k="${k}" value="${esc(c.teams[no].name)}" maxlength="12" aria-label="팀 ${k} 이름"></span><small>${T_SIDE_KO[c.teams[no].side] || ""}${c.match?.first === k ? " · 첫 서브" : ""}</small></div>
       <div class="faces">${(c.teams[no].bboxes || []).map((_, j) => `<canvas data-t="${no}" data-j="${j}" width="56" height="84"></canvas>`).join("")}</div></div>`).join("")
-    + `<div class="row"><button class="btn" id="teamSwap" title="팀 A와 팀 B를 맞바꿔요. 이미 넣은 정답 서브 팀·최종 점수·첫 서브도 같이 바뀌어요">팀 A ↔ 팀 B 바꾸기</button></div>`;
+;
   $$("#teamList .tname").forEach(inp => {
     inp.onchange = () => tPatchTeams({ [inp.dataset.k === "A" ? "nameA" : "nameB"]: inp.value });
     inp.onkeydown = e => { if (e.key === "Enter") inp.blur(); };
   });
-  $("#teamSwap").onclick = () => { if (confirm("팀 A와 팀 B를 맞바꿀까요? 이미 넣은 정답의 서브 팀도 같이 바뀌어요.")) tPatchTeams({ swap: true }); };
   const tgt = +(c.match?.target || 21), one = tgt === 25 || +c.match?.games_to_win === 1;
   const sw = tgt === 25 ? 13 : tgt === 15 ? 8 : 11;
-  note.innerHTML = `${tgt}점 ${one ? "단판" : "3판"} · ${one ? "" : "마지막 게임 "}${sw}점에서 코트를 바꿔요. 바꾼 뒤에도 같은 선수가 같은 팀이에요.`;
+  note.innerHTML = `팀 A = 처음 위 코트(먼 쪽) · 팀 B = 처음 아래 코트(가까운 쪽). ${tgt}점 ${one ? "단판" : "3판"} · ${one ? "" : "마지막 게임 "}${sw}점에서 코트를 바꿔요. 바꾼 뒤에도 같은 선수가 같은 팀이에요.`;
   if (c.ref_frame == null) return;
   const img = new Image();
   img.onload = () => {

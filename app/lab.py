@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 from . import analysis as A
 from . import court as C
-from .main import (DATA, GPU_POOL, JOBS, STATIC, Job, _detect, models, read_frame, read_json, source_path, submit, vdir,
+from .main import (DATA, GPU_POOL, JOBS, STATIC, Job, _detect, teams_far_first, models, read_frame, read_json, source_path, submit, vdir,
                    write_json)
 
 router = APIRouter()
@@ -268,6 +268,7 @@ def lab_put_config(vid: str, body: LabConfig):
         raise HTTPException(400, "두 팀이 네트의 같은 쪽에 있어요")
     match = {"mode": "doubles", "first": "A", "scoreA": 0, "scoreB": 0, "target": 25, "game": 1}
     match.update(body.match)
+    teams_far_first(teams, match)   # 팀 A = 처음 위 코트(먼 쪽), 팀 B = 아래 코트(가까운 쪽)
     cfg = {"fps": meta.get("fps"), "frame_size": [meta.get("width"), meta.get("height")],
            "ref_frame": body.ref_frame, "points": [p.model_dump() for p in body.points],
            "lines": [l.model_dump() for l in body.lines],
@@ -770,6 +771,8 @@ def lab_patch_teams(vid: str, req: TeamsReq):
         if m.get("first") in ("A", "B"):
             m["first"] = "B" if m["first"] == "A" else "A"
         m["scoreA"], m["scoreB"] = m.get("scoreB", 0), m.get("scoreA", 0)
+        if isinstance(m.get("final"), dict):
+            m["final"] = {"A": m["final"].get("B"), "B": m["final"].get("A")}
         tr = read_json(L / "truth.json")
         if tr:
             for mk in tr.get("marks", []):

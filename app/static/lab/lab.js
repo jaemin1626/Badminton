@@ -554,6 +554,13 @@ async function saveConfig(run, name = null) {
   };
   try {
     let cfg = await api(`/api/lab/${S.vid}/config`, { method: "PUT", json: body });
+    if (body.teams.A.bboxes.length && sameBoxes(cfg.teams["2"].bboxes, body.teams.A.bboxes)) {   // 서버가 팀 A = 위 코트로 맞바꿈 → 화면도
+      for (const k in S.assign) if (S.assign[k] === "A" || S.assign[k] === "B") S.assign[k] = S.assign[k] === "A" ? "B" : "A";
+      $("#nameA").value = cfg.teams["1"].name; $("#nameB").value = cfg.teams["2"].name;
+      $("#mFirst").value = cfg.match?.first || "A"; $("#mScoreA").value = cfg.match?.scoreA ?? 0; $("#mScoreB").value = cfg.match?.scoreB ?? 0;
+      if (cfg.match?.final) $("#mFinal").value = `${cfg.match.final.A}:${cfg.match.final.B}`;
+      toast("팀 A는 위 코트(먼 쪽)로 정해져 있어 두 팀을 맞바꿨어요");
+    }
     if (name) { S.info.presets = await api(`/api/lab/${S.vid}/presets/${encodeURIComponent(name)}`, { method: "POST" }); cfg = { ...cfg, name }; }
     S.info.seeded = false; S.info.config = cfg; S.cfg = cfg; S.tr = null; S.sv = null;
     S.baseSig = stateSig(); dropDraft(); renderPresets();
@@ -563,6 +570,7 @@ async function saveConfig(run, name = null) {
   } catch (e) { toast(e.message, true); }
 }
 
+const sameBoxes = (a, b) => JSON.stringify((a || []).map(x => x.map(Math.round))) === JSON.stringify((b || []).map(x => x.map(Math.round)));
 /* ---------------- 임시 저장 · 설정 보관함 ---------------- */
 const draftKey = () => `lab:draft:${S.vid}`;
 const dropDraft = () => localStorage.removeItem(draftKey());
