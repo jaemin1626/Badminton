@@ -92,6 +92,35 @@ function tAddMark(t) {
   S.tsel = ms.findIndex(m => m.t === t);
   toast(`${S.tsel + 1}번째 서브 · ${fmt(t)}`); tChanged();
 }
+// A/B: 마우스를 댄 서브나 지금 시각 2초 안에 정답 서브가 있으면 그 서브의 팀을 고치고, 없으면 지금 시각에 그 팀 서브를 새로 넣는다
+function tTeamKey(w) {
+  const ms = tMarks(), now = vid().currentTime;
+  if (S.hoverT != null && truthIdxNear(S.hoverT) >= 0) { setTruthWinner(w); return; }
+  let j = -1, best = 2.0;
+  ms.forEach((m, k) => { const d = Math.abs(m.t - now); if (d <= best) { best = d; j = k; } });
+  if (j >= 0) {   // 근처 서브: 자동값 확인 / 같은 팀 다시 누르면 지우기 / 다른 팀이면 바꾸기 (setTruthWinner 와 같은 규칙)
+    const m = ms[j];
+    if (m.win_auto && m.server === w) { delete m.win_auto; toast(`${j + 1}번 서브 자동 판정을 확인했어요 (${teamName(w)})`); }
+    else if (truthWin(m) === w) { delete m.server; delete m.win_auto; toast(`${j + 1}번 서브 팀을 지웠어요`); }
+    else { m.server = w; delete m.win_auto; toast(`${j + 1}번 서브 (${fmt(m.t)}) → ${teamName(w)} 서브`); }
+    S.tsel = j; S.flash = { j, until: performance.now() + 700 }; tChanged(true); return;
+  }
+  const t = Math.round(clamp(now, 0, S.meta.duration) * 100) / 100;
+  ms.push({ t, server: w }); ms.sort((a, b) => a.t - b.t);
+  const i = ms.findIndex(m => m.t === t);
+  S.tsel = i; S.flash = { j: i, until: performance.now() + 700 };
+  toast(`${i + 1}번 서브 · ${fmt(t)} · ${teamName(w)} 서브`); tChanged();
+}
+// E: 지금 보고 있는 랠리(지금 시각 바로 앞 서브)가 끝난 시각. 같은 자리에서 다시 누르면 지움
+function tEndKey() {
+  const ms = tMarks(), now = Math.round(vid().currentTime * 100) / 100;
+  let j = -1; ms.forEach((m, k) => { if (m.t < now - 0.2) j = k; });
+  if (j < 0) { toast("이 시각 앞에 서브가 없어요. 서브하는 순간 A/B로 먼저 기록하세요", true); return; }
+  const m = ms[j];
+  if (m.end != null && Math.abs(m.end - now) < 0.3) { delete m.end; toast(`${j + 1}번 랠리 끝을 지웠어요`); }
+  else { m.end = now; toast(`${j + 1}번 랠리 끝 · ${fmt(now)} (${(now - m.t).toFixed(1)}초)`); }
+  S.tsel = j; tChanged(true);
+}
 function tNudge(i, d) {
   const ms = tMarks(), m = ms[i]; m.t = Math.round(clamp(m.t + d, 0, S.meta.duration) * 100) / 100;
   ms.sort((a, b) => a.t - b.t); S.tsel = ms.indexOf(m); seek(m.t); tChanged();
@@ -174,7 +203,7 @@ function renderTruth() {
   $("#tally").innerHTML = rs.n ? `서브 팀 기록 ${rs.n}/${n} · 마지막 서브 때 <b class="tA">${esc(teamName("A"))} ${rs.a}</b> : <b class="tB">${rs.b} ${esc(teamName("B"))}</b>`
     + (rs.auto ? ` <span class="bad">자동 판정 ${rs.auto}개 확인 전</span>` : "")
     + (f && rs.n === n ? (lastOk ? ` · 마지막 랠리 ${f.A > rs.a ? esc(teamName("A")) : esc(teamName("B"))} 득점 → ${f.A}:${f.B}` : ` <span class="bad">최종 점수와 안 맞음</span>`) : "")
-    : "서브마다 <kbd>A</kbd>/<kbd>B</kbd>로 서브를 넣은 팀(= 직전 랠리 득점 팀)을 기록하세요";
+    : "서브하는 순간 <kbd>A</kbd>/<kbd>B</kbd>(서브 넣은 팀 = 직전 랠리 득점 팀), 랠리가 끝나는 순간 <kbd>E</kbd>";
   // 최종 저장
   const tag = $("#finTag"), msg = $("#finMsg");
   tag.textContent = S.truthFinalized ? "최종 저장됨" : (n ? "수정 중" : "아직 저장 안 함");
@@ -195,10 +224,11 @@ function renderTruth() {
       <span class="tt" data-go="${i}" title="이 시각으로 이동">${fmt(m.t)}${gap != null ? `<small>+${gap.toFixed(1)}s</small>` : ""}</span>
       <span class="nud"><button data-n="-0.1" title="0.1초 앞당기기 (-)">−.1</button><button data-n="0.1" title="0.1초 늦추기 (=)">+.1</button></span>
       <span class="win ${m.win_auto ? "auto" : ""}" title="${m.win_auto ? "자동 판정 · 맞으면 같은 팀을 눌러 확인" : "이 서브를 넣은 팀 (직전 랠리 득점 팀)"}"><button class="A ${m.server === "A" ? "on" : ""}" data-w="A" title="${esc(teamName("A"))} 서브 (A)">A</button><button class="B ${m.server === "B" ? "on" : ""}" data-w="B" title="${esc(teamName("B"))} 서브 (B)">B</button><small>${rs.out[i]}</small></span>
+      <span class="end ${m.end != null ? "on" : ""}" title="${m.end != null ? "랠리 끝 · 눌러서 이동 (E로 다시 찍기)" : "랠리가 끝나는 순간 E"}" ${m.end != null ? `data-e="${i}"` : ""}>${m.end != null ? `끝 ${fmt(m.end)}<small>${(m.end - m.t).toFixed(1)}s</small>` : "끝 —"}</span>
       <span class="spot" title="서버가 선 곳 (화면 기준)">${T_SPOTS.map(([s, k, lb]) => `<button class="${s.split("-")[0]} ${m.spot === s ? "on" : ""}" data-s="${s}" title="${lb} (${k})" aria-label="${lb}"></button>`).join("")}</span>
       <input class="note" value="${esc(m.note)}" placeholder="메모" maxlength="100" aria-label="${i + 1}번 메모">
       <button class="del" title="지우기 (Delete)" aria-label="${i + 1}번 지우기">×</button></li>`;
-  }).join("") || `<li class="empty">영상을 보다가 서브하는 순간 <kbd>S</kbd>를 누르세요</li>`;
+  }).join("") || `<li class="empty">영상을 보다가 서브하는 순간 그 팀 키 <kbd>A</kbd>/<kbd>B</kbd>, 랠리가 끝나는 순간 <kbd>E</kbd>를 누르세요</li>`;
   $$("#marks li[data-i]").forEach(li => {
     const i = +li.dataset.i, m = ms[i];
     li.onclick = e => { if (e.target.tagName !== "INPUT") { S.tsel = i; renderTruth(); } };
@@ -208,6 +238,7 @@ function renderTruth() {
     li.querySelectorAll("[data-n]").forEach(b => b.onclick = e => { e.stopPropagation(); tNudge(i, +b.dataset.n); });
     li.querySelectorAll("[data-w]").forEach(b => b.onclick = e => { e.stopPropagation(); tSetWin(i, b.dataset.w); });
     li.querySelectorAll("[data-s]").forEach(b => b.onclick = e => { e.stopPropagation(); S.tsel = i; tSetSpot(m, b.dataset.s); });
+    const ee = li.querySelector("[data-e]"); if (ee) ee.onclick = e => { e.stopPropagation(); S.tsel = i; seek(Math.max(0, m.end - 1.5)); renderTruth(); };
     li.querySelector(".note").oninput = e => { m.note = e.target.value; saveTruthSoon(900); };
     li.querySelector(".del").onclick = e => { e.stopPropagation(); tDelete(i); };
     const cf = li.querySelector(".cf"); if (cf) cf.onclick = e => { e.stopPropagation(); m.ok = true; S.tsel = i; tChanged(); };
@@ -216,7 +247,7 @@ function renderTruth() {
 }
 function enterTruth() {
   $("#finA").value = S.truthFinal?.A ?? ""; $("#finB").value = S.truthFinal?.B ?? "";
-  $("#winLegend").innerHTML = `<kbd>A</kbd> ${esc(teamName("A"))} 서브 · <kbd>B</kbd> ${esc(teamName("B"))} 서브 (= 직전 랠리 득점)`;
+  $("#winLegend").innerHTML = `<kbd>A</kbd> ${esc(teamName("A"))} 서브 · <kbd>B</kbd> ${esc(teamName("B"))} 서브 (= 직전 랠리 득점) · <kbd>E</kbd> 랠리 끝`;
   renderTeams(); renderTruth(); lastSb = "";
 }
 
@@ -266,6 +297,11 @@ function truthKey(e) {
     return true;
   }
   if (lk === "n" || k === "ㅜ") { tNextPending(); return true; }
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (lk === "a" || k === "ㅁ") { tTeamKey("A"); return true; }
+    if (lk === "b" || k === "ㅠ") { tTeamKey("B"); return true; }
+    if (lk === "e" || k === "ㄷ") { tEndKey(); return true; }
+  }
   if (!sel) return false;
   if (T_SPOT_KEY[lk]) { tSetSpot(sel, T_SPOT_KEY[lk]); return true; }
   if (k === "Enter") { if (sel.src === "auto") { sel.ok = true; tChanged(); tNextPending(); } return true; }

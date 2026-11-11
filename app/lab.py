@@ -613,7 +613,7 @@ LABELS = DATA.parent / "labels"   # data/labels/<영상 이름>.json : 같은 �
 
 
 class TruthReq(BaseModel):
-    marks: list[dict] = Field(default_factory=list)   # [{t, server: 'A'|'B' (이 서브를 넣은 팀 = 직전 랠리 득점 팀), win_auto, spot: 'far-L'|'far-R'|'near-L'|'near-R', note, src: 'auto', stage, reason, ok}]
+    marks: list[dict] = Field(default_factory=list)   # [{t, server: 'A'|'B' (이 서브를 넣은 팀 = 직전 랠리 득점 팀), win_auto, spot: 'far-L'|'far-R'|'near-L'|'near-R', end: 랠리 끝 시각, note, src: 'auto', stage, reason, ok}]
     final: dict | None = None                          # 최종 점수 {A, B}
     finalized: bool = False                            # '최종 정답 저장'을 눌렀는지
     base: float | None = None                          # 이 탭이 불러온(마지막으로 저장한) 시각. 그 뒤 다른 탭이 저장했으면 덮어쓰지 않는다
@@ -863,6 +863,8 @@ def lab_put_truth(vid: str, req: TruthReq):
             item["note"] = str(m["note"])[:100]
         if m.get("spot") in ("far-L", "far-R", "near-L", "near-R"):
             item["spot"] = m["spot"]
+        if isinstance(m.get("end"), (int, float)) and m["end"] > item["t"]:   # 이 서브 랠리가 끝난 시각 (E)
+            item["end"] = round(float(m["end"]), 2)
         if m.get("src") == "auto":   # 자동 판정에서 불러온 후보: 사람이 확인(ok)해야 정답으로 쓴다
             item.update(src="auto", ok=bool(m.get("ok")), stage=str(m.get("stage", ""))[:4], reason=str(m.get("reason", ""))[:200])
         marks.append(item)

@@ -307,7 +307,11 @@ kbd{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .marks .spot button.near.on{background:#ff7a59}
 
 /* 랠리 득점 팀 (A=1팀 · D=2팀) + 누적 점수 */
-.marks li{grid-template-columns:28px auto 72px auto auto auto 1fr 22px}
+.marks li{grid-template-columns:28px auto 72px auto auto 66px auto 1fr 22px}
+.marks .end{font:11px var(--mono);color:var(--muted);white-space:nowrap;line-height:1.15}
+.marks .end.on{color:var(--text);cursor:pointer}
+.marks .end.on:hover{text-decoration:underline}
+.marks .end small{display:block;color:var(--muted);font-size:10px}
 .marks .win{display:flex;gap:2px;align-items:center}
 .marks .win button{border:1px solid var(--line);background:var(--panel);border-radius:5px;font:11px var(--mono);height:22px;min-width:22px;cursor:pointer;color:var(--muted)}
 .marks .win button.on.A{background:#5aa9ff;color:#0b1a2a;border-color:#5aa9ff}

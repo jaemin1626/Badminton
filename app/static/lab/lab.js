@@ -780,7 +780,7 @@ function liveChecks(i) {
 const LIVE_COL = { ok: "#3ecf8e", A: "#7d8a84", B: "#ff5d6c" };
 
 const TEAM_COL = { A: "#5aa9ff", B: "#ff7a59" };
-const truthRallies = () => (S.truthMarks || []).map((m, j, ms) => ({ j, t0: m.t, t1: ms[j + 1]?.t ?? S.meta.duration, w: truthWin(m) }));
+const truthRallies = () => (S.truthMarks || []).map((m, j, ms) => ({ j, t0: m.t, t1: ms[j + 1]?.t ?? S.meta.duration, w: truthWin(m), e: m.end }));
 // 팀 이름 (경기 설정의 1팀 = A, 2팀 = B)
 const teamName = k => k === "A" ? ($("#nameA")?.value || "1팀") : k === "B" ? ($("#nameB")?.value || "2팀") : "?";
 // 지금 시각의 랠리: 그 랠리 서브 · 득점 판정
@@ -932,6 +932,8 @@ function drawTimeline(t) {
     }
     c.globalAlpha = 1;
     for (const r of truthRallies()) { c.fillStyle = r.w ? TEAM_COL[r.w] : "#ffffff"; c.fillRect(X(r.t0) - 1, 0, 2, r.w ? 8 : 5); }
+    c.fillStyle = "#ffffff";
+    for (const r of truthRallies()) if (r.e != null) c.fillRect(X(r.e) - 1, h - 9, 2, 9);   // 랠리 끝 (E)
     c.globalAlpha = 1;
     c.strokeStyle = "#d9b98a"; c.lineWidth = 1.5; c.strokeRect(X(S.view.t0), 2, X(S.view.t0 + S.view.span) - X(S.view.t0), h - 4);
     c.fillStyle = "#fff"; c.fillRect(X(t) - 1, 0, 2, h);
@@ -969,6 +971,15 @@ function drawTimeline(t) {
     c.strokeStyle = r.w ? col : "#ffffff88"; c.setLineDash([2, 3]); c.beginPath(); c.moveTo(x, top); c.lineTo(x, bot); c.stroke(); c.setLineDash([]);
     c.font = "bold 16px 'Noto Sans KR',sans-serif"; c.fillStyle = col;
     c.fillText(r.w ? `${r.j + 1}번 · ${teamName(r.w)} ${r.j ? "득점·서브" : "서브(시작)"}` : `${r.j + 1}번`, x + 12, top + 16);
+  }
+  for (const r of truthRallies()) {   // 랠리 끝 (E): 흰 실선 + 서브부터 끝까지 랠리 막대
+    if (r.e == null || r.e < t0 || r.t0 > t1) continue;
+    const xa = Math.max(PL, X(r.t0)), xe = Math.min(w, X(r.e));
+    c.fillStyle = "#ffffff"; c.globalAlpha = .55; c.fillRect(xa, top + 32, Math.max(1, xe - xa), 4); c.globalAlpha = 1;
+    if (r.e >= t0 && r.e <= t1) {
+      const x = X(r.e); c.strokeStyle = "#ffffff"; c.lineWidth = 2; c.beginPath(); c.moveTo(x, top + 26); c.lineTo(x, bot); c.stroke(); c.lineWidth = 1;
+      c.font = "bold 13px 'Noto Sans KR',sans-serif"; c.fillStyle = "#ffffff"; c.fillText(`${r.j + 1}번 랠리 끝 · ${(r.e - r.t0).toFixed(1)}초`, x + 6, top + 46);
+    }
   }
   if (S.hoverT != null && S.hoverT >= t0 && S.hoverT <= t1) {
     const x = X(S.hoverT); c.strokeStyle = "#ffe14d"; c.lineWidth = 3; c.beginPath(); c.moveTo(x, top - 4); c.lineTo(x, bot); c.stroke(); c.lineWidth = 1;
