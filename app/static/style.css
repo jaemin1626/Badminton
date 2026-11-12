@@ -497,7 +497,8 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .mp-head p{margin:6px 0 0;color:var(--muted);font-size:16px}
 .mp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
 @media (max-width:860px){.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-head h1{font-size:40px}}
-.mode-card{padding:28px;display:flex;flex-direction:column;gap:18px;position:relative}
+.mode-card{padding:28px;display:flex;flex-direction:column;gap:18px;position:relative;transition:border-color .2s,box-shadow .2s}
+.mode-card:hover{border-color:var(--court);box-shadow:var(--shadow-lg)}
 .mode-card.main{border:2px solid var(--court);box-shadow:var(--shadow-lg)}
 .mc-badge{position:absolute;top:-13px;right:24px;background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:3px 12px;font-size:12px;font-weight:700}
 .mc-top{display:flex;align-items:center;gap:14px}
@@ -508,10 +509,10 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .mc-ic.man{background:var(--accent);color:var(--accent-ink)}
 .mc-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
 .mc-steps li{display:flex;gap:10px;align-items:center}
-.mc-steps b{width:24px;height:24px;flex:0 0 24px;border-radius:50%;background:var(--bg2);display:grid;place-items:center;font-size:12px}
+.mc-steps b{width:24px;height:24px;flex:0 0 24px;border-radius:50%;background:color-mix(in srgb,var(--court) 18%,var(--bg2));color:var(--ink);display:grid;place-items:center;font-size:12px}
 .mc-steps.lime b{background:var(--accent);color:var(--accent-ink)}
 .mc-tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
-.mc-tags span{background:var(--bg2);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--court-deep)}
+.mc-tags span{background:var(--bg2);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--ink)}
 .mc-tags.lime span{background:color-mix(in srgb,var(--accent) 22%,var(--panel));color:var(--ink)}
 .mc-go{display:flex;align-items:center;justify-content:center;height:52px;border-radius:14px;border:0;background:var(--court);color:#fff;font:700 16px "Noto Sans KR",sans-serif;cursor:pointer;text-decoration:none;transition:filter .2s,transform .15s;padding:0 18px}
 .mc-go:hover{filter:brightness(1.08)} .mc-go:active{transform:translateY(1px)}

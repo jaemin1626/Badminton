@@ -337,7 +337,7 @@ async function renderUpload(v) {
       <p class="lead">복식 경기 영상을 올리고, 점수를 셀 방법을 고르세요. 어느 쪽이든 마지막에 점수판이 합성된 영상을 받아요.</p>
       <div class="up-modes">
         <div class="up-mode"><span class="mc-ic ai"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18M12 4v16"/><circle cx="7.5" cy="8" r="1.4" fill="currentColor"/><circle cx="16.5" cy="16" r="1.4" fill="currentColor"/></svg></span><div><b>AI 자동 분석</b><span>코트와 선수만 알려 주면 서브를 찾아 점수를 셉니다</span></div></div>
-        <div class="up-mode lime"><span class="mc-ic man"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5"/><path d="M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.6-2.2L3.5 14.6a1.6 1.6 0 0 1 2.4-2.1L8 14.5"/></svg></span><div><b>직접 기록 <em>설정 없이 바로</em></b><span>영상을 보며 득점할 때마다 <kbd>A</kbd> <kbd>B</kbd>만 누르면 끝</span></div></div>
+        <div class="up-mode"><span class="mc-ic man"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5"/><path d="M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.6-2.2L3.5 14.6a1.6 1.6 0 0 1 2.4-2.1L8 14.5"/></svg></span><div><b>직접 기록 <em>설정 없이 바로</em></b><span>영상을 보며 득점할 때마다 <kbd>A</kbd> <kbd>B</kbd>만 누르면 끝</span></div></div>
       </div>
       <p class="hint-s">영상을 올리면 바로 고를 수 있어요 · 나중에 바꿔도 돼요</p>
       <div class="recent" id="recent"></div>
@@ -1660,14 +1660,14 @@ function renderChoose(v) {
           <div><h2>AI 자동 분석</h2><p>선수 움직임으로 서브를 찾아 점수를 셉니다</p></div></div>
         <ol class="mc-steps"><li><b>1</b>코트 꼭짓점과 선수 4명 지정</li><li><b>2</b>경기 설정</li><li><b>3</b>서버에서 분석 (10분 영상 약 5~8분)</li><li><b>4</b>틀린 서브만 고치고 저장</li></ol>
         <div class="mc-tags"><span>고정 카메라 영상</span><span>긴 경기 · 여러 영상</span></div>
-        <button class="mc-go ghost" id="pickAuto">${auto ? "AI 분석 이어서 하기" : "AI로 분석하기"}</button>
+        <button class="mc-go" id="pickAuto">${auto ? "AI 분석 이어서 하기" : "AI로 분석하기"}</button>
       </article>
-      <article class="card mode-card main">
+      <article class="card mode-card">
         <span class="mc-badge">설정 없이 바로</span>
         <div class="mc-top"><span class="mc-ic man"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5"/><path d="M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.6-2.2L3.5 14.6a1.6 1.6 0 0 1 2.4-2.1L8 14.5"/></svg></span>
           <div><h2>직접 기록</h2><p>영상을 보며 득점할 때마다 한 번씩 누르면 끝</p></div></div>
-        <ol class="mc-steps lime"><li><b>1</b>팀 이름 · 점수 규칙 · 첫 서브</li><li><b>2</b>랠리가 끝날 때 득점 팀 버튼 <kbd>A</kbd> <kbd>B</kbd></li><li><b>3</b>누른 시각에 맞춰 점수판이 바뀐 영상 저장</li></ol>
-        <div class="mc-tags lime"><span>코트 · 선수 지정 없음</span><span>카메라가 움직여도 OK</span><span>점수는 내 기록 그대로</span></div>
+        <ol class="mc-steps"><li><b>1</b>팀 이름 · 점수 규칙 · 첫 서브</li><li><b>2</b>랠리가 끝날 때 득점 팀 버튼 <kbd>A</kbd> <kbd>B</kbd></li><li><b>3</b>누른 시각에 맞춰 점수판이 바뀐 영상 저장</li></ol>
+        <div class="mc-tags"><span>코트 · 선수 지정 없음</span><span>카메라가 움직여도 OK</span><span>점수는 내 기록 그대로</span></div>
         <button class="mc-go" id="pickMan">${man && S.man?.points?.length ? `직접 기록 이어서 하기 · 득점 ${S.man.points.length}개` : "직접 기록하기"}</button>
       </article>
     </div>
