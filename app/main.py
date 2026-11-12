@@ -346,9 +346,22 @@ def delete_video(vid: str):
 def patch_meta(vid: str, body: dict):
     d = vdir(vid)
     meta = read_json(d / "meta.json", {})
-    for k in ("step", "name"):
+    for k in ("step", "name", "mode", "mstep"):   # mode: auto(AI 분석) | manual(직접 기록) · mstep: 직접 기록 단계
         if k in body:
             meta[k] = body[k]
+    # 방식을 바꾸면 점수 영상에 쓸 result.json 도 그 방식 것으로 (AI 결과 ↔ 직접 기록)
+    cur = read_json(d / "result.json")
+    cur_manual = bool(cur and (cur.get("setup") or {}).get("input") == "manual")
+    if body.get("mode") == "auto" and cur_manual:
+        ai = read_json(d / "result_ai.json")
+        if ai:
+            write_json(d / "result.json", ai); (d / "result_ai.json").unlink()
+        else:
+            (d / "result.json").unlink()
+    elif body.get("mode") == "manual" and not cur_manual:
+        m = read_json(d / "manual.json")
+        if m and m.get("setup"):
+            _manual_result(d, ManualReq(**{k: m[k] for k in ("setup", "points", "confirmed") if k in m}))
     write_json(d / "meta.json", meta)
     return meta
 
@@ -794,6 +807,85 @@ def patch_start(vid: str, body: StartReq):
     return _rescore(d, res["events"], cfg)
 
 
+# ---------------------------------------------------------------- 직접 기록 (코트·선수 지정 없이 득점 시각만)
+class ManualReq(BaseModel):
+    setup: dict = Field(default_factory=dict)     # nameA nameB target(None=자유·제한 없음) games_to_win first scoreA scoreB game ours ours_row 대회…
+    points: list[dict] = Field(default_factory=list)   # [{t: 누른 시각(초), team: 'A'|'B'}]
+    confirmed: bool = False                       # 점수 규칙과 안 맞아도 이대로 저장한다고 확인함
+
+
+def manual_play(setup: dict, points: list) -> tuple[list, dict]:
+    """득점 목록 → (득점마다 표시 상태, 요약). static/app.js 의 manualPlay 와 같은 규칙.
+    득점을 누른 시각에 점수가 바뀌고, 서브는 득점한 팀으로 넘어간다. 게임이 끝나면 그 점수를 보여 주고 다음 득점부터 새 게임.
+    경기가 끝난 뒤에도 득점을 누르면 점수는 계속 올리고 over_extra 로 센다 (저장할 때 알림)."""
+    target = setup.get("target")
+    target = int(target) if isinstance(target, (int, float)) and target > 0 else None
+    rules = A.rules_for(target, setup) if target else None
+    gtw = int(setup.get("games_to_win") or (rules or {}).get("games_to_win") or 1)
+    score = {"A": int(setup.get("scoreA") or 0), "B": int(setup.get("scoreB") or 0)}
+    game, games, server, over, extra = int(setup.get("game") or 1), [], setup.get("first") or "A", False, 0
+    out = []
+    for p in sorted(points, key=lambda p: p["t"]):
+        w = p["team"]
+        score = dict(score); score[w] += 1; server = w
+        shown = {"score": dict(score), "server": server, "game": game, "game_end": False}
+        if over:
+            extra += 1
+        elif target and A.game_over(score["A"], score["B"], target, rules):
+            games.append({**score, "winner": w}); shown["game_end"] = True
+            if sum(g["winner"] == w for g in games) >= gtw:
+                over = True
+            else:
+                game += 1; score = {"A": 0, "B": 0}
+        out.append({**p, **shown})
+    summ = {"score": out[-1]["score"] if out else score, "game": game, "games": games, "over": over, "over_extra": extra,
+            "rallies": len(out), "target": target, "games_to_win": gtw}
+    return out, summ
+
+
+def _manual_result(d: Path, req: "ManualReq") -> dict:
+    meta = read_json(d / "meta.json", {})
+    fps = float(meta.get("fps") or 30.0)
+    st = {"mode": "doubles", "ours": "A", "ours_row": "bottom", "scoreboard": True, **req.setup}
+    st["nameA"] = (st.get("nameA") or "팀 A").strip()[:12]; st["nameB"] = (st.get("nameB") or "팀 B").strip()[:12]
+    pts = [{"t": round(float(p["t"]), 2), "team": p["team"]} for p in req.points
+           if p.get("team") in ("A", "B") and isinstance(p.get("t"), (int, float)) and p["t"] >= 0]
+    play, summ = manual_play(st, pts)
+    events = [{"id": f"m{i:04d}", "kind": "serve", "manual": True, "t": e["t"], "t_still": e["t"],
+               "frame": int(round(e["t"] * fps)), "frame_still": int(round(e["t"] * fps)),
+               "server": e["server"], "score": e["score"], "game": e["game"], "won": e["team"], "flags": []} for i, e in enumerate(play)]
+    setup = {**st, "input": "manual", "target": summ["target"] or 0}
+    res = {"events": events, "summary": summ, "setup": setup, "sides": {}, "fps": fps, "updated": time.time()}
+    write_json(d / "manual.json", {"setup": st, "points": pts, "confirmed": req.confirmed, "updated": time.time()})
+    old = read_json(d / "result.json")
+    if old and (old.get("setup") or {}).get("input") != "manual":   # AI 분석 결과는 따로 보관 (AI 로 돌아오면 되살림)
+        write_json(d / "result_ai.json", old)
+    write_json(d / "result.json", res)
+    with open(d / "events.csv", "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["time_s", "frame", "game", "point_team", "point_name", "score_A", "score_B"])
+        for e in events:
+            w.writerow([e["t"], e["frame"], e["game"], e["won"], st["name" + e["won"]], e["score"]["A"], e["score"]["B"]])
+    return res
+
+
+@app.get("/api/videos/{vid}/manual")
+def get_manual(vid: str):
+    return read_json(vdir(vid) / "manual.json") or {"setup": None, "points": [], "confirmed": False}
+
+
+@app.put("/api/videos/{vid}/manual")
+def put_manual(vid: str, req: ManualReq):
+    """직접 기록 저장 → manual.json + 점수 영상용 result.json (득점 시각마다 점수가 바뀐다)."""
+    d = vdir(vid)
+    res = _manual_result(d, req)
+    meta = read_json(d / "meta.json", {})
+    meta["mode"] = "manual"
+    write_json(d / "meta.json", meta)
+    return {"summary": res["summary"], "updated": res["updated"]}
+
+
+
 @app.post("/api/videos/{vid}/rescore")
 def rescore(vid: str):
     """설정(시작 점수, 첫 서브 등)을 바꾼 뒤 추적은 그대로 두고 점수만 다시 계산."""
@@ -896,8 +988,8 @@ def render(vid: str, req: RenderReq | None = None):
     d = vdir(vid)
     res = read_json(d / "result.json")
     cfg = read_json(d / "match.json")
-    if res is None or cfg is None:
-        raise HTTPException(404, "아직 분석 결과가 없어요")
+    if res is None or (cfg is None and (req.mask or (res.get("setup") or {}).get("input") != "manual")):
+        raise HTTPException(404, "아직 분석 결과가 없어요" if res is None or not req.mask else "공개용 영상은 AI 분석(선수 지정)이 필요해요")
     kind = "public" if req.mask else "render"
     name = "public.mp4" if req.mask else "overlay.mp4"
     meta = read_json(d / "meta.json", {})

@@ -484,3 +484,125 @@ kbd{font:600 11px "Barlow Condensed","Noto Sans KR",sans-serif;border:1px solid 
 .ev-item.cand{background:color-mix(in srgb,var(--warn) 7%,var(--bg2))}
 .ev-item .cand-why{color:var(--muted)}
 .evlist{max-height:560px}
+
+/* =========================================================
+   직접 기록 (방식 고르기 · 설정 · 점수 기록 · 저장)
+   ========================================================= */
+.step-ph{flex:3;display:flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:12px;border:1px dashed var(--line);color:var(--muted);font-size:13px;white-space:nowrap}
+.link-btn{display:block;margin:12px auto 0;border:0;background:none;color:var(--muted);font-size:13px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;text-align:center}
+.link-btn:hover{color:var(--court)}
+/* 방식 고르기 */
+.mode-pick{max-width:1180px;margin:0 auto;width:100%;display:flex;flex-direction:column;gap:28px;padding:22px 0 8px}
+.mp-head h1{margin:0;font-size:52px;line-height:1.05}
+.mp-head p{margin:6px 0 0;color:var(--muted);font-size:16px}
+.mp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+@media (max-width:860px){.mp-grid{grid-template-columns:minmax(0,1fr)}.mp-head h1{font-size:40px}}
+.mode-card{padding:28px;display:flex;flex-direction:column;gap:18px;position:relative}
+.mode-card.main{border:2px solid var(--court);box-shadow:var(--shadow-lg)}
+.mc-badge{position:absolute;top:-13px;right:24px;background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:3px 12px;font-size:12px;font-weight:700}
+.mc-top{display:flex;align-items:center;gap:14px}
+.mc-top h2{margin:0;font-size:24px;font-family:"Noto Sans KR",sans-serif}
+.mc-top p{margin:0;color:var(--muted)}
+.mc-ic{width:56px;height:56px;flex:0 0 56px;border-radius:16px;display:grid;place-items:center}
+.mc-ic.ai{background:linear-gradient(150deg,var(--court-lite),var(--court-deep));color:var(--accent)}
+.mc-ic.man{background:var(--accent);color:var(--accent-ink)}
+.mc-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.mc-steps li{display:flex;gap:10px;align-items:center}
+.mc-steps b{width:24px;height:24px;flex:0 0 24px;border-radius:50%;background:var(--bg2);display:grid;place-items:center;font-size:12px}
+.mc-steps.lime b{background:var(--accent);color:var(--accent-ink)}
+.mc-tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+.mc-tags span{background:var(--bg2);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--court-deep)}
+.mc-tags.lime span{background:color-mix(in srgb,var(--accent) 22%,var(--panel));color:var(--ink)}
+.mc-go{display:flex;align-items:center;justify-content:center;height:52px;border-radius:14px;border:0;background:var(--court);color:#fff;font:700 16px "Noto Sans KR",sans-serif;cursor:pointer;text-decoration:none;transition:filter .2s,transform .15s;padding:0 18px}
+.mc-go:hover{filter:brightness(1.08)} .mc-go:active{transform:translateY(1px)}
+.mc-go.ghost{background:transparent;border:1.5px solid var(--court);color:var(--court)}
+:root[data-theme="dark"] .mc-tags span{color:var(--ink)}
+.mp-foot{margin:0;text-align:center;color:var(--muted);font-size:13px}
+/* 설정 */
+.m-tips{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+.m-tips div{background:var(--bg2);border-radius:12px;padding:12px 14px}
+.m-tips b{display:block;font-size:13px} .m-tips span{color:var(--muted);font-size:12px}
+.m-team{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;padding:0 12px;height:46px;margin-bottom:6px;background:var(--panel)}
+.m-team:focus-within{border-color:var(--court)}
+.m-team i{width:4px;height:22px;border-radius:2px} .m-team.A i{background:var(--teamA)} .m-team.B i{background:var(--teamB)}
+.m-team input{flex:1;min-width:0;border:0;background:transparent;font:700 15px "Noto Sans KR",sans-serif;color:var(--ink);outline:none}
+.seg.big button{padding:9px 6px;font-size:14px} .seg.big b{font:700 22px "Barlow Condensed",sans-serif;margin-right:1px}
+.m-free{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--muted)}
+.m-free input{width:110px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:700 16px "Barlow Condensed","Noto Sans KR",sans-serif;color:var(--ink)}
+/* 점수 기록 */
+.m-rec .player-wrap video{cursor:pointer}
+.m-banner{position:absolute;left:50%;top:16px;transform:translate(-50%,-10px);background:rgba(12,20,15,.88);color:#fff;border-radius:999px;padding:7px 16px;font-size:14px;display:flex;gap:10px;align-items:center;opacity:0;transition:.25s var(--ease);pointer-events:none;white-space:nowrap}
+.m-banner.show{opacity:1;transform:translate(-50%,0)}
+.m-banner i{width:9px;height:9px;border-radius:50%} .m-banner .u{color:var(--accent);font-weight:700}
+.m-bar{position:absolute;left:0;right:0;bottom:0;padding:10px 14px;background:linear-gradient(0deg,rgba(0,0,0,.66),transparent);display:flex;align-items:center;gap:10px;color:#fff}
+.m-play{width:36px;height:36px;border-radius:50%;border:0;background:#fff;display:grid;place-items:center;cursor:pointer} .m-play path{fill:#14201a}
+.m-sk{border:1px solid rgba(255,255,255,.4);background:transparent;color:#fff;border-radius:8px;height:30px;padding:0 10px;font-size:12px;cursor:pointer}
+.m-sk:hover{background:rgba(255,255,255,.12)}
+.m-time{font:600 18px "Barlow Condensed",sans-serif;font-variant-numeric:tabular-nums} .m-time span{opacity:.6}
+.m-speed{display:flex;gap:2px;background:rgba(255,255,255,.16);border-radius:9px;padding:3px}
+.m-speed button{border:0;background:transparent;color:#fff;border-radius:7px;height:26px;padding:0 9px;font-size:12px;cursor:pointer}
+.m-speed button.on{background:#fff;color:#14201a;font-weight:700}
+.m-pts{display:grid;grid-template-columns:minmax(0,1fr) 120px minmax(0,1fr);gap:12px;margin-top:12px}
+.m-pt{height:92px;border:0;border-radius:18px;color:#fff;display:flex;align-items:center;justify-content:center;gap:16px;cursor:pointer;transition:transform .12s,filter .2s;font-family:"Noto Sans KR",sans-serif}
+.m-pt.A{background:var(--teamA);box-shadow:0 10px 24px color-mix(in srgb,var(--teamA) 35%,transparent)}
+.m-pt.B{background:var(--teamB);box-shadow:0 10px 24px color-mix(in srgb,var(--teamB) 35%,transparent)}
+.m-pt:hover{filter:brightness(1.06)} .m-pt:active{transform:scale(.98)}
+.m-pt kbd{width:44px;height:44px;border-radius:10px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.45);border-bottom-width:3px;display:grid;place-items:center;font:800 26px "Barlow Condensed",sans-serif;color:#fff;padding:0}
+.m-pt>span{text-align:left;min-width:0} .m-pt b{display:block;font-size:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-pt .nx{font-size:13px;opacity:.88}
+.m-undo{height:92px;border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-size:13px}
+.m-undo:hover{border-color:var(--court);color:var(--ink)}
+@media (max-width:640px){.m-pts{grid-template-columns:1fr 1fr}.m-undo{grid-column:1/-1;height:48px;flex-direction:row}.m-pt{height:76px;gap:10px}.m-pt b{font-size:17px}}
+.m-tlw{margin-top:12px;padding:0 4px 4px}
+.m-tlh{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);margin-bottom:6px;flex-wrap:wrap}
+.m-tl{position:relative;height:36px;background:var(--bg2);border-radius:10px;overflow:hidden;cursor:pointer;touch-action:none}
+.m-tl .done{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--court) 12%,transparent)}
+.m-tl .mk{position:absolute;top:9px;width:5px;height:18px;margin-left:-2px;border-radius:2px;cursor:grab}
+.m-tl .mk.A{background:var(--teamA)} .m-tl .mk.B{background:var(--teamB)}
+.m-tl .mk.sel{top:5px;height:26px;width:7px;margin-left:-3px;box-shadow:0 0 0 3px var(--panel)}
+.m-tl .head{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);pointer-events:none}
+.m-side{display:flex;flex-direction:column;gap:12px}
+.m-big{display:flex;align-items:center;justify-content:center;gap:18px}
+.m-big>div{text-align:center} .m-big span{display:block;font-size:12px;font-weight:700}
+.m-big b{font:800 64px/1 "Barlow Condensed",sans-serif;font-variant-numeric:tabular-nums}
+.m-big i{font:700 40px "Barlow Condensed",sans-serif;color:var(--muted);font-style:normal}
+.m-big.lg{justify-content:flex-start;margin:10px 0} .m-big.lg b{font-size:80px} .m-big.lg p{margin:0 0 0 auto;color:var(--muted);font-size:13px;text-align:right}
+.m-chips{display:flex;justify-content:center;gap:6px;flex-wrap:wrap}
+.m-chips span{background:var(--bg2);border-radius:999px;padding:3px 10px;font-size:12px}
+.m-chips .ok{background:color-mix(in srgb,var(--ok) 18%,var(--panel));color:var(--ok)} .m-chips .bad{background:color-mix(in srgb,var(--warn) 22%,var(--panel));color:#8a5f00}
+.m-lh{display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);padding-top:12px;font-size:13px}
+.m-saved{font-size:12px;color:var(--muted)} .m-saved.ok{color:var(--ok)} .m-saved.ok::before{content:"● "}
+.m-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-height:44vh;overflow:auto}
+.m-list li{display:grid;grid-template-columns:24px 62px minmax(0,1fr) 58px 22px;gap:6px;align-items:center;background:var(--bg2);border:1px solid transparent;border-radius:10px;padding:5px 8px;cursor:pointer}
+.m-list li.now{background:color-mix(in srgb,var(--accent) 22%,var(--bg2))}
+.m-list li.sel.A{border-color:var(--teamA)} .m-list li.sel.B{border-color:var(--teamB)}
+.m-list li.extra{opacity:.6;border-style:dashed;border-color:var(--warn)}
+.m-list li.empty{display:block;text-align:center;color:var(--muted);padding:18px 8px;cursor:default;line-height:1.9}
+.m-list .no{color:var(--muted);font-size:12px;text-align:right}
+.m-list .tt{border:0;background:none;padding:0;font:600 16px "Barlow Condensed",sans-serif;color:var(--ink);cursor:pointer;text-align:left}
+.m-list .tt:hover{color:var(--court);text-decoration:underline}
+.m-list .tm{border:0;background:none;padding:0;display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink);cursor:pointer;min-width:0;overflow:hidden;white-space:nowrap}
+.m-list .tm i{width:8px;height:8px;border-radius:50%;flex:0 0 8px} .m-list .A .tm i{background:var(--teamA)} .m-list .B .tm i{background:var(--teamB)}
+.m-list .tm:hover{text-decoration:underline}
+.m-list .sc{font:700 17px "Barlow Condensed",sans-serif;text-align:right} .m-list .sc small{font-size:11px;color:var(--ok);margin-left:3px}
+.m-list .del{border:0;background:none;color:var(--muted);font-size:16px;cursor:pointer}
+.m-keys{background:var(--bg2);border-radius:12px;padding:10px 12px;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+.m-side .cta{margin-top:auto}
+/* 저장 */
+main.m-save{grid-template-columns:minmax(0,1fr) 380px;max-width:1180px}
+.m-worm{background:var(--bg2);border-radius:12px;padding:8px 10px 4px;position:relative}
+.m-worm span{font-size:11px;color:var(--muted)}
+.m-worm svg{width:100%;height:120px;display:block} .m-worm .mid{stroke:var(--line)} .m-worm polyline{fill:none;stroke:var(--court);stroke-width:2.5;vector-effect:non-scaling-stroke}
+.m-warn{margin:12px 0 0;font-size:13px;color:#8a5f00;background:color-mix(in srgb,var(--warn) 16%,var(--panel));border-radius:10px;padding:8px 12px}
+.m-outv{width:100%;border-radius:12px;background:#000;display:block;margin-bottom:4px}
+.m-dl{margin-top:10px}
+.m-modal{position:fixed;inset:0;z-index:50;background:rgba(12,20,15,.45);display:grid;place-items:center;padding:16px;animation:mfade .2s var(--ease)}
+@keyframes mfade{from{opacity:0}}
+.m-dlg{width:min(520px,100%);padding:28px;display:flex;flex-direction:column;gap:16px;border-radius:22px;box-shadow:var(--shadow-lg)}
+.m-dh{display:flex;gap:14px;align-items:flex-start} .m-dh h3{margin:0;font-size:20px} .m-dh p{margin:4px 0 0;color:var(--muted)}
+.m-wic{width:48px;height:48px;flex:0 0 48px;border-radius:14px;background:color-mix(in srgb,var(--warn) 20%,var(--panel));color:#b07a00;display:grid;place-items:center}
+.m-cmp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.m-cmp div{background:var(--bg2);border-radius:12px;padding:12px;text-align:center} .m-cmp .w{background:color-mix(in srgb,var(--warn) 16%,var(--panel))}
+.m-cmp span{display:block;font-size:12px;color:var(--muted)} .m-cmp b{font:700 30px "Barlow Condensed","Noto Sans KR",sans-serif} .m-cmp em{font-style:normal}
+.m-dlg ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
+.m-da{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap} .m-da .mc-go{height:46px}

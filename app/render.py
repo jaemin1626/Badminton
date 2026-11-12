@@ -44,7 +44,8 @@ def scoreboard(state: dict, setup: dict, scale: float, pop: float = 0.0) -> Imag
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([0, 0, Wd, Ht], radius=int(14 * s), fill=(8, 14, 11, 220), outline=(255, 255, 255, 30))
     mode = "복식" if setup.get("mode", "doubles") == "doubles" else "단식"
-    head = f"GAME {state.get('game', 1)} · {setup.get('target', 21)}점 · {mode}"
+    tg = setup.get("target", 21)
+    head = f"GAME {state.get('game', 1)} · {f'{tg}점' if tg else '자유'} · {mode}"
     d.text((int(16 * s), int(21 * s)), head, font=_font("NotoSansKR.ttf", int(13 * s), 700), fill=ACCENT, anchor="ls")
     rows = ((opp, "상대"), (ours, "우리"))
     if setup.get("ours_row") == "top":   # 우리 팀을 윗줄로

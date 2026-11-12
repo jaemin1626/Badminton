@@ -284,7 +284,7 @@ function setVideoChip() {
   const c = $("#videoChip");
   if (!S.meta) { c.classList.add("hidden"); return; }
   const m = S.meta;
-  c.classList.remove("hidden");
+  c.classList.remove("hidden"); const mb = $("#modeBtn"); if (mb) { mb.classList.remove("hidden"); mb.onclick = () => goM(1); }
   c.innerHTML = `<span class="dot" style="background:var(--ok)"></span>${esc(m.name)} · ${m.width}×${m.height} · ${Math.round(m.fps)}fps · ${fmtTime(m.duration)}`;
 }
 
@@ -296,6 +296,7 @@ function maxStep() {
   return 4;
 }
 function renderStepper() {
+  if (S.step === 8) return renderMStepper();
   const s = $("#stepper"); const mx = maxStep();
   s.innerHTML = STEPS.map((n, i) => `<button class="step ${i < S.step ? "done" : ""} ${i === S.step ? "active" : ""} ${i > mx ? "locked" : ""}" data-i="${i}" ${i > mx ? 'aria-disabled="true"' : ""}><b>${i < S.step ? "✓" : i + 1}</b>${n}</button>`).join("");
   $$(".step", s).forEach(d => d.onclick = () => { const i = +d.dataset.i; if (i > mx) { toast(i >= 6 ? "분석이 끝나면 편집·저장할 수 있어요" : "앞 단계를 먼저 마쳐 주세요"); return; } go(i); });
@@ -310,6 +311,7 @@ function render() {
   const v = $("#view");
   stopVideoLoop();
   if (S.step === 0) return renderUpload(v);
+  if (S.step === 8) return renderManual(v);   // 방식 고르기 · 직접 기록
   if (S.step <= 4) return renderStage(v);
   if (S.step === 5) return renderAnalyze(v);
   return renderResult(v);
@@ -365,7 +367,7 @@ async function renderRecent() {
     <div class="recent-item" data-id="${m.id}" role="button" tabindex="0">
       <img src="/api/videos/${m.id}/thumb" alt="" loading="lazy">
       <div style="min-width:0"><div class="t">${esc(m.name)}</div>
-      <div class="m">${fmtTime(m.duration)} · ${m.width}×${m.height} · ${m.has_result ? "분석 완료" : STEPS[Math.min(m.step || 1, 5)] + " 단계"}</div></div>
+      <div class="m">${fmtTime(m.duration)} · ${m.width}×${m.height} · ${m.mode === "manual" ? "직접 기록" + (m.has_result ? " · 저장됨" : "") : m.has_result ? "분석 완료" : m.mode || (m.step || 0) > 1 ? STEPS[Math.min(m.step || 1, 5)] + " 단계" : "방식 고르기"}</div></div>
       <button class="del" data-del="${m.id}" title="삭제" aria-label="${esc(m.name)} 삭제">✕</button>
     </div>`).join("")}</div>`;
   $$(".recent-item", box).forEach(it => {
@@ -403,7 +405,7 @@ function upload(f) {
 async function openVideo(id, step) {
   try {
     const meta = await api(`/api/videos/${id}`);
-    Object.assign(S, { vid: id, meta, suggest: null, result: null, review: null, people: [], detFrame: -1, assign: {}, job: null, renderJob: null, selEvent: null,
+    Object.assign(S, { vid: id, meta, man: null, mSel: -1, mode: null, suggest: null, result: null, review: null, people: [], detFrame: -1, assign: {}, job: null, renderJob: null, selEvent: null,
       cpts: [], clines: [], pick: null, sel: null, drag: null, fit: null });
     S.config = meta.config || null;
     const loc = loadLocal(id);
@@ -445,6 +447,14 @@ async function openVideo(id, step) {
     const pj = meta.active_jobs?.public; S.publicJob = pj && ["queued", "running"].includes(pj.state) ? pj : null;
     S.players = null; S.pub = { exclude: meta.public?.exclude || [], scoreboard: meta.public?.scoreboard ?? true };
     setVideoChip();
+    // 방식: manual(직접 기록) · auto(AI 분석) · 아직 안 고름(새 영상) → 방식 고르기
+    S.mode = meta.mode || ((meta.config || meta.has_result || (meta.step || 0) > 1) ? "auto" : null);
+    const ms = typeof step === "string" && step.startsWith("m") ? +step.slice(1) : null;
+    if (ms != null || S.mode === "manual" || (!S.mode && !S.job)) {
+      if (S.mode === "manual") await mLoad();
+      goM(ms ?? (S.mode === "manual" ? (meta.mstep || 2) : 1)); return;
+    }
+    if (typeof step === "string") step = +step;
     go(Math.min(step ?? (S.job ? 5 : S.result ? 6 : (meta.step || 1)), S.job ? 5 : maxStep()) || 1);
   } catch (e) { toast(e.message, true); S.vid = null; S.meta = null; setVideoChip(); go(0); }
 }
@@ -1543,9 +1553,423 @@ function pollRender() {
   tick();
 }
 
+/* =========================================================
+   직접 기록 — 코트·선수 지정 없이 득점 시각만 (S.step = 8, S.mstep: 1 방식 · 2 설정 · 3 기록 · 4 저장)
+   득점 목록은 서버 manual.json, 점수 영상용 result.json 은 서버가 만든다 (main.manual_play 와 같은 규칙)
+   ========================================================= */
+const MSTEPS = ["영상 업로드", "방식 고르기", "경기 설정", "점수 기록", "저장"];
+const M_RULES = { 21: { deuce: true, cap: 30, gtw: 2 }, 15: { deuce: true, cap: 21, gtw: 2 }, 25: { deuce: false, cap: 25, gtw: 1 } };
+const mDefault = () => ({ nameA: "팀 A", nameB: "팀 B", target: 21, games_to_win: 1, first: "A", scoreA: 0, scoreB: 0, game: 1,
+  ours: "A", ours_row: "bottom", mode: "doubles", scoreboard: true, tournament: "", event: "", division: "" });
+let mSaveT = null, mPlayCache = null, mUndo = [], mBannerT = null, mDrag = null;
+
+function mRules(target) { return M_RULES[target] || { deuce: true, cap: target + 9, gtw: 2 }; }
+function mGameOver(a, b, target) {
+  const r = mRules(target), hi = Math.max(a, b), lo = Math.min(a, b);
+  return r.deuce ? hi >= r.cap || (hi >= target && hi - lo >= 2) : hi >= target;
+}
+// 득점 목록 → 득점마다 표시 상태 + 요약 (경기 끝난 뒤 득점은 over_extra 로 셈)
+function manualPlay(st, points) {
+  const target = +st.target > 0 ? +st.target : null, gtw = +st.games_to_win || 1;
+  let score = { A: +st.scoreA || 0, B: +st.scoreB || 0 }, game = +st.game || 1, server = st.first || "A", over = false, extra = 0, overAt = -1;
+  const games = [], out = [];
+  [...points].sort((a, b) => a.t - b.t).forEach((p, i) => {
+    score = { ...score, [p.team]: score[p.team] + 1 }; server = p.team;
+    const shown = { ...p, score: { ...score }, server, game, game_end: false };
+    if (over) { extra++; if (overAt < 0) overAt = i; }
+    else if (target && mGameOver(score.A, score.B, target)) {
+      games.push({ ...score, winner: p.team }); shown.game_end = true;
+      if (games.filter(g => g.winner === p.team).length >= gtw) { over = true; shown.match_end = true; }
+      else { game++; score = { A: 0, B: 0 }; }
+    }
+    out.push(shown);
+  });
+  return { list: out, summ: { score: out.length ? out[out.length - 1].score : score, game, games, over, over_extra: extra, over_at: overAt, rallies: out.length, target, gtw } };
+}
+function mPlay() { return mPlayCache || (mPlayCache = manualPlay(S.man.setup, S.man.points)); }
+function mChanged(now = false) {
+  mPlayCache = null; S.man.confirmed = false;
+  clearTimeout(mSaveT); mSaveT = setTimeout(mSaveNow, now ? 0 : 600);
+  const tag = $("#mSaved"); if (tag) { tag.textContent = "저장 중"; tag.classList.remove("ok"); }
+}
+async function mSaveNow() {
+  clearTimeout(mSaveT); mSaveT = null;
+  try {
+    await api(`/api/videos/${S.vid}/manual`, { method: "PUT", json: S.man });
+    S.meta.has_result = true;
+    const tag = $("#mSaved"); if (tag) { tag.textContent = "자동 저장됨"; tag.classList.add("ok"); }
+  } catch (e) { toast("저장하지 못했어요: " + e.message, true); }
+}
+// 규칙과 맞는지: null = 맞음 · {title, body}
+function mCheck() {
+  const { summ } = mPlay(), st = S.man.setup;
+  if (!summ.target) return null;
+  const rule = `${summ.target}점 ${summ.gtw > 1 ? "3게임" : "단판"}`;
+  if (summ.over_extra) return { rule, title: "설정 점수와 최종 점수가 맞지 않아요", body: `${rule}이면 ${summ.over_at}번째 득점에서 경기가 끝나요. 그 뒤로 득점이 ${summ.over_extra}개 더 있어요.`, why: ["팀을 잘못 누른 득점이 있거나", "경기가 끝난 뒤 장면에서 눌렀을 수 있어요"] };
+  if (!summ.over) return { rule, title: "설정 점수와 최종 점수가 맞지 않아요", body: `${rule}으로 설정했는데, 아직 경기가 끝나지 않았어요.`, why: ["영상이 경기 끝 전에 끝났거나", "누르지 못한 득점이 있을 수 있어요"] };
+  return null;
+}
+const mName = k => S.man.setup["name" + k] || "팀 " + k;
+const mRuleText = st => +st.target > 0 ? `${st.target}점 ${+st.games_to_win > 1 ? "3게임" : "단판"}` : "자유";
+
+/* ---- 이동 ---- */
+async function goM(n) {
+  S.step = 8; S.mstep = n;
+  if (n >= 2 && !S.man) await mLoad();
+  history.replaceState(null, "", `#/v/${S.vid}/m${n}`);
+  api(`/api/videos/${S.vid}/meta`, { method: "PATCH", json: { mstep: n, ...(n >= 2 ? { mode: "manual" } : {}) } }).catch(() => { });
+  render();
+}
+async function mLoad() {
+  let m = null; try { m = await api(`/api/videos/${S.vid}/manual`); } catch { }
+  S.man = { setup: { ...mDefault(), ...(m?.setup || {}) }, points: m?.points || [], confirmed: !!m?.confirmed };
+  mPlayCache = null; mUndo = [];
+}
+function renderMStepper() {
+  const s = $("#stepper"), cur = S.mstep;
+  if (cur === 1 && S.mode !== "manual") {
+    s.innerHTML = `<button class="step done" data-i="0"><b>✓</b>영상 업로드</button><button class="step active" data-i="1"><b>2</b>방식 고르기</button>
+      <div class="step-ph">다음 단계는 고른 방식에 따라 달라져요</div>`;
+  } else {
+    const mx = S.man?.setup ? 4 : 2;
+    s.innerHTML = MSTEPS.map((n, i) => `<button class="step ${i < cur ? "done" : ""} ${i === cur ? "active" : ""} ${i > mx ? "locked" : ""}" data-i="${i}"><b>${i < cur ? "✓" : i + 1}</b>${n}</button>`).join("");
+  }
+  $$(".step", s).forEach(d => d.onclick = () => { const i = +d.dataset.i; if (i === 0) { go(0); return; } if (i <= (S.man?.setup ? 4 : 2)) goM(i); });
+}
+function renderManual(v) {
+  stopVideoLoop();
+  if (S.mstep === 1 || !S.mode) return renderChoose(v);
+  if (S.mstep === 2) return renderMSetup(v);
+  if (S.mstep === 3) return renderMRecord(v);
+  return renderMSave(v);
+}
+
+/* ---- 1 · 방식 고르기 ---- */
+function renderChoose(v) {
+  const auto = S.mode === "auto" && (S.config || S.result), man = S.mode === "manual";
+  v.innerHTML = `<main class="wide"><section class="mode-pick">
+    <div class="mp-head"><h1 class="display">점수를 어떻게 셀까요?</h1>
+      <p>둘 다 마지막에 점수판이 합성된 영상을 만들어요. 나중에 다른 방식으로 바꿀 수도 있어요.</p></div>
+    <div class="mp-grid">
+      <article class="card mode-card">
+        <div class="mc-top"><span class="mc-ic ai"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18M12 4v16"/><circle cx="7.5" cy="8" r="1.4" fill="currentColor"/><circle cx="16.5" cy="16" r="1.4" fill="currentColor"/></svg></span>
+          <div><h2>AI 자동 분석</h2><p>선수 움직임으로 서브를 찾아 점수를 셉니다</p></div></div>
+        <ol class="mc-steps"><li><b>1</b>코트 꼭짓점과 선수 4명 지정</li><li><b>2</b>경기 설정</li><li><b>3</b>서버에서 분석 (10분 영상 약 5~8분)</li><li><b>4</b>틀린 서브만 고치고 저장</li></ol>
+        <div class="mc-tags"><span>고정 카메라 영상</span><span>긴 경기 · 여러 영상</span></div>
+        <button class="mc-go ghost" id="pickAuto">${auto ? "AI 분석 이어서 하기" : "AI로 분석하기"}</button>
+      </article>
+      <article class="card mode-card main">
+        <span class="mc-badge">설정 없이 바로</span>
+        <div class="mc-top"><span class="mc-ic man"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5"/><path d="M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.6-2.2L3.5 14.6a1.6 1.6 0 0 1 2.4-2.1L8 14.5"/></svg></span>
+          <div><h2>직접 기록</h2><p>영상을 보며 득점할 때마다 한 번씩 누르면 끝</p></div></div>
+        <ol class="mc-steps lime"><li><b>1</b>팀 이름 · 점수 규칙 · 첫 서브</li><li><b>2</b>랠리가 끝날 때 득점 팀 버튼 <kbd>A</kbd> <kbd>B</kbd></li><li><b>3</b>누른 시각에 맞춰 점수판이 바뀐 영상 저장</li></ol>
+        <div class="mc-tags lime"><span>코트 · 선수 지정 없음</span><span>카메라가 움직여도 OK</span><span>점수는 내 기록 그대로</span></div>
+        <button class="mc-go" id="pickMan">${man && S.man?.points?.length ? `직접 기록 이어서 하기 · 득점 ${S.man.points.length}개` : "직접 기록하기"}</button>
+      </article>
+    </div>
+    <p class="mp-foot">직접 기록한 득점 시각은 AI 학습 정답(랠리 끝 · 득점 팀)으로도 쓸 수 있어요.</p>
+  </section></main>`;
+  $("#pickAuto").onclick = async () => {
+    await api(`/api/videos/${S.vid}/meta`, { method: "PATCH", json: { mode: "auto" } }).catch(() => { });
+    openVideo(S.vid);   // 서버가 보관해 둔 AI 결과를 되살린다
+  };
+  $("#pickMan").onclick = async () => {
+    if (S.mode === "auto" && S.result && !confirm("AI 분석 결과가 있어요. 직접 기록으로 바꾸면 점수 영상은 직접 기록한 점수로 만들어져요 (AI 결과는 따로 보관돼서 다시 AI로 바꾸면 돌아와요). 바꿀까요?")) return;
+    S.mode = "manual"; await mLoad(); goM(S.man.points.length ? 3 : 2);
+  };
+}
+
+/* ---- 2 · 경기 설정 ---- */
+function mSetupNow() { const st = S.man.setup; return { ...st, target: +st.target > 0 ? +st.target : 0 }; }
+function mDrawPreview() {
+  const g = $("#ov"); if (!g) return; g.innerHTML = "";
+  const st = S.man.setup;
+  drawScoreboard(g, { score: { A: +st.scoreA || 0, B: +st.scoreB || 0 }, server: st.first, game: +st.game || 1 }, mSetupNow(), S.meta.width / 1600);
+}
+function renderMSetup(v) {
+  const st = S.man.setup, m = S.meta, free = !(+st.target > 0) || ![21, 25].includes(+st.target);
+  const seg = (g, opts, cur) => `<div class="seg" data-g="${g}">${opts.map(([val, l]) => `<button data-v="${val}" class="${String(cur) === String(val) ? "on" : ""}">${l}</button>`).join("")}</div>`;
+  const sb = (t, k) => `<div class="box"><span class="nm" style="color:var(--team${t})">${esc(mName(t))}</span><b>${+st[k] || 0}</b>
+      <span class="pm"><button data-k="${k}" data-d="1" aria-label="${esc(mName(t))} 시작 점수 올리기">+</button><button data-k="${k}" data-d="-1" aria-label="${esc(mName(t))} 시작 점수 내리기">−</button></span></div>`;
+  const ruleCur = free ? "free" : String(+st.target);
+  v.innerHTML = `<main>
+    <section class="card stage-wrap">
+      <div class="stage-top"><span class="chip"><span class="dot" style="background:var(--court)"></span>스코어보드 미리보기</span><span class="chip">코트 · 선수 지정 없이 이대로 시작해요</span></div>
+      <div class="player-wrap" style="aspect-ratio:${m.width}/${m.height}">
+        <img src="/api/videos/${S.vid}/frames/${Math.round(m.frames * 0.1)}?w=1280" alt="경기 영상 첫 장면" style="width:100%;height:100%;object-fit:contain;display:block">
+        <svg class="ov" id="ov" viewBox="0 0 ${m.width} ${m.height}"></svg>
+      </div>
+      <div class="m-tips"><div><b>1 · 설정</b><span>팀 이름과 점수 규칙만</span></div><div><b>2 · 기록</b><span>랠리가 끝나는 순간 득점 팀 버튼</span></div><div><b>3 · 저장</b><span>누른 시각에 점수가 바뀐 영상</span></div></div>
+    </section>
+    <aside class="card panel m-setup">
+      <h2>경기 설정</h2><p class="desc">나머지는 기록하면서 바꿔도 돼요.</p>
+      <div class="field"><label>팀 이름</label>
+        <div class="m-team A"><i></i><kbd>A</kbd><input id="mNameA" value="${esc(st.nameA)}" maxlength="12" aria-label="팀 A 이름"></div>
+        <div class="m-team B"><i></i><kbd>B</kbd><input id="mNameB" value="${esc(st.nameB)}" maxlength="12" aria-label="팀 B 이름"></div>
+        <p class="hint-s">화면 위쪽(먼 쪽)에서 시작하는 팀을 A로 하면 헷갈리지 않아요</p></div>
+      <div class="field"><label>점수 규칙</label>
+        <div class="seg big" id="mRule">${[["21", "<b>21</b>점"], ["25", "<b>25</b>점"], ["free", "자유"]].map(([val, l]) => `<button data-v="${val}" class="${ruleCur === val ? "on" : ""}">${l}</button>`).join("")}</div>
+        ${free ? `<div class="m-free"><label for="mTarget">목표 점수</label><input type="number" id="mTarget" min="1" max="99" value="${+st.target > 0 ? +st.target : ""}" placeholder="비우면 제한 없음"><span>점</span></div>` : ""}
+        <div style="margin-top:6px">${seg("games_to_win", [[1, "단판"], [2, "3게임 (2선승)"]], +st.games_to_win || 1)}</div>
+        <p class="hint-s">${+st.target === 25 ? "25점이면 바로 끝 (듀스 없음)" : +st.target > 0 ? `${+st.target - 1}:${+st.target - 1}부터는 2점 차${+st.target === 21 ? ", 30점이면 끝" : ""}` : "점수 제한 없이 기록해요"} · 저장할 때 최종 점수가 규칙에 맞는지 확인해 드려요</p></div>
+      <div class="field"><label>첫 서브</label>${seg("first", [["A", esc(mName("A"))], ["B", esc(mName("B"))]], st.first)}</div>
+      <details class="field more"${+st.scoreA || +st.scoreB ? " open" : ""}><summary>경기 중간부터 찍은 영상이면 · 시작 점수</summary>
+        <div class="score-in">${sb("A", "scoreA")}<span class="vs">VS</span>${sb("B", "scoreB")}</div>
+        ${+st.games_to_win > 1 ? `<div style="margin-top:8px">${seg("game", [[1, "1게임"], [2, "2게임"], [3, "3게임"]], +st.game || 1)}</div>` : ""}</details>
+      <details class="field more"><summary>대회 · 종목 · 우리 팀</summary>
+        ${titleFields(st)}
+        <div class="field"><label>우리 팀</label>${seg("ours", [["A", esc(mName("A"))], ["B", esc(mName("B"))]], st.ours)}</div>
+        <div class="field"><label>스코어보드에서 우리 팀 줄</label>${seg("ours_row", [["top", "윗줄"], ["bottom", "아랫줄"]], st.ours_row)}</div></details>
+      <button class="cta" id="mStart">점수 기록 시작 ▶</button>
+      <button class="link-btn" id="toAuto">AI 분석으로 바꾸기</button>
+    </aside></main>`;
+  mDrawPreview();
+  const upd = (o, rerender = true) => { Object.assign(st, o); mChanged(); if (rerender) renderMSetup(v); else mDrawPreview(); };
+  ["A", "B"].forEach(k => { const i = $("#mName" + k); i.oninput = () => upd({ ["name" + k]: i.value.trim() || "팀 " + k }, false); i.onchange = () => renderMSetup(v); i.onkeydown = e => { if (e.key === "Enter") i.blur(); }; });
+  $$("#mRule button").forEach(b => b.onclick = () => {
+    const val = b.dataset.v;
+    if (val === "free") upd({ target: [21, 25].includes(+st.target) ? null : st.target });
+    else upd({ target: +val });
+  });
+  const ti = $("#mTarget"); if (ti) { ti.oninput = () => upd({ target: +ti.value > 0 ? +ti.value : null }, false); ti.onchange = () => renderMSetup(v); }
+  $$(".seg[data-g]", v).forEach(s => $$("button", s).forEach(b => b.onclick = () => {
+    const g = s.dataset.g, val = ["games_to_win", "game"].includes(g) ? +b.dataset.v : b.dataset.v; upd({ [g]: val });
+  }));
+  $$(".pm button", v).forEach(b => b.onclick = () => upd({ [b.dataset.k]: clamp((+st[b.dataset.k] || 0) + +b.dataset.d, 0, 40) }));
+  bindTitleFields(st, (o, quiet) => upd(o, !quiet));
+  $("#mStart").onclick = async () => { await mSaveNow(); goM(3); };
+  $("#toAuto").onclick = () => goM(1);
+}
+
+/* ---- 3 · 점수 기록 ---- */
+function mStateAt(t) {
+  const st = S.man.setup;
+  let s = { score: { A: +st.scoreA || 0, B: +st.scoreB || 0 }, server: st.first || "A", game: +st.game || 1, i: -1, prev: null };
+  mPlay().list.forEach((e, i) => { if (e.t <= t + 1e-3) s = { score: e.score, server: e.server, game: e.game, i, prev: s, e }; });
+  return s;
+}
+function mAddPoint(team) {
+  if (!video) return;
+  const t = Math.round(video.currentTime * 100) / 100, pts = S.man.points;
+  if (pts.some(p => Math.abs(p.t - t) < 0.4)) { toast("방금 같은 자리에 기록했어요", true); return; }
+  if (mPlay().summ.over && !confirm(`이미 경기가 끝났어요 (${mPlay().summ.score.A}:${mPlay().summ.score.B}). 그래도 득점을 기록할까요?`)) return;
+  const p = { t, team }; pts.push(p); pts.sort((a, b) => a.t - b.t); mUndo.push(p);
+  mChanged(); const pl = mPlay(), i = pl.list.findIndex(e => e.t === t && e.team === team), e = pl.list[i];
+  S.mSel = i;
+  mBanner(`${i + 1}번 랠리 · ${esc(mName(team))} 득점 · ${e.score.A}:${e.score.B}${e.match_end ? " · 경기 끝" : e.game_end ? ` · ${e.game}게임 끝` : ""}`, team, true);
+  if (e.match_end) toast(`경기 끝 ${e.score.A}:${e.score.B} · 다 봤으면 '기록 끝내고 저장하기'를 누르세요`);
+  mRefresh();
+}
+function mUndoLast() {
+  const pts = S.man.points;
+  let p = mUndo.pop();
+  while (p && !pts.includes(p)) p = mUndo.pop();
+  if (!p) { const t = video?.currentTime ?? 0; p = [...pts].reverse().find(q => q.t <= t + .05); }
+  if (!p) { toast("되돌릴 기록이 없어요"); return; }
+  pts.splice(pts.indexOf(p), 1); S.mSel = -1; mChanged();
+  mBanner(`${fmtTime(p.t)} ${esc(mName(p.team))} 득점을 지웠어요`, null, false); mRefresh();
+}
+function mBanner(html, team, undo) {
+  const b = $("#mBanner"); if (!b) return;
+  b.innerHTML = `${team ? `<i style="background:var(--team${team})"></i>` : ""}${html}${undo ? `<span class="u">되돌리기 Z</span>` : ""}`;
+  b.classList.add("show"); clearTimeout(mBannerT); mBannerT = setTimeout(() => b.classList.remove("show"), 2600);
+}
+function mRefresh() { mRenderSide(); mDrawTl(); mRenderBtns(); lastStateKey = ""; }
+function mRenderBtns() {
+  const s = mStateAt(video?.currentTime ?? 0), sc = s.score;
+  for (const k of ["A", "B"]) {
+    const n = { ...sc, [k]: sc[k] + 1 }, el2 = $(`#mBtn${k} .nx`);
+    if (el2) el2.textContent = `→ ${n.A} : ${n.B}`;
+  }
+}
+function renderMRecord(v) {
+  const m = S.meta;
+  v.innerHTML = `<main>
+    <section class="card stage-wrap m-rec">
+      <div class="player-wrap" style="aspect-ratio:${m.width}/${m.height}">
+        <video id="vid" src="/api/videos/${S.vid}/stream?kind=auto" playsinline preload="auto"></video>
+        <svg class="ov" id="ov" viewBox="0 0 ${m.width} ${m.height}"></svg>
+        <div class="m-banner" id="mBanner" role="status" aria-live="polite"></div>
+        <div class="m-bar">
+          <button class="m-play" id="mPlay" aria-label="재생"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path id="mPlayIc" d="M6 4l14 8-14 8z"/></svg></button>
+          <button class="m-sk" data-sk="-5">−5초</button><button class="m-sk" data-sk="5">+5초</button>
+          <span class="m-time" id="mTime">0:00.0</span><span class="spacer"></span>
+          <div class="m-speed" role="group" aria-label="재생 속도">${[1, 1.5, 2].map(r => `<button data-r="${r}" class="${(S.mRate || 1) === r ? "on" : ""}">${r}×</button>`).join("")}</div>
+        </div>
+      </div>
+      <div class="m-pts">
+        <button class="m-pt A" id="mBtnA"><kbd>A</kbd><span><b>${esc(mName("A"))} 득점</b><span class="nx"></span></span></button>
+        <button class="m-undo" id="mUndo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg><span>되돌리기 <kbd>Z</kbd></span></button>
+        <button class="m-pt B" id="mBtnB"><kbd>B</kbd><span><b>${esc(mName("B"))} 득점</b><span class="nx"></span></span></button>
+      </div>
+      <div class="m-tlw"><div class="m-tlh"><span>득점 기록 · 점을 끌어서 시각 조정, 빈 곳을 눌러 이동</span><span>0:00 ─ ${fmtTime(m.duration)}</span></div>
+        <div class="m-tl" id="mTl"></div></div>
+    </section>
+    <aside class="card panel m-side" id="mSide"></aside></main>`;
+  video = $("#vid"); video.playbackRate = S.mRate || 1;
+  const t0 = S.man.points.length ? Math.max(0, S.man.points[S.man.points.length - 1].t - 3) : 0;
+  video.addEventListener("loadedmetadata", () => { if (!video.currentTime) video.currentTime = t0; }, { once: true });
+  video.onclick = () => video.paused ? video.play() : video.pause();
+  video.onplay = video.onpause = () => $("#mPlayIc")?.setAttribute("d", video.paused ? "M6 4l14 8-14 8z" : "M5 4h5v16H5zM14 4h5v16h-5z");
+  $("#mPlay").onclick = () => video.paused ? video.play() : video.pause();
+  $$(".m-sk").forEach(b => b.onclick = () => { video.currentTime = Math.max(0, video.currentTime + +b.dataset.sk); });
+  $$(".m-speed button").forEach(b => b.onclick = () => { S.mRate = +b.dataset.r; video.playbackRate = S.mRate; $$(".m-speed button").forEach(x => x.classList.toggle("on", x === b)); });
+  $("#mBtnA").onclick = () => mAddPoint("A"); $("#mBtnB").onclick = () => mAddPoint("B"); $("#mUndo").onclick = mUndoLast;
+  mBindTl(); mRefresh(); mLoop();
+}
+function mLoop() {
+  const t = video?.currentTime || 0, st = mStateAt(t);
+  const key = `${st.score.A}-${st.score.B}-${st.server}-${st.game}-${S.man.setup.nameA}-${S.man.setup.nameB}`;
+  if (key !== lastStateKey) {
+    const g = $("#ov"); if (g) {
+      g.innerHTML = "";
+      let pop = null; if (st.prev && lastStateKey) for (const k of ["A", "B"]) if (st.score[k] !== st.prev.score[k]) pop = k;
+      drawScoreboard(g, st, mSetupNow(), S.meta.width / 1600, pop);
+    }
+    lastStateKey = key; mRenderBtns();
+    $$("#mList li[data-i]").forEach(li => li.classList.toggle("now", +li.dataset.i === st.i));
+  }
+  const tm = $("#mTime"); if (tm) tm.innerHTML = `${fmtTime(t)}.${Math.floor((t % 1) * 10)} <span>/ ${fmtTime(S.meta.duration)}</span>`;
+  const ph = $("#mHead"); if (ph) ph.style.left = (t / S.meta.duration * 100) + "%";
+  rafId = requestAnimationFrame(mLoop);
+}
+function mRenderSide() {
+  const box = $("#mSide"); if (!box) return;
+  const { list, summ } = mPlay(), st = S.man.setup, now = mStateAt(video?.currentTime ?? 0), sc = summ.score;
+  const last = list[list.length - 1], srv = last ? last.server : st.first;
+  const chk = mCheck();
+  box.innerHTML = `<div class="m-big"><div><span style="color:var(--teamA)">${esc(mName("A"))}${srv === "A" ? " · 서브" : ""}</span><b>${sc.A}</b></div><i>:</i><div><span style="color:var(--teamB)">${esc(mName("B"))}${srv === "B" ? " · 서브" : ""}</span><b>${sc.B}</b></div></div>
+    <div class="m-chips"><span>${mRuleText(st)}</span>${summ.gtw > 1 ? `<span>${summ.game}게임</span>` : ""}<span>랠리 ${summ.rallies}개</span>${summ.over ? `<span class="${chk ? "bad" : "ok"}">${chk ? "경기 끝 뒤 득점 있음" : "경기 끝"}</span>` : ""}</div>
+    ${summ.games.length && summ.gtw > 1 ? `<div class="m-chips">${summ.games.map((g, i) => `<span>${i + 1}G ${g.A}:${g.B}</span>`).join("")}</div>` : ""}
+    <div class="m-lh"><b>득점 기록</b><span id="mSaved" class="m-saved ok">${mSaveT ? "저장 중" : "자동 저장됨"}</span></div>
+    <ol class="m-list" id="mList">${[...list].map((e, i) => ({ e, i })).reverse().map(({ e, i }) => `
+      <li data-i="${i}" class="${i === S.mSel ? "sel" : ""} ${i === now.i ? "now" : ""} ${e.team}${summ.over_at >= 0 && i >= summ.over_at ? " extra" : ""}">
+        <span class="no">${i + 1}</span><button class="tt" data-go="${i}" title="이 장면으로">${fmtTime(e.t)}.${Math.floor((e.t % 1) * 10)}</button>
+        <button class="tm" data-tg="${i}" title="득점 팀 바꾸기"><i></i>${esc(mName(e.team))}</button>
+        <b class="sc">${e.score.A}:${e.score.B}${e.game_end ? "<small>끝</small>" : ""}</b>
+        <button class="del" data-del="${i}" aria-label="${i + 1}번 지우기">×</button></li>`).join("") || `<li class="empty">영상을 보다가 랠리가 끝나는 순간<br><kbd>A</kbd> 또는 <kbd>B</kbd>를 누르세요</li>`}</ol>
+    <p class="hint-s">줄을 누르면 그 장면으로 · 팀을 누르면 득점 팀 바꾸기 · 고른 줄은 <kbd>-</kbd><kbd>=</kbd>로 0.1초씩</p>
+    <div class="m-keys"><span><kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 5초 (Shift 1초)</span><span><kbd>A</kbd><kbd>B</kbd> 득점 · <kbd>Z</kbd> 마지막 기록 취소</span></div>
+    <button class="cta" id="mDone">기록 끝내고 저장하기</button>`;
+  const pts = () => S.man.points, byI = i => { const e = mPlay().list[i]; return pts().find(p => p.t === e.t && p.team === e.team); };
+  $$("#mList li[data-i]", box).forEach(li => li.onclick = e => { if (e.target.closest("button")) return; S.mSel = +li.dataset.i; mRenderSide(); });
+  $$("[data-go]", box).forEach(b => b.onclick = () => { const i = +b.dataset.go; S.mSel = i; video.currentTime = Math.max(0, mPlay().list[i].t - 3); mRenderSide(); });
+  $$("[data-tg]", box).forEach(b => b.onclick = () => { const p = byI(+b.dataset.tg); p.team = p.team === "A" ? "B" : "A"; S.mSel = +b.dataset.tg; mChanged(); mRefresh(); });
+  $$("[data-del]", box).forEach(b => b.onclick = () => { const p = byI(+b.dataset.del); pts().splice(pts().indexOf(p), 1); S.mSel = -1; mChanged(); mRefresh(); });
+  $("#mDone").onclick = async () => { await mSaveNow(); goM(4); };
+  const sel = $("#mList li.sel", box); if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+function mDrawTl() {
+  const tl = $("#mTl"); if (!tl) return;
+  const dur = S.meta.duration, { list } = mPlay();
+  tl.innerHTML = `<div class="done" style="width:${(list.length ? list[list.length - 1].t / dur * 100 : 0)}%"></div>`
+    + list.map((e, i) => `<span class="mk ${e.team} ${i === S.mSel ? "sel" : ""}" data-i="${i}" style="left:${e.t / dur * 100}%" title="${i + 1}번 · ${fmtTime(e.t)} · ${esc(mName(e.team))} ${e.score.A}:${e.score.B}"></span>`).join("")
+    + `<span class="head" id="mHead"></span>`;
+}
+function mBindTl() {
+  const tl = $("#mTl"), dur = S.meta.duration, tAt = x => { const r = tl.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 1) * dur; };
+  tl.onpointerdown = e => {
+    const mk = e.target.closest(".mk");
+    if (!mk) { video.currentTime = tAt(e.clientX); return; }
+    const i = +mk.dataset.i, ev = mPlay().list[i], p = S.man.points.find(q => q.t === ev.t && q.team === ev.team);
+    mDrag = { p, moved: false }; S.mSel = i; $$("#mTl .mk").forEach(x => x.classList.toggle("sel", x === mk)); tl.setPointerCapture(e.pointerId);
+  };
+  tl.onpointermove = e => {
+    if (!mDrag) return; mDrag.moved = true;
+    mDrag.p.t = Math.round(tAt(e.clientX) * 100) / 100; mPlayCache = null;
+    const mk = $(`#mTl .mk.sel`); if (mk) mk.style.left = (mDrag.p.t / dur * 100) + "%";
+    video.currentTime = mDrag.p.t;
+  };
+  tl.onpointerup = () => {
+    if (!mDrag) return;
+    const { p, moved } = mDrag; mDrag = null;
+    S.man.points.sort((a, b) => a.t - b.t);
+    if (moved) mChanged(); else video.currentTime = Math.max(0, p.t - 3);
+    mPlayCache = null; S.mSel = mPlay().list.findIndex(e => e.t === p.t && e.team === p.team); mRefresh();
+  };
+}
+function mNudge(d) {
+  const i = S.mSel; if (i == null || i < 0) return false;
+  const ev = mPlay().list[i]; if (!ev) return false;
+  const p = S.man.points.find(q => q.t === ev.t && q.team === ev.team);
+  p.t = Math.max(0, Math.round((p.t + d) * 100) / 100); S.man.points.sort((a, b) => a.t - b.t);
+  mChanged(); S.mSel = mPlay().list.findIndex(e => e.t === p.t && e.team === p.team); video.currentTime = p.t; mRefresh(); return true;
+}
+function mKey(e) {
+  if (!(S.step === 8 && S.mstep === 3 && video)) return false;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  if (k === "a" || k === "ㅁ") { mAddPoint("A"); return true; }
+  if (k === "b" || k === "ㅠ") { mAddPoint("B"); return true; }
+  if (k === "z" || k === "ㅋ") { mUndoLast(); return true; }
+  if (k === " ") { video.paused ? video.play() : video.pause(); return true; }
+  if (k === "ArrowLeft" || k === "ArrowRight") { video.currentTime = Math.max(0, video.currentTime + (k === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 5)); return true; }
+  if (k === "-" || k === "=") return mNudge(k === "-" ? -0.1 : 0.1);
+  if ((k === "Delete" || k === "Backspace") && S.mSel >= 0) { const ev = mPlay().list[S.mSel]; const p = S.man.points.find(q => q.t === ev.t && q.team === ev.team); S.man.points.splice(S.man.points.indexOf(p), 1); S.mSel = -1; mChanged(); mRefresh(); return true; }
+  return false;
+}
+
+/* ---- 4 · 저장 ---- */
+function renderMSave(v) {
+  const { list, summ } = mPlay(), st = S.man.setup, chk = mCheck();
+  // 점수 차 흐름 (A − B)
+  const W = 600, H = 120, n = Math.max(1, list.length), diffs = [0, ...list.map(e => e.score.A - e.score.B)], mx = Math.max(3, ...diffs.map(Math.abs));
+  const pts = diffs.map((d, i) => `${(i / n * W).toFixed(1)},${(H / 2 - d / mx * (H / 2 - 8)).toFixed(1)}`).join(" ");
+  v.innerHTML = `<main class="m-save">
+    <section class="card panel">
+      <h2>기록 요약</h2>
+      <div class="m-big lg"><div><span style="color:var(--teamA)">${esc(mName("A"))}</span><b>${summ.score.A}</b></div><i>:</i><div><span style="color:var(--teamB)">${esc(mName("B"))}</span><b>${summ.score.B}</b></div>
+        <p>랠리 ${summ.rallies}개<br>${mRuleText(st)}${summ.games.length > 1 ? `<br>${summ.games.map(g => `${g.A}:${g.B}`).join(" · ")}` : ""}</p></div>
+      <div class="m-worm"><span>점수 차 흐름 (위 ${esc(mName("A"))} · 아래 ${esc(mName("B"))})</span>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" class="mid"/><polyline points="${pts}"/></svg></div>
+      ${chk && S.man.confirmed ? `<p class="m-warn">⚠ ${esc(chk.body)} · 확인하고 이대로 저장했어요</p>` : ""}
+      <button class="link-btn" id="mBack">‹ 기록 다시 보기</button>
+    </section>
+    <aside class="card panel">
+      <h2>점수 영상</h2><p class="desc">누른 시각마다 점수판이 바뀐 영상을 만들어요.</p>
+      <div id="mOut">${S.meta.has_overlay && !S.renderJob ? `<video src="/api/videos/${S.vid}/stream?kind=overlay" controls playsinline preload="metadata" class="m-outv"></video>` : ""}</div>
+      <button class="cta" id="mRender">${S.meta.has_overlay ? "점수 영상 다시 만들기" : "점수 영상 만들기"}</button>
+      ${S.meta.has_overlay ? `<a class="mc-go ghost m-dl" href="/api/videos/${S.vid}/download/overlay.mp4">영상 받기</a>` : ""}
+      <a class="link-btn" href="/api/videos/${S.vid}/download/events.csv">득점 기록 받기 (CSV)</a>
+    </aside></main>
+    ${chk && !S.man.confirmed ? `<div class="m-modal" id="mModal"><div class="m-dlg card" role="dialog" aria-modal="true" aria-labelledby="mmT">
+      <div class="m-dh"><span class="m-wic"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg></span>
+        <div><h3 id="mmT">${chk.title}</h3><p>${esc(chk.body)}</p></div></div>
+      <div class="m-cmp"><div><span>설정</span><b>${chk.rule}</b></div><div class="w"><span>기록한 최종 점수</span><b><em style="color:var(--teamA)">${summ.score.A}</em> : <em style="color:var(--teamB)">${summ.score.B}</em></b></div></div>
+      <ul>${chk.why.map(x => `<li>${x}</li>`).join("")}</ul>
+      <div class="m-da"><button class="mc-go ghost" id="mmBack">기록 다시 보기</button><button class="mc-go" id="mmOk">이대로 저장</button></div></div></div>` : ""}`;
+  $("#mBack").onclick = () => goM(3);
+  $("#mRender").onclick = mStartRender;
+  if ($("#mModal")) {
+    $("#mmBack").onclick = () => goM(3);
+    $("#mmOk").onclick = async () => { S.man.confirmed = true; await mSaveNow(); renderMSave(v); toast("이대로 저장했어요"); };
+    $("#mmOk").focus();
+  }
+  if (S.renderJob) mPollRender();
+}
+async function mStartRender() {
+  try { await mSaveNow(); S.renderJob = await api(`/api/videos/${S.vid}/render`, { method: "POST" }); mPollRender(); }
+  catch (e) { toast(e.message, true); }
+}
+function mPollRender() {
+  const tick = async () => {
+    if (!S.renderJob || S.step !== 8 || S.mstep !== 4) return;
+    const b = $("#mRender");
+    try {
+      const j = await api(`/api/jobs/${S.renderJob.id}`);
+      if (b) { b.disabled = true; b.textContent = `점수 영상 만드는 중 ${Math.round(j.progress * 100)}%`; }
+      if (j.state === "done") { S.renderJob = null; S.meta.has_overlay = true; toast("점수 영상을 만들었어요"); renderMSave($("#view")); return; }
+      if (["error", "cancelled"].includes(j.state)) { S.renderJob = null; toast("점수 영상 만들기 실패: " + j.error, true); renderMSave($("#view")); return; }
+    } catch (e) { S.renderJob = null; toast(e.message, true); return; }
+    setTimeout(tick, 1000);
+  };
+  tick();
+}
+
 /* ---------------- 키보드 ---------------- */
 document.addEventListener("keydown", e => {
   if (e.target.matches("input:not([type=range]), textarea") || e.target.closest(".handle")) return;
+  if (mKey(e)) { e.preventDefault(); return; }   // 직접 기록 · 점수 기록 화면
   if (S.step === 6 && S.review) {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     const a = { x: "remove", ㅌ: "remove", Enter: "confirm", a: "A", ㅁ: "A", b: "B", ㅠ: "B", n: "next", ㅜ: "next" }[k];
@@ -1581,5 +2005,5 @@ window.addEventListener("resize", () => { if (S.step >= 6 && S.result) renderWor
 
 /* ---------------- 시작 ---------------- */
 checkHealth();
-const mh = decodeURIComponent(location.hash).match(/^#\/v\/([A-Za-z0-9가-힣_-]+)(?:\/(\d))?/);
-if (mh) openVideo(mh[1], mh[2] != null ? +mh[2] : undefined); else go(0);
+const mh = decodeURIComponent(location.hash).match(/^#\/v\/([A-Za-z0-9가-힣_-]+)(?:\/(m?\d))?/);
+if (mh) openVideo(mh[1], mh[2] == null ? undefined : mh[2].startsWith("m") ? mh[2] : +mh[2]); else go(0);
