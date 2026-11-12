@@ -606,3 +606,11 @@ main.m-save{grid-template-columns:minmax(0,1fr) 380px;max-width:1180px}
 .m-cmp span{display:block;font-size:12px;color:var(--muted)} .m-cmp b{font:700 30px "Barlow Condensed","Noto Sans KR",sans-serif} .m-cmp em{font-style:normal}
 .m-dlg ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
 .m-da{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap} .m-da .mc-go{height:46px}
+
+/* 시작 화면: 두 방식 소개 */
+.up-modes{display:flex;flex-direction:column;gap:10px;margin:18px 0 6px;max-width:560px}
+.up-mode{display:flex;gap:14px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 14px}
+.up-mode.lime{border-color:color-mix(in srgb,var(--accent) 60%,var(--line))}
+.up-mode .mc-ic{width:44px;height:44px;flex:0 0 44px;border-radius:12px}
+.up-mode b{display:block;font-size:15px} .up-mode b em{font-style:normal;font-size:11px;font-weight:700;background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:1px 8px;margin-left:6px;vertical-align:2px}
+.up-mode span{color:var(--muted);font-size:13px}

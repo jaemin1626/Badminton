@@ -297,6 +297,11 @@ function maxStep() {
 }
 function renderStepper() {
   if (S.step === 8) return renderMStepper();
+  if (S.step === 0) {   // 시작 화면: 방식은 올린 뒤에 고른다
+    $("#stepper").innerHTML = `<button class="step active"><b>1</b>영상 업로드</button><button class="step locked" aria-disabled="true"><b>2</b>방식 고르기</button>
+      <div class="step-ph">AI 자동 분석 또는 직접 기록 · 고른 방식에 따라 다음 단계가 달라져요</div>`;
+    return;
+  }
   const s = $("#stepper"); const mx = maxStep();
   s.innerHTML = STEPS.map((n, i) => `<button class="step ${i < S.step ? "done" : ""} ${i === S.step ? "active" : ""} ${i > mx ? "locked" : ""}" data-i="${i}" ${i > mx ? 'aria-disabled="true"' : ""}><b>${i < S.step ? "✓" : i + 1}</b>${n}</button>`).join("");
   $$(".step", s).forEach(d => d.onclick = () => { const i = +d.dataset.i; if (i > mx) { toast(i >= 6 ? "분석이 끝나면 편집·저장할 수 있어요" : "앞 단계를 먼저 마쳐 주세요"); return; } go(i); });
@@ -329,13 +334,12 @@ async function renderUpload(v) {
   v.innerHTML = `<main class="wide"><section class="card upload-hero">
     <div>
       <h1 class="display">영상만 올리면<span class="line2">점수는 저절로.</span></h1>
-      <p class="lead">복식 경기 영상을 올리고 코트와 선수만 알려 주세요. 서브할 때마다 4명이 멈춰 서는 순간을 찾아 누가 서브했는지로 점수를 셉니다.</p>
-      <ol class="how">
-        <li><b>1</b><span><strong>코트 꼭짓점 4개</strong>를 영상 위에 맞춰요.</span></li>
-        <li><b>2</b><span><strong>두 팀 선수</strong>를 클릭해서 나눠요.</span></li>
-        <li><b>3</b><span>서버 GPU가 <strong>선수 위치와 자세</strong>를 추적해요.</span></li>
-        <li><b>4</b><span><strong>점수 흐름</strong>을 확인하고, 틀린 서브는 바로 고쳐요.</span></li>
-      </ol>
+      <p class="lead">복식 경기 영상을 올리고, 점수를 셀 방법을 고르세요. 어느 쪽이든 마지막에 점수판이 합성된 영상을 받아요.</p>
+      <div class="up-modes">
+        <div class="up-mode"><span class="mc-ic ai"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18M12 4v16"/><circle cx="7.5" cy="8" r="1.4" fill="currentColor"/><circle cx="16.5" cy="16" r="1.4" fill="currentColor"/></svg></span><div><b>AI 자동 분석</b><span>코트와 선수만 알려 주면 서브를 찾아 점수를 셉니다</span></div></div>
+        <div class="up-mode lime"><span class="mc-ic man"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5"/><path d="M14 11.5V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-.5a6 6 0 0 1-4.6-2.2L3.5 14.6a1.6 1.6 0 0 1 2.4-2.1L8 14.5"/></svg></span><div><b>직접 기록 <em>설정 없이 바로</em></b><span>영상을 보며 득점할 때마다 <kbd>A</kbd> <kbd>B</kbd>만 누르면 끝</span></div></div>
+      </div>
+      <p class="hint-s">영상을 올리면 바로 고를 수 있어요 · 나중에 바꿔도 돼요</p>
       <div class="recent" id="recent"></div>
     </div>
     <div>
@@ -367,7 +371,7 @@ async function renderRecent() {
     <div class="recent-item" data-id="${m.id}" role="button" tabindex="0">
       <img src="/api/videos/${m.id}/thumb" alt="" loading="lazy">
       <div style="min-width:0"><div class="t">${esc(m.name)}</div>
-      <div class="m">${fmtTime(m.duration)} · ${m.width}×${m.height} · ${m.mode === "manual" ? "직접 기록" + (m.has_result ? " · 저장됨" : "") : m.has_result ? "분석 완료" : m.mode || (m.step || 0) > 1 ? STEPS[Math.min(m.step || 1, 5)] + " 단계" : "방식 고르기"}</div></div>
+      <div class="m">${fmtTime(m.duration)} · ${m.width}×${m.height} · ${m.mode === "manual" ? "직접 기록" + (m.has_result ? " · 저장됨" : "") : m.has_result ? "AI 분석 완료" : m.mode || (m.step || 0) > 1 ? STEPS[Math.min(m.step || 1, 5)] + " 단계" : "방식 고르기"}</div></div>
       <button class="del" data-del="${m.id}" title="삭제" aria-label="${esc(m.name)} 삭제">✕</button>
     </div>`).join("")}</div>`;
   $$(".recent-item", box).forEach(it => {
